@@ -10,7 +10,14 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     protected SurfaceExtractor surfaceExtractor;
     protected DensityFunction  densityFunction;
 
-    public int resolution = 1;
+    public enum VertexMode {
+        Shared,
+        Split
+    }
+
+    public int        resolution = 1;
+    public VertexMode vertexMode = VertexMode.Shared;
+    public Material   material;
 
     [Flags]
     public enum Debug {
@@ -21,6 +28,10 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
         Intersections = 8,
         Minimizers    = 16
     }
+
+    
+
+    [Space]
 
     public Debug    debugFlags                = Debug.Off;
     public float    debugCornerSize           = 0.1f;
@@ -45,7 +56,7 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
         var ( positions, normals, indices ) = this.surfaceExtractor.voxelize( this.densityFunction, this.resolution );
 
         var meshRenderer          = this.gameObject.AddComponent<MeshRenderer>( );
-            meshRenderer.material = new Material( Shader.Find( "Standard" ) );
+            meshRenderer.material = this.material ? this.material : new Material( Shader.Find( "Standard" ) );
 
         var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
@@ -54,6 +65,23 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
             normals   = normals,
             triangles = indices
         };
+
+        if( this.vertexMode == VertexMode.Split ) {
+            // convert to flat shading by splitting vertices
+            var triangles = meshFilter.mesh.triangles;
+            var vertices  = new Vector3[triangles.Length];
+            for( var i = 0; i < triangles.Length; ++i ) {
+                vertices[i]  = meshFilter.mesh.vertices[triangles[i]];
+                triangles[i] = i;
+            }
+            meshFilter.mesh.vertices  = vertices;
+            meshFilter.mesh.triangles = triangles;
+
+            meshFilter.mesh.RecalculateBounds( );
+            meshFilter.mesh.RecalculateNormals( );
+        }
+
+        meshFilter.mesh.OptimizeReorderVertexBuffer( );
 
         if( this.debugFlags != Debug.Off ) {
             var debugObject                  = new GameObject( "Debug" );
@@ -116,7 +144,7 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
 
                     if(
                         this.debugEdgeMaterial || (
-                            this.debugEdgeIntersectionMaterial && edge.corners.Item1.sign != edge.corners.Item2.sign
+                            this.debugEdgeIntersectionMaterial && edge.corners[0].sign != edge.corners[1].sign
                         )
                     ) {
                         var edgeLineRenderer = edgeObject.AddComponent<LineRenderer>( );
@@ -126,15 +154,15 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
                         edgeLineRenderer.numCapVertices            = 0;
                         edgeLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
                         edgeLineRenderer.receiveShadows            = false;
-                        edgeLineRenderer.material                  = edge.corners.Item1.sign != edge.corners.Item2.sign ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
+                        edgeLineRenderer.material                  = edge.corners[0].sign != edge.corners[1].sign ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
                         edgeLineRenderer.useWorldSpace             = false;
                         edgeLineRenderer.startColor                = Color.white;
                         edgeLineRenderer.endColor                  = Color.white;
                         edgeLineRenderer.allowOcclusionWhenDynamic = false;
 
-                        edgeLineRenderer.SetPositions( new Vector3[] { edge.corners.Item1.position, edge.corners.Item2.position } );
+                        edgeLineRenderer.SetPositions( new Vector3[] { edge.corners[0].position, edge.corners[1].position } );
 
-                        edgeLineRenderer.enabled = edge.corners.Item1.sign != edge.corners.Item2.sign
+                        edgeLineRenderer.enabled = edge.corners[0].sign != edge.corners[1].sign
                             ? ( this.debugFlags & Debug.Intersections ) == Debug.Intersections
                             : ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
                     }

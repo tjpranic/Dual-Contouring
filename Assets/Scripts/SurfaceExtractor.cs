@@ -11,7 +11,7 @@ public class Cell {
 
     public class Corner {
 
-        public Vector3 position;
+        public readonly Vector3 position;
 
         private float _density;
         public float density {
@@ -34,13 +34,25 @@ public class Cell {
 
     public class Edge {
 
-        public ( Corner, Corner ) corners;
+        public readonly Corner[] corners = new Corner[2];
 
         public Vector3 intersection;
         public Vector3 normal;
 
-        public Edge( ( Corner, Corner ) corners ) {
+        public Edge( Corner[] corners ) {
             this.corners = corners;
+        }
+
+    }
+
+    public class Adjacency {
+
+        public readonly Vector3Int[] offsets;
+        public readonly int          edgeIndex;
+
+        public Adjacency( Vector3Int[] offsets, int edgeIndex ) {
+            this.offsets   = offsets;
+            this.edgeIndex = edgeIndex;
         }
 
     }
@@ -74,20 +86,10 @@ public class Cell {
         }
     }
 
-    public Vector3 minimum { get; private set; }
-    public Vector3 maximum { get; private set; }
-
-    private Corner[] _corners = new Corner[8];
-    public Corner[] corners {
-        get { return this._corners;  }
-        set { this._corners = value; }
-    }
-
-    private Edge[] _edges = new Edge[12];
-    public Edge[] edges {
-        get { return this._edges;  }
-        set { this._edges = value; }
-    }
+    public Vector3  minimum { get; private set; }
+    public Vector3  maximum { get; private set; }
+    public Corner[] corners { get; private set; } = new Corner[8];
+    public Edge[]   edges   { get; private set; } = new Edge[12];
 
     public Vector3 vertex;
     public Vector3 normal;
@@ -114,33 +116,33 @@ public class Cell {
 
         this.corners = new Corner[] {
             // bottom
-            new Corner( this.minimum ),
-            new Corner( new Vector3( this.maximum.x, this.minimum.y, this.minimum.z ) ),
-            new Corner( new Vector3( this.maximum.x, this.minimum.y, this.maximum.z ) ),
-            new Corner( new Vector3( this.minimum.x, this.minimum.y, this.maximum.z ) ),
+            new( this.minimum ),
+            new( new Vector3( this.maximum.x, this.minimum.y, this.minimum.z ) ),
+            new( new Vector3( this.maximum.x, this.minimum.y, this.maximum.z ) ),
+            new( new Vector3( this.minimum.x, this.minimum.y, this.maximum.z ) ),
             // top
-            new Corner( new Vector3( this.maximum.x, this.maximum.y, this.minimum.z ) ),
-            new Corner( new Vector3( this.minimum.x, this.maximum.y, this.minimum.z ) ),
-            new Corner( new Vector3( this.minimum.x, this.maximum.y, this.maximum.z ) ),
-            new Corner( this.maximum ),
+            new( new Vector3( this.maximum.x, this.maximum.y, this.minimum.z ) ),
+            new( new Vector3( this.minimum.x, this.maximum.y, this.minimum.z ) ),
+            new( new Vector3( this.minimum.x, this.maximum.y, this.maximum.z ) ),
+            new( this.maximum ),
         };
 
         this.edges = new Edge[] {
             // x axis
-            new Edge( ( this.corners[0], this.corners[1] ) ),
-            new Edge( ( this.corners[3], this.corners[2] ) ),
-            new Edge( ( this.corners[5], this.corners[4] ) ),
-            new Edge( ( this.corners[6], this.corners[7] ) ),
+            new( new Corner[] { this.corners[0], this.corners[1] } ),
+            new( new Corner[] { this.corners[3], this.corners[2] } ),
+            new( new Corner[] { this.corners[5], this.corners[4] } ),
+            new( new Corner[] { this.corners[6], this.corners[7] } ),
             // y axis
-            new Edge( ( this.corners[5], this.corners[0] ) ),
-            new Edge( ( this.corners[4], this.corners[1] ) ),
-            new Edge( ( this.corners[6], this.corners[3] ) ),
-            new Edge( ( this.corners[7], this.corners[2] ) ),
+            new( new Corner[] { this.corners[5], this.corners[0] } ),
+            new( new Corner[] { this.corners[4], this.corners[1] } ),
+            new( new Corner[] { this.corners[6], this.corners[3] } ),
+            new( new Corner[] { this.corners[7], this.corners[2] } ),
             // z axis
-            new Edge( ( this.corners[0], this.corners[3] ) ),
-            new Edge( ( this.corners[1], this.corners[2] ) ),
-            new Edge( ( this.corners[5], this.corners[6] ) ),
-            new Edge( ( this.corners[4], this.corners[7] ) )
+            new( new Corner[] { this.corners[0], this.corners[3] } ),
+            new( new Corner[] { this.corners[1], this.corners[2] } ),
+            new( new Corner[] { this.corners[5], this.corners[6] } ),
+            new( new Corner[] { this.corners[4], this.corners[7] } )
         };
     }
 

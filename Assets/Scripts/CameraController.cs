@@ -8,18 +8,13 @@ public class CameraController : MonoBehaviour {
     public float sensitivity = 5.0f;
     public bool  freeCamera  = false;
 
-    private Vector3 previousMousePosition = new Vector3( 0.0f, 0.0f, 0.0f );
-    private Vector2 cameraRotation        = new Vector2( 0.0f, 0.0f );
+    private Vector2 cameraRotation = new( 0.0f, 0.0f );
 
     public void Start( ) {
         this.cameraRotation = Quaternion.Euler( this.transform.eulerAngles.y, this.transform.eulerAngles.x, 0.0f ).eulerAngles;
     }
 
     public void LateUpdate( ) {
-        // reset previous mouse position to prevent camera movement when activating camera control
-        if( Input.GetMouseButtonDown( 0 ) || Input.GetMouseButton( 1 ) ) {
-            this.previousMousePosition = Input.mousePosition;
-        }
         // x and y axis rotation
         if( Input.GetMouseButton( 0 ) ) {
             if( this.freeCamera ) {
@@ -47,8 +42,6 @@ public class CameraController : MonoBehaviour {
         }
         // movement
         if( Input.GetMouseButton( 0 ) || Input.GetMouseButton( 1 ) ) {
-            this.previousMousePosition = Input.mousePosition;
-
             var direction = this.getMovementDirection( );
             if( Input.GetKey( KeyCode.LeftShift ) ) {
                 direction *= this.boostSpeed;

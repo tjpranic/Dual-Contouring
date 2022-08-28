@@ -2,29 +2,32 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
+// dual contouring implementation using uniform grid
+
 public class DualContouring : SurfaceExtractor {
 
-    // positive directions for determining cell adjacencies
-    private int[,] directions = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+    private const int MinimizerIterations = 12;
 
-    /*
-    table of edge indices for given positive x, y, z cell adjacencies
-
-    0, 0 -> unused
-    0, 1 -> unused
-    1, 0 -> ( 0, 1, 0 ), ( 1, 0, 0 ), ( 1, 1, 0 )
-    1, 1 -> unused
-    2, 0 -> ( 0, 0, 1 ), ( 1, 0, 0 ), ( 1, 0, 1 )
-    2, 1 -> ( 0, 0, 1 ), ( 0, 1, 0 ), ( 0, 1, 1 )
-    */
-    private int[,] edgeIndices = new int[3, 2] { { -1, -1 }, { 11, -1 }, {  7,  3 } };
+    // used to enumerate all positive x, y, z 2x2x1 cube grids containing a common edge
+    private readonly Cell.Adjacency[] adjacencies = {
+        new( new Vector3Int[] { new( 0, 0, 1 ), new( 0, 1, 0 ), new( 0, 1, 1 ) },  3 ),
+        new( new Vector3Int[] { new( 0, 0, 1 ), new( 1, 0, 0 ), new( 1, 0, 1 ) },  7 ),
+        new( new Vector3Int[] { new( 0, 1, 0 ), new( 1, 0, 0 ), new( 1, 1, 0 ) }, 11 )
+    };
 
     private Cell[,,] grid;
 
+    private readonly Vector3 origin = Vector3.zero;
+    private readonly Vector3 scale  = Vector3.one / 2;
+
     public ( Vector3[] positions, Vector3[] normals, int[] indices ) voxelize( DensityFunction densityFunction, int resolution ) {
+        Debug.Assert( MathUtilities.isPowerOfTwo( resolution ), "resolution must be a power of 2" );
+
         var gridSize = ( int )Mathf.Pow( 2, resolution - 1 );
 
         this.grid = new Cell[gridSize, gridSize, gridSize];
+
+        // build uniformly subdivided grid
 
         for( var x = 0; x < gridSize; ++x ) {
             for( var y = 0; y < gridSize; ++y ) {
@@ -39,10 +42,12 @@ public class DualContouring : SurfaceExtractor {
             }
         }
 
+        // find minimizing vertices and surface normals in each cell with at least one edge exhibiting a sign change
+
         var index = 0;
         foreach( var cell in this.grid ) {
             foreach( var corner in cell.corners ) {
-                corner.density = densityFunction.sample( corner.position, Vector3.zero, Vector3.one * 0.5f );
+                corner.density = densityFunction.sample( corner.position, this.origin, this.scale );
             }
 
             if(
@@ -57,17 +62,17 @@ public class DualContouring : SurfaceExtractor {
 
             foreach( var edge in cell.edges ) {
                 if(
-                    ( edge.corners.Item1.sign == Cell.Sign.Inside  && edge.corners.Item2.sign == Cell.Sign.Inside  ) ||
-                    ( edge.corners.Item1.sign == Cell.Sign.Outside && edge.corners.Item2.sign == Cell.Sign.Outside )
+                    ( edge.corners[0].sign == Cell.Sign.Inside  && edge.corners[1].sign == Cell.Sign.Inside  ) ||
+                    ( edge.corners[0].sign == Cell.Sign.Outside && edge.corners[1].sign == Cell.Sign.Outside )
                 ) {
                     // no sign change detected on edge, skip
                     continue;
                 }
 
-                edge.intersection = this.approximateIntersection ( edge.corners,      densityFunction );
-                edge.normal       = this.calculateEdgeNormal     ( edge.intersection, densityFunction );
+                edge.intersection = this.approximateIntersection ( edge );
+                edge.normal       = this.calculateEdgeNormal     ( edge, densityFunction );
 
-                planes.Add( new Plane( edge.normal, edge.intersection ) );
+                planes.Add( new( edge.normal, edge.intersection ) );
             }
 
             // calculate minimizing vertex
@@ -75,8 +80,7 @@ public class DualContouring : SurfaceExtractor {
             // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
             var minimizingVertex = cell.center;
 
-            var iterations = 8;
-            for( var i = 0; i < iterations; i++ ) {
+            for( var i = 0; i < MinimizerIterations; i++ ) {
                 minimizingVertex -= planes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
@@ -106,6 +110,8 @@ public class DualContouring : SurfaceExtractor {
         var normals   = new List<Vector3>( );
         var indices   = new List<int>( );
 
+        // contour and generate indices
+
         for( var x = 0; x < gridSize; ++x ) {
             for( var y = 0; y < gridSize; ++y ) {
                 for( var z = 0; z < gridSize; ++z ) {
@@ -122,79 +128,65 @@ public class DualContouring : SurfaceExtractor {
 
                     cells[0] = cell;
 
-                    // enumerate all valid 2x2x1 cube permutations along positive x, y, z directions
-                    for( var directionIndex1 = 0; directionIndex1 < 3; ++directionIndex1 ) {
-                        for( var directionIndex2 = 0; directionIndex2 < directionIndex1; ++directionIndex2 ) {
-                            var cellIndex1 = new Vector3Int(
-                                x + this.directions[directionIndex1, 0],
-                                y + this.directions[directionIndex1, 1],
-                                z + this.directions[directionIndex1, 2]
-                            );
-                            if(
-                                cellIndex1.x >= this.grid.GetLength( 0 ) ||
-                                cellIndex1.y >= this.grid.GetLength( 1 ) ||
-                                cellIndex1.z >= this.grid.GetLength( 2 )
-                            ) {
-                                continue;
-                            }
+                    var current = new Vector3Int( x, y, z );
 
-                            var cellIndex2 = new Vector3Int(
-                                x + this.directions[directionIndex2, 0],
-                                y + this.directions[directionIndex2, 1],
-                                z + this.directions[directionIndex2, 2]
-                            );
-                            if(
-                                cellIndex2.x >= this.grid.GetLength( 0 ) ||
-                                cellIndex2.y >= this.grid.GetLength( 1 ) ||
-                                cellIndex2.z >= this.grid.GetLength( 2 )
-                            ) {
-                                continue;
-                            }
+                    // for all valid 2x2x1 cube permutations along positive x, y, z directions
+                    foreach( var adjacency in this.adjacencies ) {
+                        var cellIndex1 = current + adjacency.offsets[0];
+                        if(
+                            cellIndex1.x >= this.grid.GetLength( 0 ) ||
+                            cellIndex1.y >= this.grid.GetLength( 1 ) ||
+                            cellIndex1.z >= this.grid.GetLength( 2 )
+                        ) {
+                            continue;
+                        }
 
-                            var cellIndex3 = new Vector3Int(
-                                x + this.directions[directionIndex1, 0] + this.directions[directionIndex2, 0],
-                                y + this.directions[directionIndex1, 1] + this.directions[directionIndex2, 1],
-                                z + this.directions[directionIndex1, 2] + this.directions[directionIndex2, 2]
-                            );
-                            if(
-                                cellIndex3.x >= this.grid.GetLength( 0 ) ||
-                                cellIndex3.y >= this.grid.GetLength( 1 ) ||
-                                cellIndex3.z >= this.grid.GetLength( 2 )
-                            ) {
-                                continue;
-                            }
+                        var cellIndex2 = current + adjacency.offsets[1];
+                        if(
+                            cellIndex2.x >= this.grid.GetLength( 0 ) ||
+                            cellIndex2.y >= this.grid.GetLength( 1 ) ||
+                            cellIndex2.z >= this.grid.GetLength( 2 )
+                        ) {
+                            continue;
+                        }
 
-                            cells[1] = this.grid[cellIndex1.x, cellIndex1.y, cellIndex1.z];
-                            cells[2] = this.grid[cellIndex2.x, cellIndex2.y, cellIndex2.z];
-                            cells[3] = this.grid[cellIndex3.x, cellIndex3.y, cellIndex3.z];
+                        var cellIndex3 = current + adjacency.offsets[2];
+                        if(
+                            cellIndex3.x >= this.grid.GetLength( 0 ) ||
+                            cellIndex3.y >= this.grid.GetLength( 1 ) ||
+                            cellIndex3.z >= this.grid.GetLength( 2 )
+                        ) {
+                            continue;
+                        }
 
-                            if( cells[1].index == -1 || cells[2].index == -1 || cells[3].index == -1 ) {
-                                continue;
-                            }
+                        cells[1] = this.grid[cellIndex1.x, cellIndex1.y, cellIndex1.z];
+                        cells[2] = this.grid[cellIndex2.x, cellIndex2.y, cellIndex2.z];
+                        cells[3] = this.grid[cellIndex3.x, cellIndex3.y, cellIndex3.z];
 
-                            // lookup common edge shared by 2x2x1 cube grid and determine triangle winding order
-                            var edgeIndex = this.edgeIndices[directionIndex1, directionIndex2];
-                            var edge      = cells[0].edges[edgeIndex];
-                            var flip      = edge.corners.Item1.sign == Cell.Sign.Inside;
+                        if( cells[1].index == -1 || cells[2].index == -1 || cells[3].index == -1 ) {
+                            continue;
+                        }
 
-                            if( !flip ) {
-                                indices.Add( cells[0].index );
-                                indices.Add( cells[1].index );
-                                indices.Add( cells[2].index );
+                        // use common edge contained by 2x2x1 cube grid to determine triangle winding order
+                        var flip = cells[0].edges[adjacency.edgeIndex].corners[0].sign == Cell.Sign.Inside;
 
-                                indices.Add( cells[3].index );
-                                indices.Add( cells[2].index );
-                                indices.Add( cells[1].index );
-                            }
-                            else {
-                                indices.Add( cells[1].index );
-                                indices.Add( cells[2].index );
-                                indices.Add( cells[3].index );
+                        if( !flip ) {
+                            indices.Add( cells[0].index );
+                            indices.Add( cells[1].index );
+                            indices.Add( cells[2].index );
 
-                                indices.Add( cells[2].index );
-                                indices.Add( cells[1].index );
-                                indices.Add( cells[0].index );
-                            }
+                            indices.Add( cells[2].index );
+                            indices.Add( cells[1].index );
+                            indices.Add( cells[3].index );
+                        }
+                        else {
+                            indices.Add( cells[3].index );
+                            indices.Add( cells[1].index );
+                            indices.Add( cells[2].index );
+
+                            indices.Add( cells[2].index );
+                            indices.Add( cells[1].index );
+                            indices.Add( cells[0].index );
                         }
                     }
                 }
@@ -208,19 +200,20 @@ public class DualContouring : SurfaceExtractor {
         return this.grid.Flatten( ).ToList( );
     }
 
-    private Vector3 approximateIntersection( ( Cell.Corner, Cell.Corner ) corners, DensityFunction densityFunction ) {
+    private Vector3 approximateIntersection( Cell.Edge edge ) {
         // linear interpolation
-        return corners.Item1.position + ( ( -corners.Item1.density ) * ( corners.Item2.position - corners.Item1.position ) / ( corners.Item2.density - corners.Item1.density ) );
+        return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
     }
 
-    private Vector3 calculateEdgeNormal( Vector3 point, DensityFunction densityFunction ) {
+    private Vector3 calculateEdgeNormal( Cell.Edge edge, DensityFunction densityFunction ) {
         var step = 0.1f;
 
+        // sample surrounding x, y, z locations and take the difference
         return Vector3.Normalize(
             new Vector3(
-                densityFunction.sample( point + new Vector3( step, 0.0f, 0.0f ), Vector3.zero, Vector3.one * 0.5f ) - densityFunction.sample( point - new Vector3( step, 0.0f, 0.0f ), Vector3.zero, Vector3.one * 0.5f ),
-                densityFunction.sample( point + new Vector3( 0.0f, step, 0.0f ), Vector3.zero, Vector3.one * 0.5f ) - densityFunction.sample( point - new Vector3( 0.0f, step, 0.0f ), Vector3.zero, Vector3.one * 0.5f ),
-                densityFunction.sample( point + new Vector3( 0.0f, 0.0f, step ), Vector3.zero, Vector3.one * 0.5f ) - densityFunction.sample( point - new Vector3( 0.0f, 0.0f, step ), Vector3.zero, Vector3.one * 0.5f )
+                densityFunction.sample( edge.intersection + new Vector3( step, 0.0f, 0.0f ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( step, 0.0f, 0.0f ), this.origin, this.scale ),
+                densityFunction.sample( edge.intersection + new Vector3( 0.0f, step, 0.0f ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( 0.0f, step, 0.0f ), this.origin, this.scale ),
+                densityFunction.sample( edge.intersection + new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale )
             )
         );
     }
@@ -245,6 +238,14 @@ public static class LINQExtensions {
                 }
             }
         }
+    }
+
+}
+
+public static class MathUtilities {
+
+    public static bool isPowerOfTwo( int number ) {
+        return ( number != 0 ) && ( ( number & ( number - 1 ) ) == 0 );
     }
 
 }
