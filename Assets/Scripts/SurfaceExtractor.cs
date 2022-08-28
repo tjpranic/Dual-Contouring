@@ -132,12 +132,6 @@ public class Cell {
             new Edge( ( this.corners[5], this.corners[4] ) ),
             new Edge( ( this.corners[6], this.corners[7] ) ),
             // y axis
-            /*
-            new Edge( ( this.corners[0], this.corners[5] ) ),
-            new Edge( ( this.corners[1], this.corners[4] ) ),
-            new Edge( ( this.corners[3], this.corners[6] ) ),
-            new Edge( ( this.corners[2], this.corners[7] ) ),
-            */
             new Edge( ( this.corners[5], this.corners[0] ) ),
             new Edge( ( this.corners[4], this.corners[1] ) ),
             new Edge( ( this.corners[6], this.corners[3] ) ),

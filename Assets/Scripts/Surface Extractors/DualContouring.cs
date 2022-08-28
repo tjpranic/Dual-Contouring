@@ -118,38 +118,6 @@ public class DualContouring : SurfaceExtractor {
                     positions.Add ( cell.vertex );
                     normals.Add   ( cell.normal );
 
-                    /*
-                    for( var edgeIndex = 0; edgeIndex < 12; ++edgeIndex ) {
-                        var edge = cell.edges[edgeIndex];
-                        if(
-                            ( edge.corners.Item1.sign == Cell.Sign.Inside  && edge.corners.Item2.sign == Cell.Sign.Inside  ) ||
-                            ( edge.corners.Item1.sign == Cell.Sign.Outside && edge.corners.Item2.sign == Cell.Sign.Outside )
-                        ) {
-                            continue;
-                        }
-
-                        var cellIndex0 = new Vector3Int( x, y, z );
-                        var cellIndex1 = cellIndex0 + this.cellAdjacencies[edgeIndex, 0];
-                        var cellIndex2 = cellIndex0 + this.cellAdjacencies[edgeIndex, 1];
-                        var cellIndex3 = cellIndex0 + this.cellAdjacencies[edgeIndex, 2];
-
-                        var cells = new Cell[4] {
-                            this.grid[cellIndex0.x, cellIndex0.y, cellIndex0.z],
-                            this.grid[cellIndex1.x, cellIndex1.y, cellIndex1.z],
-                            this.grid[cellIndex2.x, cellIndex2.y, cellIndex2.z],
-                            this.grid[cellIndex3.x, cellIndex3.y, cellIndex3.z]
-                        };
-
-                        indices.Add( cells[0].index );
-                        indices.Add( cells[1].index );
-                        indices.Add( cells[2].index );
-
-                        indices.Add( cells[2].index );
-                        indices.Add( cells[3].index );
-                        indices.Add( cells[0].index );
-                    }
-                    */
-
                     var cells = new Cell[4];
 
                     cells[0] = cell;
@@ -233,57 +201,14 @@ public class DualContouring : SurfaceExtractor {
             }
         }
 
-        // TODO: fix redundant indices caused by duplicate edges
-
         return ( positions.ToArray( ), normals.ToArray( ), indices.ToArray( ) );
     }
-
-    /*
-    // table of cell index offsets for every edge in a cell
-    // offsets give the indices of 3 other cells surrounding an edge
-    private Vector3Int[,] cellAdjacencies = new Vector3Int[12, 3] {
-        // x axis aligned edges
-        { new Vector3Int(  0, -1, 0 ), new Vector3Int(  0, -1, -1 ), new Vector3Int( 0,  0, -1 ) },
-        { new Vector3Int(  0, -1, 0 ), new Vector3Int(  0, -1,  1 ), new Vector3Int( 0,  0,  1 ) },
-        { new Vector3Int(  0,  1, 0 ), new Vector3Int(  0,  1, -1 ), new Vector3Int( 0,  0, -1 ) },
-        { new Vector3Int(  0,  1, 0 ), new Vector3Int(  0,  1,  1 ), new Vector3Int( 0,  0,  1 ) },
-        // y axis aligned edges
-        { new Vector3Int( -1,  0, 0 ), new Vector3Int( -1,  0, -1 ), new Vector3Int( 0,  0, -1 ) },
-        { new Vector3Int(  1,  0, 0 ), new Vector3Int(  1,  0, -1 ), new Vector3Int( 0,  0, -1 ) },
-        { new Vector3Int( -1,  0, 0 ), new Vector3Int( -1,  0,  1 ), new Vector3Int( 0,  0,  1 ) },
-        { new Vector3Int(  1,  0, 0 ), new Vector3Int(  1,  0,  1 ), new Vector3Int( 0,  0,  1 ) },
-        // z axis aligned edges
-        { new Vector3Int( -1,  0, 0 ), new Vector3Int( -1, -1,  0 ), new Vector3Int( 0, -1,  0 ) },
-        { new Vector3Int(  1,  0, 0 ), new Vector3Int(  1, -1,  0 ), new Vector3Int( 0, -1,  0 ) },
-        { new Vector3Int( -1,  0, 0 ), new Vector3Int( -1,  1,  0 ), new Vector3Int( 0,  1,  0 ) },
-        { new Vector3Int(  1,  0, 0 ), new Vector3Int(  1,  1,  0 ), new Vector3Int( 0,  1,  0 ) }
-    };
-    */
 
     public List<Cell> getGridCells( ) {
         return this.grid.Flatten( ).ToList( );
     }
 
     private Vector3 approximateIntersection( ( Cell.Corner, Cell.Corner ) corners, DensityFunction densityFunction ) {
-        /*
-        // iteratively determine intersection
-        var steps     = 8;
-        var increment = 1.0f / steps;
-        var minimum   = float.MaxValue;
-
-        for( var distance = 0.0f; distance <= 1.0f; distance += increment ) {
-            var point   = corners.Item1.position + ( ( corners.Item2.position - corners.Item1.position ) * distance );
-            var density = densityFunction.sample( point, Vector3.zero, Vector3.one );
-            if( density < minimum ) {
-                minimum = density;
-            }
-        }
-
-        return corners.Item1.position + ( ( corners.Item2.position - corners.Item1.position ) * minimum );
-        */
-
-        // return Vector3.Lerp( corners.Item1.position, corners.Item2.position, corners.Item2.density - corners.Item1.density );
-
         // linear interpolation
         return corners.Item1.position + ( ( -corners.Item1.density ) * ( corners.Item2.position - corners.Item1.position ) / ( corners.Item2.density - corners.Item1.density ) );
     }
@@ -299,51 +224,6 @@ public class DualContouring : SurfaceExtractor {
             )
         );
     }
-
-    /*
-    private readonly ( ( int x, int y, int z ), ( int x, int y, int z ) )[] cellFacePairAdjacencies = new ( ( int x, int y, int z ), ( int x, int y, int z ) )[] {
-        ( ( 0, 0, 0 ), ( 1, 0, 0 ) ),
-        //...
-    };
-
-    private void contourCell( ( int x, int y, int z ) index, List<int> indices ) {
-
-        // for every adjacent cell pair
-        for( var i = 0; i < 12; ++i ) {
-            var adjacencies = this.cellFacePairAdjacencies[i];
-
-            var cells = (
-                this.grid[index.x + adjacencies.Item1.x, index.y + adjacencies.Item1.y, index.z + adjacencies.Item1.z],
-                this.grid[index.x + adjacencies.Item2.x, index.y + adjacencies.Item2.y, index.z + adjacencies.Item2.z]
-            );
-
-            this.contourFace( cells, indices );
-        }
-
-        // 
-        for( var i = 0; i < 6; ++i ) {
-            var adjacencies = this.cellEdgePairAdjacencies[i];
-
-            var cells = (
-                this.grid[index.x + adjacencies.Item1.x, index.y + adjacencies.Item1.y, index.z + adjacencies.Item1.z],
-                this.grid[index.x + adjacencies.Item2.x, index.y + adjacencies.Item2.y, index.z + adjacencies.Item2.z],
-                this.grid[index.x + adjacencies.Item3.x, index.y + adjacencies.Item3.y, index.z + adjacencies.Item3.z],
-                this.grid[index.x + adjacencies.Item4.x, index.y + adjacencies.Item4.y, index.z + adjacencies.Item4.z]
-            );
-
-            this.contourEdge( cells, indices );
-        }
-
-    }
-
-    private void contourFace( ( Cell, Cell ) cells, List<int> indices ) {
-
-    }
-
-    private void contourEdge( ( Cell, Cell, Cell, Cell ) cells, List<int> indices ) {
-
-    }
-    */
 
 }
 

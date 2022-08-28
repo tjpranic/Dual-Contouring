@@ -175,54 +175,6 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
                         minimizingVertexLineRenderer.enabled = ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers;
                     }
                 }
-
-                /*
-                var vertices = bounds.GetVertices( );
-
-                var verticesObject                  = new GameObject( $"Vertices" );
-                    verticesObject.transform.parent = boundsObject.transform;
-
-                var vertexCount = 0;
-                foreach( var vertex in vertices ) {
-                    var vertexObject                      = new GameObject( $"Vertex {++vertexCount}" );
-                        vertexObject.transform.parent     = verticesObject.transform;
-                        vertexObject.transform.position   = vertex;
-                        vertexObject.transform.localScale = new Vector3( this.debugDrawSize, this.debugDrawSize, this.debugDrawSize );
-
-                    var vertexMeshRenderer          = vertexObject.AddComponent<MeshRenderer>( );
-                        vertexMeshRenderer.material = this.debugVertexMaterial;
-
-                    var vertexMeshFilter      = vertexObject.AddComponent<MeshFilter>( );
-                        vertexMeshFilter.mesh = this.debugVertexMesh;
-                }
-
-                var edges = bounds.GetEdges( );
-
-                var edgesObject                  = new GameObject( $"Edges" );
-                    edgesObject.transform.parent = boundsObject.transform;
-
-                var edgeCount = 0;
-                foreach( var edge in edges ) {
-                    var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
-                        edgeObject.transform.parent = edgesObject.transform;
-
-                    var lineRenderer = edgeObject.AddComponent<LineRenderer>( );
-                    if( lineRenderer ) {
-                        lineRenderer.startWidth                = this.debugDrawSize;
-                        lineRenderer.endWidth                  = this.debugDrawSize;
-                        lineRenderer.numCapVertices            = 0;
-                        lineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                        lineRenderer.receiveShadows            = false;
-                        lineRenderer.material                  = this.debugEdgeMaterial;
-                        lineRenderer.useWorldSpace             = false;
-                        lineRenderer.startColor                = Color.white;
-                        lineRenderer.endColor                  = Color.white;
-                        lineRenderer.allowOcclusionWhenDynamic = false;
-
-                        lineRenderer.SetPositions( new Vector3[] { edge.Item1, edge.Item2 } );
-                    }
-                }
-                */
             }
 
             debugObject.transform.localScale = Vector3.one;
@@ -230,46 +182,3 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     }
 
 }
-
-
-/*
-public static class BoundsExtensions {
-
-    public static Vector3[] GetVertices( this Bounds bounds ) {
-        return new Vector3[] {
-            // bottom
-            bounds.min,
-            new Vector3( bounds.max.x, bounds.min.y, bounds.min.z ),
-            new Vector3( bounds.max.x, bounds.min.y, bounds.max.z ),
-            new Vector3( bounds.min.x, bounds.min.y, bounds.max.z ),
-            // top
-            new Vector3( bounds.max.x, bounds.max.y, bounds.min.z ),
-            new Vector3( bounds.min.x, bounds.max.y, bounds.min.z ),
-            new Vector3( bounds.min.x, bounds.max.y, bounds.max.z ),
-            bounds.max
-        };
-    }
-
-    public static ( Vector3, Vector3 )[] GetEdges( this Bounds bounds ) {
-        var vertices = bounds.GetVertices( );
-        return new ( Vector3, Vector3 )[] {
-            // x axis
-            ( vertices[0], vertices[1] ),
-            ( vertices[3], vertices[2] ),
-            ( vertices[5], vertices[4] ),
-            ( vertices[6], vertices[7] ),
-            // y axis
-            ( vertices[0], vertices[5] ),
-            ( vertices[1], vertices[4] ),
-            ( vertices[3], vertices[6] ),
-            ( vertices[2], vertices[7] ),
-            // z axis
-            ( vertices[0], vertices[3] ),
-            ( vertices[1], vertices[2] ),
-            ( vertices[5], vertices[6] ),
-            ( vertices[4], vertices[7] )
-        };
-    }
-
-}
-*/
