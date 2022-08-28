@@ -1,0 +1,1 @@
+﻿public class Sphere : VoxelObject<DualContouring, Ellipsoid> { }
