@@ -7,8 +7,8 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     where Model     : DensityFunction,  new( )
 {
 
-    protected SurfaceExtractor surfaceExtractor;
-    protected DensityFunction  densityFunction;
+    private SurfaceExtractor surfaceExtractor;
+    private DensityFunction  densityFunction;
 
     public enum VertexMode {
         Shared,
@@ -29,8 +29,6 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
         Minimizers    = 16
     }
 
-    
-
     [Space]
 
     public Debug    debugFlags                = Debug.Off;
@@ -47,12 +45,10 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     public Material debugMinimizingVertexMaterial;
     public Material debugSurfaceNormalMaterial;
 
-    public VoxelObject( ) {
+    void Start( ) {
         this.surfaceExtractor = new Voxelizer( );
         this.densityFunction  = new Model( );
-    }
 
-    void Start( ) {
         var ( positions, normals, indices ) = this.surfaceExtractor.voxelize( this.densityFunction, this.resolution );
 
         var meshRenderer          = this.gameObject.AddComponent<MeshRenderer>( );
@@ -70,9 +66,9 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
             // convert to flat shading by splitting vertices
             var triangles = meshFilter.mesh.triangles;
             var vertices  = new Vector3[triangles.Length];
-            for( var i = 0; i < triangles.Length; ++i ) {
-                vertices[i]  = meshFilter.mesh.vertices[triangles[i]];
-                triangles[i] = i;
+            for( var triangleIndex = 0; triangleIndex < triangles.Length; ++triangleIndex ) {
+                vertices[triangleIndex]  = meshFilter.mesh.vertices[triangles[triangleIndex]];
+                triangles[triangleIndex] = triangleIndex;
             }
             meshFilter.mesh.vertices  = vertices;
             meshFilter.mesh.triangles = triangles;
@@ -87,91 +83,33 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
             var debugObject                  = new GameObject( "Debug" );
                 debugObject.transform.parent = this.gameObject.transform;
 
-            var cells = this.surfaceExtractor.getGridCells( );
+            var voxels = this.surfaceExtractor.getVoxels( );
 
-            var cellCount = 0;
-            foreach( var cell in cells ) {
-                var cellObject                      = new GameObject( $"Cell {++cellCount}" );
-                    cellObject.transform.parent     = debugObject.transform;
-                    cellObject.transform.position   = cell.center;
-                    cellObject.transform.localScale = cell.size;
+            var voxelsObject                  = new GameObject( $"Voxels" );
+                voxelsObject.transform.parent = debugObject.transform;
+
+            var voxelCount = 0;
+            foreach( var voxel in voxels ) {
+                var voxelObject                      = new GameObject( $"Voxel {++voxelCount}" );
+                    voxelObject.transform.parent     = voxelsObject.transform;
+                    voxelObject.transform.position   = voxel.getCenter( );
+                    voxelObject.transform.localScale = voxel.getSize( );
 
                 if( this.debugCellMaterial ) {
-                    var cellMeshRenderer          = cellObject.AddComponent<MeshRenderer>( );
+                    var cellMeshRenderer          = voxelObject.AddComponent<MeshRenderer>( );
                         cellMeshRenderer.material = this.debugCellMaterial;
 
                     cellMeshRenderer.enabled = ( this.debugFlags & Debug.Cells ) == Debug.Cells;
                 }
                 if( this.debugCellMesh ) {
-                    var cellMeshFilter      = cellObject.AddComponent<MeshFilter>( );
+                    var cellMeshFilter      = voxelObject.AddComponent<MeshFilter>( );
                         cellMeshFilter.mesh = this.debugCellMesh;
                 }
 
-                var cornersObject                  = new GameObject( $"Corners" );
-                    cornersObject.transform.parent = cellObject.transform;
-
-                var cornerCount = 0;
-                foreach( var corner in cell.corners ) {
-                    var cornerObject                      = new GameObject( $"Corner {++cornerCount}" );
-                        cornerObject.transform.parent     = cornersObject.transform;
-                        cornerObject.transform.position   = corner.position;
-                        cornerObject.transform.localScale = new Vector3( this.debugCornerSize, this.debugCornerSize, this.debugCornerSize );
-
-                    if( this.debugCornerMaterial ) {
-                        var cornerMeshRenderer                           = cornerObject.AddComponent<MeshRenderer>( );
-                            cornerMeshRenderer.material                  = this.debugCornerMaterial;
-                            cornerMeshRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                            cornerMeshRenderer.receiveShadows            = false;
-                            cornerMeshRenderer.lightProbeUsage           = LightProbeUsage.Off;
-                            cornerMeshRenderer.reflectionProbeUsage      = ReflectionProbeUsage.Off;
-                            cornerMeshRenderer.allowOcclusionWhenDynamic = false;
-
-                        cornerMeshRenderer.enabled = ( this.debugFlags & Debug.Corners ) == Debug.Corners;
-                    }
-                    if( this.debugCornerMesh ) {
-                        var cornerMeshFilter      = cornerObject.AddComponent<MeshFilter>( );
-                            cornerMeshFilter.mesh = this.debugCornerMesh;
-                    }
-                }
-
-                var edgesObject                  = new GameObject( $"Edges" );
-                    edgesObject.transform.parent = cellObject.transform;
-
-                var edgeCount = 0;
-                foreach( var edge in cell.edges ) {
-                    var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
-                        edgeObject.transform.parent = edgesObject.transform;
-
-                    if(
-                        this.debugEdgeMaterial || (
-                            this.debugEdgeIntersectionMaterial && edge.corners[0].sign != edge.corners[1].sign
-                        )
-                    ) {
-                        var edgeLineRenderer = edgeObject.AddComponent<LineRenderer>( );
-
-                        edgeLineRenderer.startWidth                = this.debugEdgeSize;
-                        edgeLineRenderer.endWidth                  = this.debugEdgeSize;
-                        edgeLineRenderer.numCapVertices            = 0;
-                        edgeLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                        edgeLineRenderer.receiveShadows            = false;
-                        edgeLineRenderer.material                  = edge.corners[0].sign != edge.corners[1].sign ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
-                        edgeLineRenderer.useWorldSpace             = false;
-                        edgeLineRenderer.startColor                = Color.white;
-                        edgeLineRenderer.endColor                  = Color.white;
-                        edgeLineRenderer.allowOcclusionWhenDynamic = false;
-
-                        edgeLineRenderer.SetPositions( new Vector3[] { edge.corners[0].position, edge.corners[1].position } );
-
-                        edgeLineRenderer.enabled = edge.corners[0].sign != edge.corners[1].sign
-                            ? ( this.debugFlags & Debug.Intersections ) == Debug.Intersections
-                            : ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
-                    }
-                }
-
-                if( cell.index > -1 ) {
+                if( voxel.intersectsIsosurface( ) ) {
                     var minimizingVertexObject                      = new GameObject( $"Minimizing Vertex" );
-                        minimizingVertexObject.transform.parent     = cellObject.transform;
-                        minimizingVertexObject.transform.position   = cell.vertex;
+                        minimizingVertexObject.transform.parent     = voxelObject.transform;
+                        minimizingVertexObject.transform.position   = voxel.getVertex( );
                         minimizingVertexObject.transform.localScale = new Vector3( this.debugMinimizingVertexSize, this.debugMinimizingVertexSize, this.debugMinimizingVertexSize );
 
                     if( this.debugMinimizingVertexMaterial ) {
@@ -198,15 +136,85 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
                         minimizingVertexLineRenderer.endColor                  = Color.white;
                         minimizingVertexLineRenderer.allowOcclusionWhenDynamic = false;
 
-                        minimizingVertexLineRenderer.SetPositions( new Vector3[] { cell.vertex, cell.vertex + cell.normal } );
+                        minimizingVertexLineRenderer.SetPositions( new Vector3[] { voxel.getVertex( ), voxel.getVertex( ) + voxel.getNormal( ) } );
 
                         minimizingVertexLineRenderer.enabled = ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers;
                     }
                 }
+
+            }
+
+            var corners = this.surfaceExtractor.getCorners( );
+
+            var cornersObject                  = new GameObject( $"Corners" );
+                cornersObject.transform.parent = debugObject.transform;
+
+            var cornerCount = 0;
+            foreach( var corner in corners ) {
+                var cornerObject                      = new GameObject( $"Corner {++cornerCount}" );
+                    cornerObject.transform.parent     = cornersObject.transform;
+                    cornerObject.transform.position   = corner.getPosition( );
+                    cornerObject.transform.localScale = new Vector3( this.debugCornerSize, this.debugCornerSize, this.debugCornerSize );
+
+                if( this.debugCornerMaterial ) {
+                    var cornerMeshRenderer                           = cornerObject.AddComponent<MeshRenderer>( );
+                        cornerMeshRenderer.material                  = this.debugCornerMaterial;
+                        cornerMeshRenderer.shadowCastingMode         = ShadowCastingMode.Off;
+                        cornerMeshRenderer.receiveShadows            = false;
+                        cornerMeshRenderer.lightProbeUsage           = LightProbeUsage.Off;
+                        cornerMeshRenderer.reflectionProbeUsage      = ReflectionProbeUsage.Off;
+                        cornerMeshRenderer.allowOcclusionWhenDynamic = false;
+
+                    cornerMeshRenderer.enabled = ( this.debugFlags & Debug.Corners ) == Debug.Corners;
+                }
+                if( this.debugCornerMesh ) {
+                    var cornerMeshFilter      = cornerObject.AddComponent<MeshFilter>( );
+                        cornerMeshFilter.mesh = this.debugCornerMesh;
+                }
+            }
+
+            var edges = this.surfaceExtractor.getEdges( );
+
+            var edgesObject                  = new GameObject( $"Edges" );
+                edgesObject.transform.parent = debugObject.transform;
+
+            var edgeCount = 0;
+            foreach( var edge in edges ) {
+                var edgeCorners = edge.getCorners( );
+
+                var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
+                    edgeObject.transform.parent = edgesObject.transform;
+
+                if(
+                    this.debugEdgeMaterial || (
+                        this.debugEdgeIntersectionMaterial && edgeCorners[0].getSign( ) != edgeCorners[1].getSign( )
+                    )
+                ) {
+                    var edgeLineRenderer = edgeObject.AddComponent<LineRenderer>( );
+
+                    edgeLineRenderer.startWidth                = this.debugEdgeSize;
+                    edgeLineRenderer.endWidth                  = this.debugEdgeSize;
+                    edgeLineRenderer.numCapVertices            = 0;
+                    edgeLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
+                    edgeLineRenderer.receiveShadows            = false;
+                    edgeLineRenderer.material                  = edgeCorners[0].getSign( ) != edgeCorners[1].getSign( ) ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
+                    edgeLineRenderer.useWorldSpace             = false;
+                    edgeLineRenderer.startColor                = Color.white;
+                    edgeLineRenderer.endColor                  = Color.white;
+                    edgeLineRenderer.allowOcclusionWhenDynamic = false;
+
+                    edgeLineRenderer.SetPositions( new Vector3[] { edgeCorners[0].getPosition( ), edgeCorners[1].getPosition( ) } );
+
+                    edgeLineRenderer.enabled = edgeCorners[0].getSign( ) != edgeCorners[1].getSign( )
+                        ? ( this.debugFlags & Debug.Intersections ) == Debug.Intersections
+                        : ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
+                }
             }
 
             debugObject.transform.localScale = Vector3.one;
+
         }
+
     }
 
 }

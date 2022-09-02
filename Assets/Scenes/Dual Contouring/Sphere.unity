@@ -362,7 +362,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4e959e4a2f0c4854aa88b8ba141754f5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 4
+  resolution: 8
   vertexMode: 0
   material: {fileID: 10302, guid: 0000000000000000f000000000000000, type: 0}
   debugFlags: 30

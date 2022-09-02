@@ -246,7 +246,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 08fe04ba774d81349be098aaf4683964, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 4
+  resolution: 8
   vertexMode: 1
   material: {fileID: 10302, guid: 0000000000000000f000000000000000, type: 0}
   debugFlags: 30

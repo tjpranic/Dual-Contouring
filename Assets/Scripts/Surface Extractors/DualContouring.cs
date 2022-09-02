@@ -6,64 +6,221 @@ using UnityEngine;
 
 public class DualContouring : SurfaceExtractor {
 
+    private class Corner : SurfaceExtractor.Corner {
+
+        public readonly Vector3 position;
+
+        private float _density = 0.0f;
+        public float density {
+            get { return this._density; }
+            set {
+                this._density = value;
+                this.sign     = value < 0.0f ? SurfaceExtractor.Corner.Sign.Inside : SurfaceExtractor.Corner.Sign.Outside;
+            }
+        }
+
+        public SurfaceExtractor.Corner.Sign sign { get; private set; } = SurfaceExtractor.Corner.Sign.None;
+
+        public Corner( Vector3 position ) {
+            this.position = position;
+        }
+
+        public Vector3 getPosition( ) {
+            return this.position;
+        }
+
+        public SurfaceExtractor.Corner.Sign getSign( ) {
+            return this.sign;
+        }
+
+        public bool Equals( SurfaceExtractor.Corner other ) {
+            return this.position.Equals( other.getPosition( ) );
+        }
+
+        public override int GetHashCode( ) {
+            return this.position.GetHashCode( );
+        }
+
+    }
+
+    private class Edge : SurfaceExtractor.Edge {
+
+        public readonly Corner[] corners;
+
+        public Vector3 intersection;
+        public Vector3 normal;
+
+        public Edge( Corner[] corners ) {
+            this.corners = corners;
+        }
+
+        public SurfaceExtractor.Corner[] getCorners( ) {
+            return this.corners;
+        }
+
+        public bool Equals( SurfaceExtractor.Edge other ) {
+            return this.corners[0].Equals( other.getCorners( )[0] ) && this.corners[1].Equals( other.getCorners( )[1] );
+        }
+
+        public override int GetHashCode( ) {
+            return this.corners[0].GetHashCode( ) ^ this.corners[1].GetHashCode( );
+        }
+
+    }
+
+    private class Voxel : SurfaceExtractor.Voxel {
+
+        public readonly Vector3  center;
+        public readonly Vector3  size;
+        public readonly Vector3  extents;
+        public readonly Vector3  minimum;
+        public readonly Vector3  maximum;
+        public readonly Corner[] corners;
+        public readonly Edge[]   edges;
+
+        public Vector3 vertex;
+        public Vector3 normal;
+        public int     index = -1;
+
+        public Voxel( Vector3 center, Vector3 size ) {
+            this.center  = center;
+            this.size    = size;
+            this.extents = size / 2;
+            this.minimum = this.center - this.extents;
+            this.maximum = this.center + this.extents;
+
+            /*
+            corner layout:
+                 4--------------7
+                /|             /|
+               / |            / |
+              /  |           /  |
+             5--------------6   |
+             |   |          |   |
+             |   |          |   |
+             |   3----------|---2
+             |  /           |  /
+             | /            | /
+             |/             |/
+             0--------------1
+            */
+            this.corners = new Corner[] {
+                // bottom
+                new( this.minimum ),
+                new( new Vector3( this.maximum.x, this.minimum.y, this.minimum.z ) ),
+                new( new Vector3( this.maximum.x, this.minimum.y, this.maximum.z ) ),
+                new( new Vector3( this.minimum.x, this.minimum.y, this.maximum.z ) ),
+                // top
+                new( new Vector3( this.minimum.x, this.maximum.y, this.maximum.z ) ),
+                new( new Vector3( this.minimum.x, this.maximum.y, this.minimum.z ) ),
+                new( new Vector3( this.maximum.x, this.maximum.y, this.minimum.z ) ),
+                new( this.maximum ),
+            };
+
+            /*
+            edge layout:
+                 +------3-------+
+                /|             /|
+               10|            11|
+              /  |           /  |
+             +---6---2------+   7
+             |   |          |   |
+             |   |          |   |
+             4   +------1---5---+
+             |  /           |  /
+             | 8            | 9
+             |/             |/
+             +-------0------+
+            */
+            this.edges = new Edge[] {
+                // x axis
+                new( new Corner[] { this.corners[0], this.corners[1] } ),
+                new( new Corner[] { this.corners[3], this.corners[2] } ),
+                new( new Corner[] { this.corners[5], this.corners[6] } ),
+                new( new Corner[] { this.corners[4], this.corners[7] } ),
+                // y axis
+                new( new Corner[] { this.corners[5], this.corners[0] } ),
+                new( new Corner[] { this.corners[6], this.corners[1] } ),
+                new( new Corner[] { this.corners[4], this.corners[3] } ),
+                new( new Corner[] { this.corners[7], this.corners[2] } ),
+                // z axis
+                new( new Corner[] { this.corners[0], this.corners[3] } ),
+                new( new Corner[] { this.corners[1], this.corners[2] } ),
+                new( new Corner[] { this.corners[5], this.corners[4] } ),
+                new( new Corner[] { this.corners[6], this.corners[7] } )
+            };
+        }
+
+        public Vector3 getCenter( ) {
+            return this.center;
+        }
+
+        public Vector3 getSize( ) {
+            return this.size;
+        }
+
+        public Vector3 getVertex( ) {
+            return this.vertex;
+        }
+
+        public Vector3 getNormal( ) {
+            return this.normal;
+        }
+
+        public bool intersectsIsosurface( ) {
+            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
+        }
+
+        public bool Equals( SurfaceExtractor.Voxel other ) {
+            return this.center == other.getCenter( ) && this.size == other.getSize( );
+        }
+
+        public override int GetHashCode( ) {
+            return this.center.GetHashCode( ) ^ this.size.GetHashCode( );
+        }
+
+    }
+
     private const int MinimizerIterations = 12;
 
-    // used to enumerate all positive x, y, z 2x2x1 cube grids containing a common edge
-    private readonly Cell.Adjacency[] adjacencies = {
-        new( new Vector3Int[] { new( 0, 0, 1 ), new( 0, 1, 0 ), new( 0, 1, 1 ) },  3 ),
-        new( new Vector3Int[] { new( 0, 0, 1 ), new( 1, 0, 0 ), new( 1, 0, 1 ) },  7 ),
-        new( new Vector3Int[] { new( 0, 1, 0 ), new( 1, 0, 0 ), new( 1, 1, 0 ) }, 11 )
-    };
-
-    private Cell[,,] grid;
+    private Voxel[,,] voxels;
 
     private readonly Vector3 origin = Vector3.zero;
     private readonly Vector3 scale  = Vector3.one / 2;
 
     public ( Vector3[] positions, Vector3[] normals, int[] indices ) voxelize( DensityFunction densityFunction, int resolution ) {
-        Debug.Assert( MathUtilities.isPowerOfTwo( resolution ), "resolution must be a power of 2" );
+        this.voxels = new Voxel[resolution, resolution, resolution];
+        for( var x = 0; x < this.voxels.GetLength( 0 ); ++x ) {
+            for( var y = 0; y < this.voxels.GetLength( 1 ); ++y ) {
+                for( var z = 0; z < this.voxels.GetLength( 2 ); ++z ) {
+                    var size    = Vector3.one / resolution;                 // center relative to 0, 0, 0
+                    var center  = ( new Vector3( x, y, z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
 
-        var gridSize = ( int )Mathf.Pow( 2, resolution - 1 );
-
-        this.grid = new Cell[gridSize, gridSize, gridSize];
-
-        // build uniformly subdivided grid
-
-        for( var x = 0; x < gridSize; ++x ) {
-            for( var y = 0; y < gridSize; ++y ) {
-                for( var z = 0; z < gridSize; ++z ) {
-                    var cell = new Cell( new Vector3( x, y, z ) / gridSize, Vector3.one / gridSize );
-
-                    // center relative to 0, 0, 0
-                    cell.center -= cell.extents * ( gridSize - 1 );
-
-                    this.grid[x, y, z] = cell;
+                    this.voxels[x, y, z] = new Voxel( center, size );
                 }
             }
         }
 
-        // find minimizing vertices and surface normals in each cell with at least one edge exhibiting a sign change
-
         var index = 0;
-        foreach( var cell in this.grid ) {
-            foreach( var corner in cell.corners ) {
+        foreach( var voxel in this.voxels ) {
+            foreach( var corner in voxel.corners ) {
                 corner.density = densityFunction.sample( corner.position, this.origin, this.scale );
             }
 
             if(
-                cell.corners.All( ( corner ) => corner.sign == Cell.Sign.Inside  ) ||
-                cell.corners.All( ( corner ) => corner.sign == Cell.Sign.Outside )
+                voxel.corners.All( ( corner ) => corner.sign == SurfaceExtractor.Corner.Sign.Inside  ) ||
+                voxel.corners.All( ( corner ) => corner.sign == SurfaceExtractor.Corner.Sign.Outside )
             ) {
                 // cell is either fully inside or outside the volume, skip
                 continue;
             }
 
-            var planes = new List<Plane>( );
+            var intersectionPlanes = new List<Plane>( );
 
-            foreach( var edge in cell.edges ) {
+            foreach( var edge in voxel.edges ) {
                 if(
-                    ( edge.corners[0].sign == Cell.Sign.Inside  && edge.corners[1].sign == Cell.Sign.Inside  ) ||
-                    ( edge.corners[0].sign == Cell.Sign.Outside && edge.corners[1].sign == Cell.Sign.Outside )
+                    ( edge.corners[0].sign == SurfaceExtractor.Corner.Sign.Inside  && edge.corners[1].sign == SurfaceExtractor.Corner.Sign.Inside  ) ||
+                    ( edge.corners[0].sign == SurfaceExtractor.Corner.Sign.Outside && edge.corners[1].sign == SurfaceExtractor.Corner.Sign.Outside )
                 ) {
                     // no sign change detected on edge, skip
                     continue;
@@ -72,121 +229,96 @@ public class DualContouring : SurfaceExtractor {
                 edge.intersection = this.approximateIntersection ( edge );
                 edge.normal       = this.calculateEdgeNormal     ( edge, densityFunction );
 
-                planes.Add( new( edge.normal, edge.intersection ) );
+                intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
             }
 
             // calculate minimizing vertex
             // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
             // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
-            var minimizingVertex = cell.center;
+            var minimizingVertex = voxel.center;
 
             for( var i = 0; i < MinimizerIterations; i++ ) {
-                minimizingVertex -= planes.Aggregate(
+                minimizingVertex -= intersectionPlanes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
                         accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
                         return accumulator;
                     }
-                ) / planes.Count;
+                ) / intersectionPlanes.Count;
             }
 
-            cell.vertex = minimizingVertex;
+            voxel.vertex = minimizingVertex;
 
             // calculate surface normal
-            cell.normal = Vector3.Normalize(
-                planes.Aggregate(
+            voxel.normal = Vector3.Normalize(
+                intersectionPlanes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
                         accumulator += plane.normal;
                         return accumulator;
                     }
-                ) / planes.Count
+                ) / intersectionPlanes.Count
             );
 
-            cell.index = index++;
+            voxel.index = index++;
         }
 
         var positions = new List<Vector3>( );
         var normals   = new List<Vector3>( );
         var indices   = new List<int>( );
 
-        // contour and generate indices
+        // generate vertices and indices
 
-        for( var x = 0; x < gridSize; ++x ) {
-            for( var y = 0; y < gridSize; ++y ) {
-                for( var z = 0; z < gridSize; ++z ) {
-                    var cell = this.grid[x, y, z];
+        for( var x = 0; x < this.voxels.GetLength( 0 ); ++x ) {
+            for( var y = 0; y < this.voxels.GetLength( 1 ); ++y ) {
+                for( var z = 0; z < this.voxels.GetLength( 2 ); ++z ) {
+                    var voxel = this.voxels[x, y, z];
 
-                    if( cell.index == -1 ) {
+                    if( voxel.index == -1 ) {
                         continue;
                     }
 
-                    positions.Add ( cell.vertex );
-                    normals.Add   ( cell.normal );
+                    positions.Add ( voxel.vertex );
+                    normals.Add   ( voxel.normal );
 
-                    var cells = new Cell[4];
+                    // on every positive axis, generate indices using 4 voxel surrounding a common edge
 
-                    cells[0] = cell;
-
-                    var current = new Vector3Int( x, y, z );
-
-                    // for all valid 2x2x1 cube permutations along positive x, y, z directions
-                    foreach( var adjacency in this.adjacencies ) {
-                        var cellIndex1 = current + adjacency.offsets[0];
-                        if(
-                            cellIndex1.x >= this.grid.GetLength( 0 ) ||
-                            cellIndex1.y >= this.grid.GetLength( 1 ) ||
-                            cellIndex1.z >= this.grid.GetLength( 2 )
-                        ) {
-                            continue;
+                    // x axis
+                    if( y + 1 < this.voxels.GetLength( 1 ) && z + 1 < this.voxels.GetLength( 2 ) ) {
+                        var voxels = new Voxel[] {
+                            voxel,
+                            this.voxels[x, y,     z + 1],
+                            this.voxels[x, y + 1, z    ],
+                            this.voxels[x, y + 1, z + 1]
+                        };
+                        if( voxels[1].index > -1 && voxels[2].index > -1 && voxels[3].index > -1 ) {
+                            indices.AddRange( this.generateIndices( voxels, voxels[0].edges[3] ) );
                         }
+                    }
 
-                        var cellIndex2 = current + adjacency.offsets[1];
-                        if(
-                            cellIndex2.x >= this.grid.GetLength( 0 ) ||
-                            cellIndex2.y >= this.grid.GetLength( 1 ) ||
-                            cellIndex2.z >= this.grid.GetLength( 2 )
-                        ) {
-                            continue;
+                    // y axis
+                    if( x + 1 < this.voxels.GetLength( 0 ) && z + 1 < this.voxels.GetLength( 2 ) ) {
+                        var voxels = new Voxel[] {
+                            voxel,
+                            this.voxels[x,     y, z + 1],
+                            this.voxels[x + 1, y, z    ],
+                            this.voxels[x + 1, y, z + 1]
+                        };
+                        if( voxels[1].index > -1 && voxels[2].index > -1 && voxels[3].index > -1 ) {
+                            indices.AddRange( this.generateIndices( voxels, voxels[0].edges[7] ) );
                         }
+                    }
 
-                        var cellIndex3 = current + adjacency.offsets[2];
-                        if(
-                            cellIndex3.x >= this.grid.GetLength( 0 ) ||
-                            cellIndex3.y >= this.grid.GetLength( 1 ) ||
-                            cellIndex3.z >= this.grid.GetLength( 2 )
-                        ) {
-                            continue;
-                        }
-
-                        cells[1] = this.grid[cellIndex1.x, cellIndex1.y, cellIndex1.z];
-                        cells[2] = this.grid[cellIndex2.x, cellIndex2.y, cellIndex2.z];
-                        cells[3] = this.grid[cellIndex3.x, cellIndex3.y, cellIndex3.z];
-
-                        if( cells[1].index == -1 || cells[2].index == -1 || cells[3].index == -1 ) {
-                            continue;
-                        }
-
-                        // use common edge contained by 2x2x1 cube grid to determine triangle winding order
-                        var flip = cells[0].edges[adjacency.edgeIndex].corners[0].sign == Cell.Sign.Inside;
-
-                        if( !flip ) {
-                            indices.Add( cells[0].index );
-                            indices.Add( cells[1].index );
-                            indices.Add( cells[2].index );
-
-                            indices.Add( cells[2].index );
-                            indices.Add( cells[1].index );
-                            indices.Add( cells[3].index );
-                        }
-                        else {
-                            indices.Add( cells[3].index );
-                            indices.Add( cells[1].index );
-                            indices.Add( cells[2].index );
-
-                            indices.Add( cells[2].index );
-                            indices.Add( cells[1].index );
-                            indices.Add( cells[0].index );
+                    // z axis
+                    if( x + 1 < this.voxels.GetLength( 0 ) && y + 1 < this.voxels.GetLength( 1 ) ) {
+                        var voxels = new Voxel[] {
+                            voxel,
+                            this.voxels[x,     y + 1, z],
+                            this.voxels[x + 1, y,     z],
+                            this.voxels[x + 1, y + 1, z]
+                        };
+                        if( voxels[1].index > -1 && voxels[2].index > -1 && voxels[3].index > -1 ) {
+                            indices.AddRange( this.generateIndices( voxels, voxels[0].edges[11] ) );
                         }
                     }
                 }
@@ -196,16 +328,39 @@ public class DualContouring : SurfaceExtractor {
         return ( positions.ToArray( ), normals.ToArray( ), indices.ToArray( ) );
     }
 
-    public List<Cell> getGridCells( ) {
-        return this.grid.Flatten( ).ToList( );
+    public IEnumerable<SurfaceExtractor.Corner> getCorners( ) {
+        return this.voxels.Flatten( ).Aggregate(
+            new List<SurfaceExtractor.Corner>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.corners );
+                return accumulator;
+            }
+        ).Distinct( );
     }
 
-    private Vector3 approximateIntersection( Cell.Edge edge ) {
+    public IEnumerable<SurfaceExtractor.Edge> getEdges( ) {
+        return this.voxels.Flatten( ).Aggregate(
+            new List<SurfaceExtractor.Edge>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.edges );
+                return accumulator;
+            }
+        ).Distinct( );
+    }
+
+    public IEnumerable<SurfaceExtractor.Voxel> getVoxels( ) {
+        return this.voxels.Flatten( );
+    }
+
+    private Vector3 approximateIntersection( Edge edge ) {
+        // TODO: try binary search
+        // see https://www.reddit.com/r/gamedev/comments/ieeqnz/highaccuracy_dual_contouring_on_the_gpu_tech/g2flrmo/
+
         // linear interpolation
         return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
     }
 
-    private Vector3 calculateEdgeNormal( Cell.Edge edge, DensityFunction densityFunction ) {
+    private Vector3 calculateEdgeNormal( Edge edge, DensityFunction densityFunction ) {
         var step = 0.1f;
 
         // sample surrounding x, y, z locations and take the difference
@@ -216,6 +371,30 @@ public class DualContouring : SurfaceExtractor {
                 densityFunction.sample( edge.intersection + new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale )
             )
         );
+    }
+
+    private int[] generateIndices( Voxel[] voxels, Edge edge ) {
+        // ensure quad is indexed facing outward
+        if( edge.corners[0].sign != SurfaceExtractor.Corner.Sign.Inside ) {
+            return new int[] {
+                voxels[0].index,
+                voxels[1].index,
+                voxels[2].index,
+                voxels[2].index,
+                voxels[1].index,
+                voxels[3].index
+            };
+        }
+        else {
+            return new int[] {
+                voxels[3].index,
+                voxels[1].index,
+                voxels[2].index,
+                voxels[2].index,
+                voxels[1].index,
+                voxels[0].index
+            };
+        }
     }
 
 }
@@ -238,14 +417,6 @@ public static class LINQExtensions {
                 }
             }
         }
-    }
-
-}
-
-public static class MathUtilities {
-
-    public static bool isPowerOfTwo( int number ) {
-        return ( number != 0 ) && ( ( number & ( number - 1 ) ) == 0 );
     }
 
 }
