@@ -1,1 +1,0 @@
-﻿public class Cube : VoxelObject<DualContouring, Cuboid> { }

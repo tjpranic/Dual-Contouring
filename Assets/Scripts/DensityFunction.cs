@@ -1,10 +1,18 @@
 ﻿using UnityEngine;
 
-// List of signed distance functions:
+// list of signed distance functions:
 // https://iquilezles.org/articles/distfunctions/
 
 public interface DensityFunction {
 
-    public float sample( Vector3 position, Vector3 origin, Vector3 scale );
+    public enum CombinationMode {
+        Union,
+        Intersection,
+        Subtraction
+    }
+
+    public CombinationMode getCombinationMode( );
+
+    public float sample( Vector3 position );
 
 }

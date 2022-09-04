@@ -34,16 +34,16 @@ public interface SurfaceExtractor {
 
         public Vector3 getNormal( );
 
-        public bool intersectsIsosurface( );
+        public bool intersectsContour( );
 
     }
-
-    public ( Vector3[] positions, Vector3[] normals, int[] indices ) voxelize( DensityFunction densityFunction, int resolution );
 
     public IEnumerable<Corner> getCorners( );
 
     public IEnumerable<Edge> getEdges( );
 
     public IEnumerable<Voxel> getVoxels( );
+
+    public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
 
 }

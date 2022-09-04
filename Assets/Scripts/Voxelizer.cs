@@ -1,23 +1,19 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
 
-public class VoxelObject<Voxelizer, Model> : MonoBehaviour
-    where Voxelizer : SurfaceExtractor, new( )
-    where Model     : DensityFunction,  new( )
-{
-
-    private SurfaceExtractor surfaceExtractor;
-    private DensityFunction  densityFunction;
+[RequireComponent( typeof( MeshRenderer ) )]
+public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     public enum VertexMode {
         Shared,
         Split
     }
 
-    public int        resolution = 1;
+    public int        resolution = 2;
     public VertexMode vertexMode = VertexMode.Shared;
-    public Material   material;
 
     [Flags]
     public enum Debug {
@@ -32,10 +28,10 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     [Space]
 
     public Debug    debugFlags                = Debug.Off;
-    public float    debugCornerSize           = 0.1f;
-    public float    debugEdgeSize             = 0.1f;
+    public float    debugCornerSize           = 0.0125f;
+    public float    debugEdgeSize             = 0.025f;
     public float    debugMinimizingVertexSize = 0.1f;
-    public float    debugSurfaceNormalSize    = 0.1f;
+    public float    debugSurfaceNormalSize    = 0.025f;
     public Mesh     debugCellMesh;
     public Material debugCellMaterial;
     public Mesh     debugCornerMesh;
@@ -45,22 +41,14 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
     public Material debugMinimizingVertexMaterial;
     public Material debugSurfaceNormalMaterial;
 
-    void Start( ) {
-        this.surfaceExtractor = new Voxelizer( );
-        this.densityFunction  = new Model( );
+    public void Start( ) {
 
-        var ( positions, normals, indices ) = this.surfaceExtractor.voxelize( this.densityFunction, this.resolution );
-
-        var meshRenderer          = this.gameObject.AddComponent<MeshRenderer>( );
-            meshRenderer.material = this.material ? this.material : new Material( Shader.Find( "Standard" ) );
+        var volumes = this.GetComponentsInChildren<Volume>( );
+        var mesh    = this.voxelize( this.resolution, volumes );
 
         var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
-        meshFilter.mesh = new Mesh {
-            vertices  = positions,
-            normals   = normals,
-            triangles = indices
-        };
+        meshFilter.mesh = mesh;
 
         if( this.vertexMode == VertexMode.Split ) {
             // convert to flat shading by splitting vertices
@@ -79,11 +67,12 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
 
         meshFilter.mesh.OptimizeReorderVertexBuffer( );
 
+        // debug rendering
         if( this.debugFlags != Debug.Off ) {
             var debugObject                  = new GameObject( "Debug" );
                 debugObject.transform.parent = this.gameObject.transform;
 
-            var voxels = this.surfaceExtractor.getVoxels( );
+            var voxels = this.getVoxels( );
 
             var voxelsObject                  = new GameObject( $"Voxels" );
                 voxelsObject.transform.parent = debugObject.transform;
@@ -106,7 +95,7 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
                         cellMeshFilter.mesh = this.debugCellMesh;
                 }
 
-                if( voxel.intersectsIsosurface( ) ) {
+                if( voxel.intersectsContour( ) ) {
                     var minimizingVertexObject                      = new GameObject( $"Minimizing Vertex" );
                         minimizingVertexObject.transform.parent     = voxelObject.transform;
                         minimizingVertexObject.transform.position   = voxel.getVertex( );
@@ -144,7 +133,7 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
 
             }
 
-            var corners = this.surfaceExtractor.getCorners( );
+            var corners = this.getCorners( );
 
             var cornersObject                  = new GameObject( $"Corners" );
                 cornersObject.transform.parent = debugObject.transform;
@@ -173,7 +162,7 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
                 }
             }
 
-            var edges = this.surfaceExtractor.getEdges( );
+            var edges = this.getEdges( );
 
             var edgesObject                  = new GameObject( $"Edges" );
                 edgesObject.transform.parent = debugObject.transform;
@@ -216,5 +205,13 @@ public class VoxelObject<Voxelizer, Model> : MonoBehaviour
         }
 
     }
+
+    public abstract IEnumerable<SurfaceExtractor.Corner> getCorners( );
+
+    public abstract IEnumerable<SurfaceExtractor.Edge> getEdges( );
+
+    public abstract IEnumerable<SurfaceExtractor.Voxel> getVoxels( );
+
+    public abstract Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
 
 }

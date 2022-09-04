@@ -1,16 +1,17 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
 // dual contouring implementation using uniform grid
 
-public class DualContouring : SurfaceExtractor {
+public class DualContouring : Voxelizer {
 
     private class Corner : SurfaceExtractor.Corner {
 
         public readonly Vector3 position;
 
-        private float _density = 0.0f;
+        private float _density;
         public float density {
             get { return this._density; }
             set {
@@ -167,7 +168,7 @@ public class DualContouring : SurfaceExtractor {
             return this.normal;
         }
 
-        public bool intersectsIsosurface( ) {
+        public bool intersectsContour( ) {
             return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
         }
 
@@ -181,19 +182,53 @@ public class DualContouring : SurfaceExtractor {
 
     }
 
-    private const int MinimizerIterations = 12;
+    private const int BinarySearchIterations = 16;
+    private const int MinimizerIterations    = 16;
 
     private Voxel[,,] voxels;
 
-    private readonly Vector3 origin = Vector3.zero;
-    private readonly Vector3 scale  = Vector3.one / 2;
+    public enum IntersectionApproximationMode {
+        BinarySearch,
+        LinearInterpolation
+    }
 
-    public ( Vector3[] positions, Vector3[] normals, int[] indices ) voxelize( DensityFunction densityFunction, int resolution ) {
+    [Space( )]
+
+    public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
+
+    public override IEnumerable<SurfaceExtractor.Corner> getCorners( ) {
+        return this.voxels.Flatten( ).Aggregate(
+            new List<SurfaceExtractor.Corner>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.corners );
+                return accumulator;
+            }
+        ).Distinct( );
+    }
+
+    public override IEnumerable<SurfaceExtractor.Edge> getEdges( ) {
+        return this.voxels.Flatten( ).Aggregate(
+            new List<SurfaceExtractor.Edge>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.edges );
+                return accumulator;
+            }
+        ).Distinct( );
+    }
+
+    public override IEnumerable<SurfaceExtractor.Voxel> getVoxels( ) {
+        return this.voxels.Flatten( );
+    }
+
+    public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
+
+        // create uniformly subdivided voxel grid
+
         this.voxels = new Voxel[resolution, resolution, resolution];
         for( var x = 0; x < this.voxels.GetLength( 0 ); ++x ) {
             for( var y = 0; y < this.voxels.GetLength( 1 ); ++y ) {
                 for( var z = 0; z < this.voxels.GetLength( 2 ); ++z ) {
-                    var size    = Vector3.one / resolution;                 // center relative to 0, 0, 0
+                    var size    = Vector3.one / resolution;                 // center voxel relative to 0, 0, 0
                     var center  = ( new Vector3( x, y, z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
 
                     this.voxels[x, y, z] = new Voxel( center, size );
@@ -201,12 +236,25 @@ public class DualContouring : SurfaceExtractor {
             }
         }
 
-        var index = 0;
+        // TODO: add multi-material functionality
+
+        densityFunctions = densityFunctions.OrderBy( ( densityFunction ) => densityFunction.getCombinationMode( ) );
+
+        // sample corner densities
+
         foreach( var voxel in this.voxels ) {
             foreach( var corner in voxel.corners ) {
-                corner.density = densityFunction.sample( corner.position, this.origin, this.scale );
+                corner.density = densityFunctions.Aggregate(
+                    float.MaxValue,
+                    ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, corner.position )
+                );
             }
+        }
 
+        // find contour intersections and calculate minimizing vertices
+
+        var index = 0;
+        foreach( var voxel in this.voxels ) {
             if(
                 voxel.corners.All( ( corner ) => corner.sign == SurfaceExtractor.Corner.Sign.Inside  ) ||
                 voxel.corners.All( ( corner ) => corner.sign == SurfaceExtractor.Corner.Sign.Outside )
@@ -226,8 +274,8 @@ public class DualContouring : SurfaceExtractor {
                     continue;
                 }
 
-                edge.intersection = this.approximateIntersection ( edge );
-                edge.normal       = this.calculateEdgeNormal     ( edge, densityFunction );
+                edge.intersection = this.approximateIntersection ( edge, densityFunctions );
+                edge.normal       = this.calculateEdgeNormal     ( edge, densityFunctions );
 
                 intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
             }
@@ -260,12 +308,13 @@ public class DualContouring : SurfaceExtractor {
                 ) / intersectionPlanes.Count
             );
 
-            voxel.index = index++;
+            voxel.index = voxel.index == -1 ? index++ : voxel.index;
         }
 
-        var positions = new List<Vector3>( );
-        var normals   = new List<Vector3>( );
-        var indices   = new List<int>( );
+
+        var vertices = new List<Vector3>( );
+        var normals  = new List<Vector3>( );
+        var indices  = new List<int>( );
 
         // generate vertices and indices
 
@@ -278,8 +327,8 @@ public class DualContouring : SurfaceExtractor {
                         continue;
                     }
 
-                    positions.Add ( voxel.vertex );
-                    normals.Add   ( voxel.normal );
+                    vertices.Add ( voxel.vertex );
+                    normals.Add  ( voxel.normal );
 
                     // on every positive axis, generate indices using 4 voxel surrounding a common edge
 
@@ -325,52 +374,95 @@ public class DualContouring : SurfaceExtractor {
             }
         }
 
-        return ( positions.ToArray( ), normals.ToArray( ), indices.ToArray( ) );
+        return new Mesh {
+            vertices  = vertices.ToArray( ),
+            normals   = normals.ToArray( ),
+            triangles = indices.ToArray( )
+        };
     }
 
-    public IEnumerable<SurfaceExtractor.Corner> getCorners( ) {
-        return this.voxels.Flatten( ).Aggregate(
-            new List<SurfaceExtractor.Corner>( ),
-            ( accumulator, voxel ) => {
-                accumulator.AddRange( voxel.corners );
-                return accumulator;
+    private float sampleDensityFunction( float density, DensityFunction densityFunction, Vector3 position ) {
+        density = densityFunction.getCombinationMode( ) switch {
+            DensityFunction.CombinationMode.Union        => Mathf.Min( density,  densityFunction.sample( position ) ),
+            DensityFunction.CombinationMode.Intersection => Mathf.Max( density,  densityFunction.sample( position ) ),
+            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( density, -densityFunction.sample( position ) ),
+            _                                            => throw new Exception( "Unknown combination mode specified" ),
+        };
+        return density;
+    }
+
+    private Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
+        if( this.intersectionApproximationMode == IntersectionApproximationMode.BinarySearch ) {
+
+            var ( start, end ) = edge.corners[0].density < edge.corners[1].density
+                ? ( edge.corners[0].position, edge.corners[1].position )
+                : ( edge.corners[1].position, edge.corners[0].position );
+
+            var intersection = Vector3.zero;
+            for( var iteration = 0; iteration < BinarySearchIterations; ++iteration ) {
+                intersection = start + ( 0.5f * ( end - start ) );
+
+                var density = densityFunctions.Aggregate(
+                    float.MaxValue,
+                    ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, intersection )
+                );
+
+                if( density < 0.0f ) {
+                    start = intersection;
+                }
+                else if( density > 0.0f ) {
+                    end = intersection;
+                }
+                else if( density == 0.0f ) {
+                    break;
+                }
             }
-        ).Distinct( );
+
+            return intersection;
+        }
+        else if( this.intersectionApproximationMode == IntersectionApproximationMode.LinearInterpolation ) {
+            return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
+        }
+
+        throw new Exception( "Unknown intersection approximation mode specified" );
     }
 
-    public IEnumerable<SurfaceExtractor.Edge> getEdges( ) {
-        return this.voxels.Flatten( ).Aggregate(
-            new List<SurfaceExtractor.Edge>( ),
-            ( accumulator, voxel ) => {
-                accumulator.AddRange( voxel.edges );
-                return accumulator;
-            }
-        ).Distinct( );
-    }
-
-    public IEnumerable<SurfaceExtractor.Voxel> getVoxels( ) {
-        return this.voxels.Flatten( );
-    }
-
-    private Vector3 approximateIntersection( Edge edge ) {
-        // TODO: try binary search
-        // see https://www.reddit.com/r/gamedev/comments/ieeqnz/highaccuracy_dual_contouring_on_the_gpu_tech/g2flrmo/
-
-        // linear interpolation
-        return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
-    }
-
-    private Vector3 calculateEdgeNormal( Edge edge, DensityFunction densityFunction ) {
+    private Vector3 calculateEdgeNormal( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
         var step = 0.1f;
 
         // sample surrounding x, y, z locations and take the difference
-        return Vector3.Normalize(
-            new Vector3(
-                densityFunction.sample( edge.intersection + new Vector3( step, 0.0f, 0.0f ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( step, 0.0f, 0.0f ), this.origin, this.scale ),
-                densityFunction.sample( edge.intersection + new Vector3( 0.0f, step, 0.0f ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( 0.0f, step, 0.0f ), this.origin, this.scale ),
-                densityFunction.sample( edge.intersection + new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale ) - densityFunction.sample( edge.intersection - new Vector3( 0.0f, 0.0f, step ), this.origin, this.scale )
-            )
+
+        var positive = Vector3.positiveInfinity;
+
+        positive.x = densityFunctions.Aggregate(
+            positive.x,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( step, 0.0f, 0.0f ) )
         );
+        positive.y = densityFunctions.Aggregate(
+            positive.y,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, step, 0.0f ) )
+        );
+        positive.z = densityFunctions.Aggregate(
+            positive.z,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, 0.0f, step ) )
+        );
+
+        var negative = Vector3.positiveInfinity;
+
+        negative.x = densityFunctions.Aggregate(
+            negative.x,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( step, 0.0f, 0.0f ) )
+        );
+        negative.y = densityFunctions.Aggregate(
+            negative.y,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, step, 0.0f ) )
+        );
+        negative.z = densityFunctions.Aggregate(
+            negative.z,
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, 0.0f, step ) )
+        );
+
+        return Vector3.Normalize( positive - negative );
     }
 
     private int[] generateIndices( Voxel[] voxels, Edge edge ) {
@@ -394,28 +486,6 @@ public class DualContouring : SurfaceExtractor {
                 voxels[1].index,
                 voxels[0].index
             };
-        }
-    }
-
-}
-
-public static class LINQExtensions {
-
-    public static IEnumerable<T> Flatten<T>( this T[,] array ) {
-        for( var x = 0; x < array.GetLength( 0 ); x++ ) {
-            for( var y = 0; y < array.GetLength( 1 ); y++ ) {
-                yield return array[x, y];
-            }
-        }
-    }
-
-    public static IEnumerable<T> Flatten<T>( this T[,,] array ) {
-        for( var x = 0; x < array.GetLength( 0 ); x++ ) {
-            for( var y = 0; y < array.GetLength( 1 ); y++ ) {
-                for( var z = 0; z < array.GetLength( 2 ); z++ ) {
-                    yield return array[x, y, z];
-                }
-            }
         }
     }
 
