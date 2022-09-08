@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -50,16 +49,29 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
         meshFilter.mesh = mesh;
 
+        // convert to flat shading by splitting vertices
         if( this.vertexMode == VertexMode.Split ) {
-            // convert to flat shading by splitting vertices
-            var triangles = meshFilter.mesh.triangles;
-            var vertices  = new Vector3[triangles.Length];
-            for( var triangleIndex = 0; triangleIndex < triangles.Length; ++triangleIndex ) {
-                vertices[triangleIndex]  = meshFilter.mesh.vertices[triangles[triangleIndex]];
-                triangles[triangleIndex] = triangleIndex;
+
+            var vertices  = new Vector3[mesh.triangles.Length];
+            var triangles = new Dictionary<int, int[]>( );
+
+            var subMeshTriangleIndexStart = 0;
+            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+                var subMeshTriangles = meshFilter.mesh.GetTriangles( subMeshIndex );
+                for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
+                    var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
+
+                    vertices[subMeshTriangleIndex]  = meshFilter.mesh.vertices[subMeshTriangles[triangleIndex]];
+                    subMeshTriangles[triangleIndex] = subMeshTriangleIndex;
+                }
+                triangles.Add( subMeshIndex, subMeshTriangles );
+                subMeshTriangleIndexStart += subMeshTriangles.Length;
             }
-            meshFilter.mesh.vertices  = vertices;
-            meshFilter.mesh.triangles = triangles;
+
+            meshFilter.mesh.vertices = vertices;
+            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+                meshFilter.mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
+            }
 
             meshFilter.mesh.RecalculateBounds( );
             meshFilter.mesh.RecalculateNormals( );
@@ -72,17 +84,15 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
             var debugObject                  = new GameObject( "Debug" );
                 debugObject.transform.parent = this.gameObject.transform;
 
-            var voxels = this.getVoxels( );
-
             var voxelsObject                  = new GameObject( $"Voxels" );
                 voxelsObject.transform.parent = debugObject.transform;
 
             var voxelCount = 0;
-            foreach( var voxel in voxels ) {
+            foreach( var voxel in this.voxels ) {
                 var voxelObject                      = new GameObject( $"Voxel {++voxelCount}" );
                     voxelObject.transform.parent     = voxelsObject.transform;
-                    voxelObject.transform.position   = voxel.getCenter( );
-                    voxelObject.transform.localScale = voxel.getSize( );
+                    voxelObject.transform.position   = voxel.center;
+                    voxelObject.transform.localScale = voxel.size;
 
                 if( this.debugCellMaterial ) {
                     var cellMeshRenderer          = voxelObject.AddComponent<MeshRenderer>( );
@@ -95,10 +105,10 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                         cellMeshFilter.mesh = this.debugCellMesh;
                 }
 
-                if( voxel.intersectsContour( ) ) {
+                if( voxel.hasFeaturePoint( ) ) {
                     var minimizingVertexObject                      = new GameObject( $"Minimizing Vertex" );
                         minimizingVertexObject.transform.parent     = voxelObject.transform;
-                        minimizingVertexObject.transform.position   = voxel.getVertex( );
+                        minimizingVertexObject.transform.position   = voxel.vertex;
                         minimizingVertexObject.transform.localScale = new Vector3( this.debugMinimizingVertexSize, this.debugMinimizingVertexSize, this.debugMinimizingVertexSize );
 
                     if( this.debugMinimizingVertexMaterial ) {
@@ -125,7 +135,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                         minimizingVertexLineRenderer.endColor                  = Color.white;
                         minimizingVertexLineRenderer.allowOcclusionWhenDynamic = false;
 
-                        minimizingVertexLineRenderer.SetPositions( new Vector3[] { voxel.getVertex( ), voxel.getVertex( ) + voxel.getNormal( ) } );
+                        minimizingVertexLineRenderer.SetPositions( new Vector3[] { voxel.vertex, voxel.vertex + voxel.normal } );
 
                         minimizingVertexLineRenderer.enabled = ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers;
                     }
@@ -133,16 +143,14 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
             }
 
-            var corners = this.getCorners( );
-
             var cornersObject                  = new GameObject( $"Corners" );
                 cornersObject.transform.parent = debugObject.transform;
 
             var cornerCount = 0;
-            foreach( var corner in corners ) {
+            foreach( var corner in this.corners ) {
                 var cornerObject                      = new GameObject( $"Corner {++cornerCount}" );
                     cornerObject.transform.parent     = cornersObject.transform;
-                    cornerObject.transform.position   = corner.getPosition( );
+                    cornerObject.transform.position   = corner.position;
                     cornerObject.transform.localScale = new Vector3( this.debugCornerSize, this.debugCornerSize, this.debugCornerSize );
 
                 if( this.debugCornerMaterial ) {
@@ -162,21 +170,17 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                 }
             }
 
-            var edges = this.getEdges( );
-
             var edgesObject                  = new GameObject( $"Edges" );
                 edgesObject.transform.parent = debugObject.transform;
 
             var edgeCount = 0;
-            foreach( var edge in edges ) {
-                var edgeCorners = edge.getCorners( );
-
+            foreach( var edge in this.edges ) {
                 var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
                     edgeObject.transform.parent = edgesObject.transform;
 
                 if(
                     this.debugEdgeMaterial || (
-                        this.debugEdgeIntersectionMaterial && edgeCorners[0].getSign( ) != edgeCorners[1].getSign( )
+                        this.debugEdgeIntersectionMaterial && edge.intersectsContour( )
                     )
                 ) {
                     var edgeLineRenderer = edgeObject.AddComponent<LineRenderer>( );
@@ -186,15 +190,15 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                     edgeLineRenderer.numCapVertices            = 0;
                     edgeLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
                     edgeLineRenderer.receiveShadows            = false;
-                    edgeLineRenderer.material                  = edgeCorners[0].getSign( ) != edgeCorners[1].getSign( ) ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
+                    edgeLineRenderer.material                  = edge.intersectsContour( ) ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
                     edgeLineRenderer.useWorldSpace             = false;
                     edgeLineRenderer.startColor                = Color.white;
                     edgeLineRenderer.endColor                  = Color.white;
                     edgeLineRenderer.allowOcclusionWhenDynamic = false;
 
-                    edgeLineRenderer.SetPositions( new Vector3[] { edgeCorners[0].getPosition( ), edgeCorners[1].getPosition( ) } );
+                    edgeLineRenderer.SetPositions( new Vector3[] { edge.corners[0].position, edge.corners[1].position } );
 
-                    edgeLineRenderer.enabled = edgeCorners[0].getSign( ) != edgeCorners[1].getSign( )
+                    edgeLineRenderer.enabled = edge.intersectsContour( )
                         ? ( this.debugFlags & Debug.Intersections ) == Debug.Intersections
                         : ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
                 }
@@ -206,11 +210,9 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     }
 
-    public abstract IEnumerable<SurfaceExtractor.Corner> getCorners( );
-
-    public abstract IEnumerable<SurfaceExtractor.Edge> getEdges( );
-
-    public abstract IEnumerable<SurfaceExtractor.Voxel> getVoxels( );
+    public abstract IEnumerable<SurfaceExtractor.Corner> corners { get; }
+    public abstract IEnumerable<SurfaceExtractor.Edge>   edges   { get; }
+    public abstract IEnumerable<SurfaceExtractor.Voxel>  voxels  { get; }
 
     public abstract Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
 

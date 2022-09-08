@@ -4,45 +4,50 @@ using UnityEngine;
 
 public interface SurfaceExtractor {
 
+    [Flags]
+    public enum MaterialIndex {
+        Void      = 0,
+        Material1 = 1,
+        Material2 = 2,
+        Material3 = 4,
+        Material4 = 8,
+        Material5 = 16,
+        Material6 = 32,
+        Material7 = 64,
+        Material8 = 128,
+        Material9 = 256
+    }
+
     public interface Corner : IEquatable<Corner> {
 
-        public enum Sign {
-            None,
-            Inside,
-            Outside
-        }
-
-        public Vector3 getPosition( );
-
-        public Sign getSign( );
+        public Vector3       position      { get; }
+        public float         density       { get; set; }
+        public MaterialIndex materialIndex { get; }
 
     }
 
     public interface Edge : IEquatable<Edge> {
 
-        public Corner[] getCorners( );
-
-    }
-
-    public interface Voxel : IEquatable<Voxel> {
-
-        public Vector3 getCenter( );
-
-        public Vector3 getSize( );
-
-        public Vector3 getVertex( );
-
-        public Vector3 getNormal( );
+        public Corner[] corners { get; }
 
         public bool intersectsContour( );
 
     }
 
-    public IEnumerable<Corner> getCorners( );
+    public interface Voxel : IEquatable<Voxel> {
 
-    public IEnumerable<Edge> getEdges( );
+        public Vector3 center { get; }
+        public Vector3 size   { get; }
+        public Vector3 vertex { get; }
+        public Vector3 normal { get; }
 
-    public IEnumerable<Voxel> getVoxels( );
+        public bool hasFeaturePoint( );
+
+    }
+
+    public IEnumerable<Corner> corners { get; }
+    public IEnumerable<Edge>   edges   { get; }
+    public IEnumerable<Voxel>  voxels  { get; }
 
     public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
 

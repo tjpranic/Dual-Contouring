@@ -11,7 +11,8 @@ public interface DensityFunction {
         Subtraction
     }
 
-    public CombinationMode getCombinationMode( );
+    public CombinationMode                combinationMode { get; set; }
+    public SurfaceExtractor.MaterialIndex materialIndex   { get; set; }
 
     public float sample( Vector3 position );
 
