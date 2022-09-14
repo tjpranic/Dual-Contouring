@@ -1,6 +1,8 @@
 ﻿using System;
 using UnityEngine;
 
+// TODO: refactor
+
 namespace QEF {
 
     public class Data {

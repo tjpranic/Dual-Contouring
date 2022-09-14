@@ -6,27 +6,26 @@ using System.Linq;
 
 public class Octree<T> {
 
-    public T            data     { get; }
+    public T            data     { get; set; }
     public Octree<T>[]? children { get; private set; }
 
     protected Octree( T data ) {
-        this.data     = data;
-        this.children = new Octree<T>[8];
+        this.data = data;
     }
 
-    public static Octree<T> build( T data, Func<Octree<T>, int, T?> builder ) {
+    public static Octree<T> build( T data, Func<T, T[]?> builder ) {
         var node = new Octree<T>( data );
 
-        for( var childIndex = 0; childIndex < node.children!.Length; ++childIndex ) {
-            var childData = builder( node, childIndex );
-            if( childData != null ) {
-                node.children[childIndex] = build( childData, builder );
-            }
-        }
+        node.children = builder( node.data )?.Select( ( data ) => new Octree<T>( data ) ).ToArray( );
 
-        // TODO: improve
-        if( node.children.All( ( child ) => child == null ) ) {
-            node.children = null;
+        if( node.children != null ) {
+            if( node.children.Length != 8 ) {
+                throw new Exception( "Exactly 8 child nodes expected" );
+            }
+
+            for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
+                node.children[childIndex] = build( node.children[childIndex].data, builder );
+            }
         }
 
         return node;
@@ -54,7 +53,7 @@ public class Octree<T> {
         return accumulator;
     }
 
-    public static IEnumerable<T> flatten( Octree<T> octree ) {
+    public static List<T> flatten( Octree<T> octree ) {
         return reduce(
             octree,
             new List<T>( ),

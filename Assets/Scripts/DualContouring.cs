@@ -296,12 +296,11 @@ public class DualContouring : Voxelizer {
             voxel.index = index++;
         }
 
+        // generate vertices and indices
 
         var vertices = new List<Vector3>( );
         var normals  = new List<Vector3>( );
         var indices  = new Dictionary<int, List<int>>( );
-
-        // generate vertices and indices
 
         for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
             for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
