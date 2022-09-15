@@ -196,14 +196,16 @@ public class AdaptiveDualContouring : Voxelizer {
 
     private Octree<Voxel> octree;
 
-    public enum IntersectionApproximationMode {
-        BinarySearch,
-        LinearInterpolation
-    }
-
     [Space( )]
 
     public bool simplification = false;
+
+    public enum SimplificationMode {
+        Collapse,
+        Average
+    }
+
+    public SimplificationMode simplificationMode = SimplificationMode.Collapse;
 
     [Min( 0.0f )]
     public float errorThreshold = 0.01f;
@@ -211,6 +213,11 @@ public class AdaptiveDualContouring : Voxelizer {
     public int minimizerIterations         = 6;
     public int binarySearchIterations      = 6;
     public int surfaceCorrectionIterations = 6;
+
+    public enum IntersectionApproximationMode {
+        BinarySearch,
+        LinearInterpolation
+    }
 
     public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
 
@@ -1231,7 +1238,7 @@ public class AdaptiveDualContouring : Voxelizer {
         throw new Exception( "Unable to calculate sub mesh index" );
     }
 
-    // custom made simplification technique, probably not topologically safe
+    // custom made simplification techniques, probably not topologically safe
     private Octree<Voxel> simplify( Octree<Voxel> node, float errorThreshold, IEnumerable<DensityFunction> densityFunctions ) {
         var voxel = node.data;
 
@@ -1239,10 +1246,9 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        var collapsible               = true;
-        var hasFeature                = voxel.hasFeaturePoint( );
-        var averageMinimizingVertices = new List<Vector3>( );
-        var averageSurfaceNormals     = new List<Vector3>( );
+        var collapsible             = true;
+        var childMinimizingVertices = new List<Vector3>( );
+        var childSurfaceNormals     = new List<Vector3>( );
 
         for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
             node.children[childIndex] = this.simplify( node.children[childIndex], errorThreshold, densityFunctions );
@@ -1251,11 +1257,9 @@ public class AdaptiveDualContouring : Voxelizer {
             if( child.type == Voxel.Type.Internal ) {
                 collapsible = false;
             }
-            else {
-                if( !hasFeature ) {
-                    averageMinimizingVertices.Add ( node.children[childIndex].data.vertex );
-                    averageSurfaceNormals.Add     ( node.children[childIndex].data.normal );
-                }
+            else if( child.hasFeaturePoint( ) ) {
+                childMinimizingVertices.Add ( child.vertex );
+                childSurfaceNormals.Add     ( child.normal );
             }
         }
 
@@ -1265,31 +1269,48 @@ public class AdaptiveDualContouring : Voxelizer {
 
         var minimizingVertex = Vector3.zero;
         var surfaceNormal    = Vector3.zero;
-        if( hasFeature ) {
-            // if the voxel already has a feature point, use that
-            minimizingVertex = voxel.vertex;
-            surfaceNormal    = voxel.normal;
-        }
-        else {
-            // otherwise, average out the available child voxel feature points
-            if( averageMinimizingVertices.Count > 0 ) {
-                minimizingVertex = averageMinimizingVertices.Aggregate(
+
+        switch( this.simplificationMode ) {
+
+            case SimplificationMode.Collapse:
+                // just use the parent feature point, safer
+                minimizingVertex = voxel.vertex;
+                surfaceNormal    = voxel.normal;
+                break;
+
+            case SimplificationMode.Average:
+                if( childMinimizingVertices.Count == 0 || childSurfaceNormals.Count == 0 ) {
+                    return node;
+                }
+
+                // generate new minimizing vertex by averaging out feature points of child voxels
+                minimizingVertex = childMinimizingVertices.Aggregate(
                     Vector3.zero,
                     ( accumulator, vertex ) => {
                         accumulator += vertex;
                         return accumulator;
                     }
-                ) / averageMinimizingVertices.Count;
-            }
-            if( averageSurfaceNormals.Count > 0 ) {
-                surfaceNormal = averageSurfaceNormals.Aggregate(
+                ) / childMinimizingVertices.Count;
+
+                surfaceNormal = childSurfaceNormals.Aggregate(
                     Vector3.zero,
                     ( accumulator, normal ) => {
                         accumulator += normal;
                         return accumulator;
                     }
-                ) / averageSurfaceNormals.Count;
-            }
+                ) / childSurfaceNormals.Count;
+
+                // apply surface correction to the simplified vertex
+                for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+                    minimizingVertex -= this.calculateNormal( minimizingVertex, densityFunctions ) * densityFunctions.Aggregate(
+                        float.MaxValue,
+                        ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
+                    );
+                }
+                break;
+
+            default:
+                throw new Exception( "Unknown simplification mode specified" );
         }
 
         // error value is simply how far the minimizing vertex is from the surface
@@ -1302,14 +1323,6 @@ public class AdaptiveDualContouring : Voxelizer {
 
         if( error > errorThreshold ) {
             return node;
-        }
-
-        // apply surface correction to the simplified vertex
-        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-            minimizingVertex -= this.calculateNormal( minimizingVertex, densityFunctions ) * densityFunctions.Aggregate(
-                float.MaxValue,
-                ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
-            );
         }
 
         voxel.type   = Voxel.Type.Pseudo;

@@ -19,7 +19,7 @@ public class Octree<T> {
         node.children = builder( node.data )?.Select( ( data ) => new Octree<T>( data ) ).ToArray( );
 
         if( node.children != null ) {
-            if( node.children.Length != 8 ) {
+            if( node.children.Length != 8 ) { // C# type system doesn't allow for fixed arrays without a whole bunch of garbage :^(
                 throw new Exception( "Exactly 8 child nodes expected" );
             }
 
