@@ -7,7 +7,7 @@ using System.Linq;
 public class Octree<T> {
 
     public T            data     { get; set; }
-    public Octree<T>[]? children { get; private set; }
+    public Octree<T>[]? children { get; set; }
 
     protected Octree( T data ) {
         this.data = data;

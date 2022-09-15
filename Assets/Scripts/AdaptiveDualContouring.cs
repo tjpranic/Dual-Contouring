@@ -51,19 +51,6 @@ public class AdaptiveDualContouring : Voxelizer {
         }
     }
 
-    public class Face {
-
-        public Voxel[] voxels = new Voxel[2];
-
-        public Edge[] edges  = new Edge[4];
-
-        public Face( Voxel[] voxels, Edge[] edges ) {
-            this.voxels = voxels;
-            this.edges  = edges;
-        }
-
-    }
-
     public class Voxel : SurfaceExtractor.Voxel {
 
         public enum Type {
@@ -79,12 +66,11 @@ public class AdaptiveDualContouring : Voxelizer {
         public Vector3  maximum { get; }
         public Corner[] corners { get; }
         public Edge[]   edges   { get; }
-        public Face[]   faces   { get; }
 
-        public Type    type    { get; set; }
+        public Type    type   { get; set; }
         public int     depth  { get; set; }
-        public Vector3 vertex { get; set; }
-        public Vector3 normal { get; set; }
+        public Vector3 vertex { get; set; } = Vector3.zero;
+        public Vector3 normal { get; set; } = Vector3.zero;
         public int     index  { get; set; } = -1;
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {
@@ -156,16 +142,10 @@ public class AdaptiveDualContouring : Voxelizer {
                 new( new Corner[] { this.corners[5], this.corners[4] } ),
                 new( new Corner[] { this.corners[6], this.corners[7] } )
             };
-
-            /*
-            this.faces = new Face[6] {
-                // TODO
-            };
-            */
         }
 
         public bool hasFeaturePoint( ) {
-            return this.index > -1;
+            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
         }
 
         public bool Equals( SurfaceExtractor.Voxel other ) {
@@ -181,7 +161,7 @@ public class AdaptiveDualContouring : Voxelizer {
     public override IEnumerable<SurfaceExtractor.Corner> corners {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type == Voxel.Type.Leaf
+                ( node ) => node.type != Voxel.Type.Internal
             ).Aggregate(
                 new List<SurfaceExtractor.Corner>( ),
                 ( accumulator, voxel ) => {
@@ -195,7 +175,7 @@ public class AdaptiveDualContouring : Voxelizer {
     public override IEnumerable<SurfaceExtractor.Edge> edges {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type == Voxel.Type.Leaf
+                ( node ) => node.type != Voxel.Type.Internal
             ).Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
@@ -209,7 +189,7 @@ public class AdaptiveDualContouring : Voxelizer {
     public override IEnumerable<SurfaceExtractor.Voxel> voxels {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type == Voxel.Type.Leaf
+                ( node ) => node.type != Voxel.Type.Internal
             );
         }
     }
@@ -223,8 +203,14 @@ public class AdaptiveDualContouring : Voxelizer {
 
     [Space( )]
 
-    public int minimizerIterations    = 16;
-    public int binarySearchIterations = 16;
+    public bool simplification = false;
+
+    [Min( 0.0f )]
+    public float errorThreshold = 0.01f;
+
+    public int minimizerIterations         = 6;
+    public int binarySearchIterations      = 6;
+    public int surfaceCorrectionIterations = 6;
 
     public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
 
@@ -336,7 +322,6 @@ public class AdaptiveDualContouring : Voxelizer {
 
         // find contour intersections and calculate minimizing vertices
 
-        // var index = 0;
         Octree<Voxel>.walk(
             this.octree,
             ( node ) => {
@@ -357,8 +342,8 @@ public class AdaptiveDualContouring : Voxelizer {
                         continue;
                     }
 
-                    edge.intersection = this.approximateIntersection ( edge, densityFunctions );
-                    edge.normal       = this.calculateEdgeNormal     ( edge, densityFunctions );
+                    edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
+                    edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
 
                     intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
                 }
@@ -378,6 +363,19 @@ public class AdaptiveDualContouring : Voxelizer {
                     ) / intersectionPlanes.Count;
                 }
 
+                // correct surface by forcing the minimizing vertex towards the zero crossing
+                for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+                    var density = densityFunctions.Aggregate(
+                        float.MaxValue,
+                        ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
+                    );
+                    if( density == 0.0f ) {
+                        // vertex is at the surface
+                        break;
+                    }
+                    minimizingVertex -= this.calculateNormal( minimizingVertex, densityFunctions ) * density;
+                }
+
                 voxel.vertex = minimizingVertex;
 
                 // calculate surface normal
@@ -390,10 +388,17 @@ public class AdaptiveDualContouring : Voxelizer {
                         }
                     ) / intersectionPlanes.Count
                 );
-
-                // voxel.index = index++;
             }
         );
+
+        // simplify octree
+
+        if( this.simplification ) {
+            UnityEngine.Debug.Assert( this.errorThreshold != 0.0f );
+
+            this.octree = this.simplify( this.octree, this.errorThreshold, densityFunctions );
+
+        }
 
         // generate vertices and indices
 
@@ -404,13 +409,13 @@ public class AdaptiveDualContouring : Voxelizer {
         Octree<Voxel>.walk(
             this.octree,
             ( node ) => {
-                if(
-                    node.data.type != Voxel.Type.Internal && Vector3.Magnitude( node.data.vertex ) > 0.0f // node.data.hasFeaturePoint( )
-                ) {
-                    node.data.index = vertices.Count;
+                var voxel = node.data;
 
-                    vertices.Add ( node.data.vertex );
-                    normals.Add  ( node.data.normal );
+                if( voxel.type != Voxel.Type.Internal && voxel.hasFeaturePoint( ) ) {
+                    voxel.index = vertices.Count;
+
+                    vertices.Add ( voxel.vertex );
+                    normals.Add  ( voxel.normal );
                 }
             }
         );
@@ -471,7 +476,7 @@ public class AdaptiveDualContouring : Voxelizer {
         throw new Exception( "Unknown intersection approximation mode specified" );
     }
 
-    private Vector3 calculateEdgeNormal( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
+    private Vector3 calculateNormal( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
         var step = 0.1f;
 
         // sample surrounding x, y, z locations and take the difference
@@ -480,30 +485,30 @@ public class AdaptiveDualContouring : Voxelizer {
 
         positive.x = densityFunctions.Aggregate(
             positive.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( step, 0.0f, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( step, 0.0f, 0.0f ) )
         );
         positive.y = densityFunctions.Aggregate(
             positive.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, step, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, step, 0.0f ) )
         );
         positive.z = densityFunctions.Aggregate(
             positive.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, 0.0f, step ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, 0.0f, step ) )
         );
 
         var negative = Vector3.positiveInfinity;
 
         negative.x = densityFunctions.Aggregate(
             negative.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( step, 0.0f, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( step, 0.0f, 0.0f ) )
         );
         negative.y = densityFunctions.Aggregate(
             negative.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, step, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, step, 0.0f ) )
         );
         negative.z = densityFunctions.Aggregate(
             negative.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, 0.0f, step ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, 0.0f, step ) )
         );
 
         return Vector3.Normalize( positive - negative );
@@ -538,7 +543,23 @@ public class AdaptiveDualContouring : Voxelizer {
             this.contourCell( node.children[6], indices );
             this.contourCell( node.children[7], indices );
 
-            // contour common faces in children
+            // contour common face pairs in children
+
+            /*
+                    +--------------+--------------+
+                   /|             /|             /|
+                  / |            / |            / |
+                 /  |           /  |           /  |
+                +--------------+--------------+   |
+                |   |          |   |          |   |
+                |   |          |   |          |   |
+                |   +----------|---+----------|---+
+                |  /           |  /           |  /
+                | /            | /            | /
+                |/             |/             |/
+                +--------------+--------------+
+                       0              1
+            */
 
             // x axis faces
             this.contourFace(
@@ -577,6 +598,29 @@ public class AdaptiveDualContouring : Voxelizer {
                 indices
             );
 
+            /*
+                    +--------------+
+                   /|             /|
+                  / |            / |
+                 /  |           /  | 1
+                +--------------+   |
+                |   |          |   |
+                |   |          |   |
+                |   +----------|---+
+                |  /|          |  /|
+                | / |          | / |
+                |/  |          |/  |
+                +--------------+   |
+                |   |          |   | 0
+                |   |          |   |
+                |   +----------|---+
+                |  /           |  /
+                | /            | /
+                |/             |/
+                +--------------+
+                 
+            */
+
             // y axis faces
             this.contourFace(
                 new Octree<Voxel>[] {
@@ -613,6 +657,26 @@ public class AdaptiveDualContouring : Voxelizer {
                 Axis.Y,
                 indices
             );
+
+            /*
+                        +--------------+
+                       /|             /|
+                      / |            / |
+                     /  |           /  |
+                    +--------------+   |
+                   /|   |         /|   |
+                  / |   |        / |   |
+                 /  |   +-------/--|---+
+                +--------------+   |  /
+                |   | /        |   | / 1
+                |   |/         |   |/
+                |   +----------|---+
+                |  /           |  /
+                | /            | / 0
+                |/             |/
+                +--------------+
+                 
+            */
 
             // z axis faces
             this.contourFace(
@@ -654,7 +718,7 @@ public class AdaptiveDualContouring : Voxelizer {
             // contour common edges of children
 
             /*
-            child edges:
+            common edges of child voxels:
                          Y+   Z+
                          +   +
                          |  /
@@ -667,6 +731,7 @@ public class AdaptiveDualContouring : Voxelizer {
                      +   +
                     Z-   Y-
             */
+
             // x axis edges
             this.contourEdge(
                 new Octree<Voxel>[4] {
@@ -747,14 +812,14 @@ public class AdaptiveDualContouring : Voxelizer {
             nodes[1].data.type == Voxel.Type.Internal
         ) {
 
-            // contour common faces in children of given voxel pairs
+            // contour common face pairs in children of given voxel pairs
 
             switch( axis ) {
                 case Axis.X:
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[1],
-                            nodes[1].children[0]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[1],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
                         },
                         Axis.X,
                         indices
@@ -762,8 +827,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[2],
-                            nodes[1].children[3]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3]
                         },
                         Axis.X,
                         indices
@@ -771,8 +836,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[6],
-                            nodes[1].children[5]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5]
                         },
                         Axis.X,
                         indices
@@ -780,8 +845,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[7],
-                            nodes[1].children[4]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[4]
                         },
                         Axis.X,
                         indices
@@ -791,8 +856,8 @@ public class AdaptiveDualContouring : Voxelizer {
                 case Axis.Y:
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[5],
-                            nodes[1].children[0]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[5],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
                         },
                         Axis.Y,
                         indices
@@ -800,8 +865,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[6],
-                            nodes[1].children[1]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1]
                         },
                         Axis.Y,
                         indices
@@ -809,8 +874,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[7],
-                            nodes[1].children[2]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[2]
                         },
                         Axis.Y,
                         indices
@@ -818,8 +883,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[4],
-                            nodes[1].children[3]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3]
                         },
                         Axis.Y,
                         indices
@@ -829,8 +894,8 @@ public class AdaptiveDualContouring : Voxelizer {
                 case Axis.Z:
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[3],
-                            nodes[1].children[0]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
                         },
                         Axis.Z,
                         indices
@@ -838,8 +903,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[2],
-                            nodes[1].children[1]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1]
                         },
                         Axis.Z,
                         indices
@@ -847,8 +912,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[4],
-                            nodes[1].children[5]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5]
                         },
                         Axis.Z,
                         indices
@@ -856,8 +921,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                     this.contourFace(
                         new Octree<Voxel>[] {
-                            nodes[0].children[7],
-                            nodes[1].children[6]
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6]
                         },
                         Axis.Z,
                         indices
@@ -868,7 +933,7 @@ public class AdaptiveDualContouring : Voxelizer {
                     throw new Exception( "Unknown axis specified" );
             }
 
-            // contour common edges in children given voxel pairs
+            // contour common edges in children of given voxel pairs
 
             switch( axis ) {
                 case Axis.X:
@@ -1028,7 +1093,7 @@ public class AdaptiveDualContouring : Voxelizer {
         }
         else {
 
-            // contour child common edges in given voxels
+            // contour common edges in children of given voxels
 
             switch( axis ) {
                 case Axis.X:
@@ -1056,7 +1121,6 @@ public class AdaptiveDualContouring : Voxelizer {
                     break;
 
                 case Axis.Y:
-                    // lower children common edge
                     this.contourEdge(
                         new Octree<Voxel>[] {
                             nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
@@ -1068,7 +1132,6 @@ public class AdaptiveDualContouring : Voxelizer {
                         indices
                     );
 
-                    // upper children common edge
                     this.contourEdge(
                         new Octree<Voxel>[] {
                             nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
@@ -1104,6 +1167,7 @@ public class AdaptiveDualContouring : Voxelizer {
                         indices
                     );
                     break;
+
                 default:
                     throw new Exception( "Unknown axis specified" );
             }
@@ -1165,6 +1229,96 @@ public class AdaptiveDualContouring : Voxelizer {
         }
 
         throw new Exception( "Unable to calculate sub mesh index" );
+    }
+
+    // custom made simplification technique, probably not topologically safe
+    private Octree<Voxel> simplify( Octree<Voxel> node, float errorThreshold, IEnumerable<DensityFunction> densityFunctions ) {
+        var voxel = node.data;
+
+        if( voxel.type != Voxel.Type.Internal ) {
+            return node;
+        }
+
+        var collapsible               = true;
+        var hasFeature                = voxel.hasFeaturePoint( );
+        var averageMinimizingVertices = new List<Vector3>( );
+        var averageSurfaceNormals     = new List<Vector3>( );
+
+        for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
+            node.children[childIndex] = this.simplify( node.children[childIndex], errorThreshold, densityFunctions );
+
+            var child = node.children[childIndex].data;
+            if( child.type == Voxel.Type.Internal ) {
+                collapsible = false;
+            }
+            else {
+                if( !hasFeature ) {
+                    averageMinimizingVertices.Add ( node.children[childIndex].data.vertex );
+                    averageSurfaceNormals.Add     ( node.children[childIndex].data.normal );
+                }
+            }
+        }
+
+        if( !collapsible ) {
+            return node;
+        }
+
+        var minimizingVertex = Vector3.zero;
+        var surfaceNormal    = Vector3.zero;
+        if( hasFeature ) {
+            // if the voxel already has a feature point, use that
+            minimizingVertex = voxel.vertex;
+            surfaceNormal    = voxel.normal;
+        }
+        else {
+            // otherwise, average out the available child voxel feature points
+            if( averageMinimizingVertices.Count > 0 ) {
+                minimizingVertex = averageMinimizingVertices.Aggregate(
+                    Vector3.zero,
+                    ( accumulator, vertex ) => {
+                        accumulator += vertex;
+                        return accumulator;
+                    }
+                ) / averageMinimizingVertices.Count;
+            }
+            if( averageSurfaceNormals.Count > 0 ) {
+                surfaceNormal = averageSurfaceNormals.Aggregate(
+                    Vector3.zero,
+                    ( accumulator, normal ) => {
+                        accumulator += normal;
+                        return accumulator;
+                    }
+                ) / averageSurfaceNormals.Count;
+            }
+        }
+
+        // error value is simply how far the minimizing vertex is from the surface
+        var error = Mathf.Abs(
+            densityFunctions.Aggregate(
+                float.MaxValue,
+                ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
+            )
+        );
+
+        if( error > errorThreshold ) {
+            return node;
+        }
+
+        // apply surface correction to the simplified vertex
+        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+            minimizingVertex -= this.calculateNormal( minimizingVertex, densityFunctions ) * densityFunctions.Aggregate(
+                float.MaxValue,
+                ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
+            );
+        }
+
+        voxel.type   = Voxel.Type.Pseudo;
+        voxel.vertex = minimizingVertex;
+        voxel.normal = surfaceNormal;
+
+        node.children = null;
+
+        return node;
     }
 
 }

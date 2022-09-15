@@ -161,8 +161,12 @@ public class DualContouring : Voxelizer {
 
     [Space( )]
 
-    public int minimizerIterations    = 16;
-    public int binarySearchIterations = 16;
+    [Min( 0.0f )]
+    public float surfaceCorrectionMassPointBias = 0.0f;
+
+    public int minimizerIterations         = 6;
+    public int binarySearchIterations      = 6;
+    public int surfaceCorrectionIterations = 6;
 
     public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
 
@@ -259,8 +263,8 @@ public class DualContouring : Voxelizer {
                     continue;
                 }
 
-                edge.intersection = this.approximateIntersection ( edge, densityFunctions );
-                edge.normal       = this.calculateEdgeNormal     ( edge, densityFunctions );
+                edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
+                edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
 
                 intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
             }
@@ -296,6 +300,59 @@ public class DualContouring : Voxelizer {
             voxel.index = index++;
         }
 
+        // apply surface correction
+        // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
+
+        for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
+            for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
+                for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
+                    var voxel = this.grid[x, y, z];
+
+                    if( this.surfaceCorrectionMassPointBias > 0.0f ) {
+                        // sample surrounding 3x3x3 voxels and calculate mass point
+                        var minimizingVertices = new List<Vector3>( );
+                        for( var i = -1; i <= 1; ++i ) {
+                            for( var j = -1; j <= 1; ++j ) {
+                                for( var k = -1; k <= 1; ++k ) {
+                                    if(
+                                        x + i >= 0 && x + i < this.grid.GetLength( 0 ) &&
+                                        y + j >= 0 && y + j < this.grid.GetLength( 1 ) &&
+                                        z + k >= 0 && z + k < this.grid.GetLength( 2 )
+                                    ) {
+                                        minimizingVertices.Add( this.grid[x + i, y + j, z + k].vertex );
+                                    }
+                                }
+                            }
+                        }
+
+                        var massPoint = minimizingVertices.Aggregate(
+                            Vector3.zero,
+                            ( accumulator, vertex ) => {
+                                accumulator += vertex;
+                                return accumulator;
+                            }
+                        ) / minimizingVertices.Count;
+
+                        // add mass point and biasing before running surface correction
+                        voxel.vertex += Mathf.Max( 0.0f, Vector3.Dot( voxel.normal, Vector3.Normalize( voxel.vertex - massPoint ) ) ) * this.surfaceCorrectionMassPointBias * voxel.normal;
+                    }
+
+                    // force the minimizing vertex towards the zero crossing
+                    for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+                        var density = densityFunctions.Aggregate(
+                            float.MaxValue,
+                            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, voxel.vertex )
+                        );
+                        if( density == 0.0f ) {
+                            // vertex is at the surface
+                            break;
+                        }
+                        voxel.vertex -= this.calculateNormal( voxel.vertex, densityFunctions ) * density;
+                    }
+                }
+            }
+        }
+
         // generate vertices and indices
 
         var vertices = new List<Vector3>( );
@@ -324,7 +381,7 @@ public class DualContouring : Voxelizer {
                             this.grid[x, y + 1, z    ],
                             this.grid[x, y + 1, z + 1]
                         };
-                        var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels
+                        var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
 
                         if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
                              this.generateIndices( indices, voxels, edge );
@@ -418,7 +475,7 @@ public class DualContouring : Voxelizer {
         throw new Exception( "Unknown intersection approximation mode specified" );
     }
 
-    private Vector3 calculateEdgeNormal( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
+    private Vector3 calculateNormal( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
         var step = 0.1f;
 
         // sample surrounding x, y, z locations and take the difference
@@ -427,30 +484,30 @@ public class DualContouring : Voxelizer {
 
         positive.x = densityFunctions.Aggregate(
             positive.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( step, 0.0f, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( step, 0.0f, 0.0f ) )
         );
         positive.y = densityFunctions.Aggregate(
             positive.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, step, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, step, 0.0f ) )
         );
         positive.z = densityFunctions.Aggregate(
             positive.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection + new Vector3( 0.0f, 0.0f, step ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, 0.0f, step ) )
         );
 
         var negative = Vector3.positiveInfinity;
 
         negative.x = densityFunctions.Aggregate(
             negative.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( step, 0.0f, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( step, 0.0f, 0.0f ) )
         );
         negative.y = densityFunctions.Aggregate(
             negative.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, step, 0.0f ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, step, 0.0f ) )
         );
         negative.z = densityFunctions.Aggregate(
             negative.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, edge.intersection - new Vector3( 0.0f, 0.0f, step ) )
+            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, 0.0f, step ) )
         );
 
         return Vector3.Normalize( positive - negative );
