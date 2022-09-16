@@ -271,7 +271,7 @@ public class DualContouring : Voxelizer {
             // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
             var minimizingVertex = voxel.center;
 
-            for( var iteration = 0; iteration < this.minimizerIterations; ++iteration ) {
+            for( var minmizingIteration = 0; minmizingIteration < this.minimizerIterations; ++minmizingIteration ) {
                 minimizingVertex -= intersectionPlanes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
@@ -281,24 +281,8 @@ public class DualContouring : Voxelizer {
                 ) / intersectionPlanes.Count;
             }
 
-            // force the minimizing vertex towards the zero crossing
-            // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-            for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-                var density = densityFunctions.Aggregate(
-                    float.MaxValue,
-                    ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, minimizingVertex )
-                );
-                if( density == 0.0f ) {
-                    // vertex is at the surface
-                    break;
-                }
-                minimizingVertex -= this.calculateNormal( minimizingVertex, densityFunctions ) * density;
-            }
-
-            voxel.vertex = minimizingVertex;
-
             // calculate surface normal
-            voxel.normal = Vector3.Normalize(
+            var surfaceNormal = Vector3.Normalize(
                 intersectionPlanes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
@@ -308,7 +292,20 @@ public class DualContouring : Voxelizer {
                 ) / intersectionPlanes.Count
             );
 
-            voxel.index = index++;
+            // correct surface by forcing the minimizing vertex towards the zero crossing
+            // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
+            for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+                var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
+                if( density == 0.0f ) {
+                    // vertex is at the surface
+                    break;
+                }
+                minimizingVertex -= surfaceNormal * density;
+            }
+
+            voxel.vertex = minimizingVertex;
+            voxel.normal = surfaceNormal;
+            voxel.index  = index++;
         }
 
         // generate vertices and indices
@@ -409,10 +406,7 @@ public class DualContouring : Voxelizer {
             for( var iteration = 0; iteration < this.binarySearchIterations; ++iteration ) {
                 intersection = start + ( 0.5f * ( end - start ) );
 
-                var density = densityFunctions.Aggregate(
-                    float.MaxValue,
-                    ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, intersection )
-                );
+                var density = SurfaceExtractor.calculateDensity( intersection, densityFunctions );
 
                 if( density < 0.0f ) {
                     start = intersection;
@@ -440,45 +434,17 @@ public class DualContouring : Voxelizer {
 
         var positive = Vector3.positiveInfinity;
 
-        positive.x = densityFunctions.Aggregate(
-            positive.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( step, 0.0f, 0.0f ) )
-        );
-        positive.y = densityFunctions.Aggregate(
-            positive.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, step, 0.0f ) )
-        );
-        positive.z = densityFunctions.Aggregate(
-            positive.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point + new Vector3( 0.0f, 0.0f, step ) )
-        );
+        positive.x = SurfaceExtractor.calculateDensity( point + new Vector3( step, 0.0f, 0.0f ), densityFunctions );
+        positive.y = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, step, 0.0f ), densityFunctions );
+        positive.z = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, 0.0f, step ), densityFunctions );
 
         var negative = Vector3.positiveInfinity;
 
-        negative.x = densityFunctions.Aggregate(
-            negative.x,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( step, 0.0f, 0.0f ) )
-        );
-        negative.y = densityFunctions.Aggregate(
-            negative.y,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, step, 0.0f ) )
-        );
-        negative.z = densityFunctions.Aggregate(
-            negative.z,
-            ( density, densityFunction ) => this.sampleDensityFunction( density, densityFunction, point - new Vector3( 0.0f, 0.0f, step ) )
-        );
+        negative.x = SurfaceExtractor.calculateDensity( point - new Vector3( step, 0.0f, 0.0f ), densityFunctions );
+        negative.y = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, step, 0.0f ), densityFunctions );
+        negative.z = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, 0.0f, step ), densityFunctions );
 
         return Vector3.Normalize( positive - negative );
-    }
-
-    private float sampleDensityFunction( float density, DensityFunction densityFunction, Vector3 position ) {
-        density = densityFunction.combinationMode switch {
-            DensityFunction.CombinationMode.Union        => Mathf.Min( density,  densityFunction.sample( position ) ),
-            DensityFunction.CombinationMode.Intersection => Mathf.Max( density,  densityFunction.sample( position ) ),
-            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( density, -densityFunction.sample( position ) ),
-            _                                            => throw new Exception( "Unknown combination mode specified" ),
-        };
-        return density;
     }
 
     private void generateIndices( Dictionary<int, List<int>> indices, Voxel[] voxels, Edge edge ) {

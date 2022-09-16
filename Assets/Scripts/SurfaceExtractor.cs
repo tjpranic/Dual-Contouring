@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 public interface SurfaceExtractor {
@@ -50,5 +51,17 @@ public interface SurfaceExtractor {
     public IEnumerable<Voxel>  voxels  { get; }
 
     public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
+
+    public static float calculateDensity( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
+        return densityFunctions.Aggregate(
+            float.MaxValue,
+            ( density, densityFunction ) => densityFunction.combinationMode switch {
+                DensityFunction.CombinationMode.Union        => Mathf.Min( density,  densityFunction.sample( point ) ),
+                DensityFunction.CombinationMode.Intersection => Mathf.Max( density,  densityFunction.sample( point ) ),
+                DensityFunction.CombinationMode.Subtraction  => Mathf.Max( density, -densityFunction.sample( point ) ),
+                _                                            => throw new Exception( "Unknown combination mode specified" ),
+            }
+        );
+    }
 
 }
