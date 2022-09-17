@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-public class AdaptiveDualContouring : Voxelizer {
+public class ManifoldDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {
 
@@ -67,11 +67,14 @@ public class AdaptiveDualContouring : Voxelizer {
         public Corner[] corners { get; }
         public Edge[]   edges   { get; }
 
-        public Type    type   { get; set; }
-        public int     depth  { get; set; }
-        public Vector3 vertex { get; set; } = Vector3.zero;
-        public Vector3 normal { get; set; } = Vector3.zero;
-        public int     index  { get; set; } = -1;
+        public Type    type    { get; set; }
+        public int     depth   { get; set; }
+        public Vector3 vertex  { get; set; } = Vector3.zero;
+        public Vector3 normal  { get; set; } = Vector3.zero;
+        public int     index   { get; set; } = -1;
+        public float   error   { get; set; } = float.MaxValue;
+        public Voxel   parent  { get; set; } = null;
+        public int     cluster { get; set; } = -1;
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -198,10 +201,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
     [Space( )]
 
-    public bool simplification = false;
-
     [Min( 0.0f )]
-    public float errorThreshold = 0.01f;
+    public float errorThreshold = 6e-12f;
 
     public int minimizerIterations         = 6;
     public int binarySearchIterations      = 6;
@@ -390,14 +391,9 @@ public class AdaptiveDualContouring : Voxelizer {
             }
         );
 
-        // simplify octree
+        // generate vertex tree
 
-        if( this.simplification ) {
-            UnityEngine.Debug.Assert( this.errorThreshold != 0.0f );
-
-            this.octree = this.simplify( this.octree, this.errorThreshold, densityFunctions );
-
-        }
+        this.clusterCell( this.octree, densityFunctions );
 
         // generate vertices and indices
 
@@ -416,6 +412,10 @@ public class AdaptiveDualContouring : Voxelizer {
 
         var subMeshCount = 0;
         foreach( var triangles in indices ) {
+
+            // TODO: solve the mystery of the duplicate indices
+            UnityEngine.Debug.Log( triangles.Value.Count );
+
             mesh.SetTriangles( triangles.Value, subMeshCount );
             ++subMeshCount;
         }
@@ -482,6 +482,728 @@ public class AdaptiveDualContouring : Voxelizer {
         X,
         Y,
         Z
+    }
+
+    private void clusterCell( Octree<Voxel> node, IEnumerable<DensityFunction> densityFunctions ) {
+        var cluster = new List<Voxel>( );
+
+        if( node.data.type == Voxel.Type.Internal ) {
+
+            // contour cells in children
+            this.clusterCell( node.children[0], densityFunctions );
+            this.clusterCell( node.children[1], densityFunctions );
+            this.clusterCell( node.children[2], densityFunctions );
+            this.clusterCell( node.children[3], densityFunctions );
+            this.clusterCell( node.children[4], densityFunctions );
+            this.clusterCell( node.children[5], densityFunctions );
+            this.clusterCell( node.children[6], densityFunctions );
+            this.clusterCell( node.children[7], densityFunctions );
+
+            // contour common face pairs in children
+
+            /*
+                    +--------------+--------------+
+                   /|             /|             /|
+                  / |            / |            / |
+                 /  |           /  |           /  |
+                +--------------+--------------+   |
+                |   |          |   |          |   |
+                |   |          |   |          |   |
+                |   +----------|---+----------|---+
+                |  /           |  /           |  /
+                | /            | /            | /
+                |/             |/             |/
+                +--------------+--------------+
+                       0              1
+            */
+
+            // x axis faces
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[0],
+                    node.children[1]
+                },
+                Axis.X,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[3],
+                    node.children[2]
+                },
+                Axis.X,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[5],
+                    node.children[6]
+                },
+                Axis.X,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[4],
+                    node.children[7]
+                },
+                Axis.X,
+                cluster
+            );
+
+            /*
+                    +--------------+
+                   /|             /|
+                  / |            / |
+                 /  |           /  | 1
+                +--------------+   |
+                |   |          |   |
+                |   |          |   |
+                |   +----------|---+
+                |  /|          |  /|
+                | / |          | / |
+                |/  |          |/  |
+                +--------------+   |
+                |   |          |   | 0
+                |   |          |   |
+                |   +----------|---+
+                |  /           |  /
+                | /            | /
+                |/             |/
+                +--------------+
+                 
+            */
+
+            // y axis faces
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[0],
+                    node.children[5]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[1],
+                    node.children[6]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[2],
+                    node.children[7]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[3],
+                    node.children[4]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            /*
+                        +--------------+
+                       /|             /|
+                      / |            / |
+                     /  |           /  |
+                    +--------------+   |
+                   /|   |         /|   |
+                  / |   |        / |   |
+                 /  |   +-------/--|---+
+                +--------------+   |  /
+                |   | /        |   | / 1
+                |   |/         |   |/
+                |   +----------|---+
+                |  /           |  /
+                | /            | / 0
+                |/             |/
+                +--------------+
+                 
+            */
+
+            // z axis faces
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[0],
+                    node.children[3]
+                },
+                Axis.Z,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[1],
+                    node.children[2]
+                },
+                Axis.Z,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[5],
+                    node.children[4]
+                },
+                Axis.Z,
+                cluster
+            );
+
+            this.clusterFace(
+                new Octree<Voxel>[] {
+                    node.children[6],
+                    node.children[7]
+                },
+                Axis.Z,
+                cluster
+            );
+
+            // contour common edges of children
+
+            /*
+            common edges of child voxels:
+                         Y+   Z+
+                         +   +
+                         |  /
+                         | /
+                         |/
+              X- +-------+-------+ X+
+                        /|
+                       / |
+                      /  |
+                     +   +
+                    Z-   Y-
+            */
+
+            // x axis edges
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[0],
+                    node.children[3],
+                    node.children[4],
+                    node.children[5]
+                },
+                Axis.X,
+                cluster
+            );
+
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[1],
+                    node.children[2],
+                    node.children[7],
+                    node.children[6]
+                },
+                Axis.X,
+                cluster
+            );
+
+            // y axis edges
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[0],
+                    node.children[3],
+                    node.children[2],
+                    node.children[1]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[5],
+                    node.children[4],
+                    node.children[7],
+                    node.children[6]
+                },
+                Axis.Y,
+                cluster
+            );
+
+            // z axis edges
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[0],
+                    node.children[5],
+                    node.children[6],
+                    node.children[1]
+                },
+                Axis.Z,
+                cluster
+            );
+
+            this.clusterEdge(
+                new Octree<Voxel>[4] {
+                    node.children[3],
+                    node.children[4],
+                    node.children[7],
+                    node.children[2]
+                },
+                Axis.Z,
+                cluster
+            );
+        }
+
+        if( cluster.Count == 0 ) {
+            return;
+        }
+
+        var intersectionPlanes = new List<Plane>( );
+
+        foreach( var voxel in cluster ) {
+            foreach( var edge in voxel.edges ) {
+                if( !edge.intersectsContour( ) ) {
+                    continue;
+                }
+
+                edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
+                edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
+
+                intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
+            }
+        }
+
+        // calculate minimizing vertex
+        // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
+        // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
+        var minimizingVertex = node.data.center;
+
+        for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
+            minimizingVertex -= intersectionPlanes.Aggregate(
+                Vector3.zero,
+                ( accumulator, plane ) => {
+                    accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
+                    return accumulator;
+                }
+            ) / intersectionPlanes.Count;
+        }
+
+        // calculate surface normal
+        var surfaceNormal = Vector3.Normalize(
+            intersectionPlanes.Aggregate(
+                Vector3.zero,
+                ( accumulator, plane ) => {
+                    accumulator += plane.normal;
+                    return accumulator;
+                }
+            ) / intersectionPlanes.Count
+        );
+
+        // error value is simply how far the minimizing vertex is from the surface before correction
+        var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
+
+        // correct surface by forcing the minimizing vertex towards the zero crossing
+        // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
+        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
+            var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
+            if( density == 0.0f ) {
+                // vertex is at the surface
+                break;
+            }
+            minimizingVertex -= surfaceNormal * density;
+        }
+
+        node.data.vertex = minimizingVertex;
+        node.data.normal = surfaceNormal;
+        node.data.error  = error;
+
+        foreach( var voxel in cluster ) {
+            voxel.parent = node.data;
+        }
+    }
+
+    private void clusterFace( Octree<Voxel>[] nodes, Axis axis, List<Voxel> cluster ) {
+        UnityEngine.Debug.Assert( nodes.Length == 2 );
+
+        if(
+            nodes[0].data.type == Voxel.Type.Internal ||
+            nodes[1].data.type == Voxel.Type.Internal
+        ) {
+
+            // contour common face pairs in children of given voxel pairs
+
+            switch( axis ) {
+                case Axis.X:
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[1],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[4]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Y:
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[5],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[2]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Z:
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterFace(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+                    break;
+
+                default:
+                    throw new Exception( "Unknown axis specified" );
+            }
+
+            // contour common edges in children of given voxel pairs
+
+            switch( axis ) {
+                case Axis.X:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[1],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[1],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Y:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[5],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[5],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[2],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Z:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[3],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[0],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6],
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+                    break;
+
+                default:
+                    throw new Exception( "Unknown axis specified" );
+            }
+        }
+    }
+
+    private void clusterEdge( Octree<Voxel>[] nodes, Axis axis, List<Voxel> cluster ) {
+        UnityEngine.Debug.Assert( nodes.Length == 4 );
+
+        if(
+            nodes[0].data.type != Voxel.Type.Internal &&
+            nodes[1].data.type != Voxel.Type.Internal &&
+            nodes[2].data.type != Voxel.Type.Internal &&
+            nodes[3].data.type != Voxel.Type.Internal
+        ) {
+            // MMMM
+        }
+        else {
+
+            // contour common edges in children of given voxels
+
+            switch( axis ) {
+                case Axis.X:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[1],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[2]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[4],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[5],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[0],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[3]
+                        },
+                        Axis.X,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Y:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[2],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[0],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[3]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[6],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[5],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[4]
+                        },
+                        Axis.Y,
+                        cluster
+                    );
+                    break;
+
+                case Axis.Z:
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[7],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[2],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[3],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[4]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+
+                    this.clusterEdge(
+                        new Octree<Voxel>[] {
+                            nodes[0].data.type != Voxel.Type.Internal ? nodes[0] : nodes[0].children[6],
+                            nodes[1].data.type != Voxel.Type.Internal ? nodes[1] : nodes[1].children[1],
+                            nodes[2].data.type != Voxel.Type.Internal ? nodes[2] : nodes[2].children[0],
+                            nodes[3].data.type != Voxel.Type.Internal ? nodes[3] : nodes[3].children[5]
+                        },
+                        Axis.Z,
+                        cluster
+                    );
+                    break;
+
+                default:
+                    throw new Exception( "Unknown axis specified" );
+            }
+        }
+
+        foreach( var node in nodes ) {
+            if( node.data.cluster == -1 && node.data.hasFeaturePoint( ) ) {
+                // cluster ID is used to ensure recursive calls only add child vertices to the cluster
+                // theres probably a better way to do this that doesn't need a cluster ID, but whatever
+                node.data.cluster = node.data.depth;
+
+                cluster.Add( node.data );
+            }
+        }
     }
 
     private void contourCell( Octree<Voxel> node, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
@@ -1234,37 +1956,57 @@ public class AdaptiveDualContouring : Voxelizer {
 
         if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
-            foreach( var node in nodes ) {
-                if( node.data.index == -1 ) {
-                    node.data.index = vertices.Count;
-
-                    vertices.Add ( node.data.vertex );
-                    normals.Add  ( node.data.normal );
+            var voxels = new Voxel[4] {
+                nodes[0].data,
+                nodes[1].data,
+                nodes[2].data,
+                nodes[3].data
+            };
+            for( var nodeIndex = 0; nodeIndex < nodes.Length; ++nodeIndex ) {
+                var parent = nodes[nodeIndex].data.parent;
+                while( parent != null ) {
+                    if( parent.error < this.errorThreshold ) {
+                        voxels[nodeIndex] = parent;
+                    }
+                    parent = parent.parent;
                 }
             }
 
-            int[] triangles;
+            foreach( var voxel in voxels ) {
+                if( voxel.index == -1 ) {
+                    voxel.index = vertices.Count;
 
-            // ensure quad is indexed facing outward
+                    vertices.Add ( voxel.vertex );
+                    normals.Add  ( voxel.normal );
+                }
+            }
+
+            var triangles = new int[6];
+
+            // ensure quad is indexed facing outward and reject polygons that were collapsed to an edge or point
             if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
-                triangles = new int[] {
-                    nodes[0].data.index,
-                    nodes[1].data.index,
-                    nodes[2].data.index,
-                    nodes[0].data.index,
-                    nodes[2].data.index,
-                    nodes[3].data.index
-                };
+                if( voxels[0].index != voxels[1].index && voxels[1].index != voxels[2].index ) {
+                    triangles[0] = voxels[0].index;
+                    triangles[1] = voxels[1].index;
+                    triangles[2] = voxels[2].index;
+                }
+                if( voxels[0].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
+                    triangles[3] = voxels[0].index;
+                    triangles[4] = voxels[2].index;
+                    triangles[5] = voxels[3].index;
+                }
             }
             else {
-                triangles = new int[] {
-                    nodes[3].data.index,
-                    nodes[2].data.index,
-                    nodes[0].data.index,
-                    nodes[2].data.index,
-                    nodes[1].data.index,
-                    nodes[0].data.index
-                };
+                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[0].index ) {
+                    triangles[0] = voxels[3].index;
+                    triangles[1] = voxels[2].index;
+                    triangles[2] = voxels[0].index;
+                }
+                if( voxels[2].index != voxels[1].index && voxels[1].index != voxels[0].index ) {
+                    triangles[3] = voxels[2].index;
+                    triangles[4] = voxels[1].index;
+                    triangles[5] = voxels[0].index;
+                }
             }
 
             var subMeshIndex = this.findHighestMaterialBit( edge );
@@ -1288,95 +2030,6 @@ public class AdaptiveDualContouring : Voxelizer {
         }
 
         throw new Exception( "Unable to calculate sub mesh index" );
-    }
-
-    // not topologically safe and i'm not gonna bother to fix it
-    private Octree<Voxel> simplify( Octree<Voxel> node, float errorThreshold, IEnumerable<DensityFunction> densityFunctions ) {
-        var voxel = node.data;
-
-        if( voxel.type != Voxel.Type.Internal ) {
-            return node;
-        }
-
-        var intersectionPlanes = new List<Plane>( );
-
-        var collapsible = true;
-        for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-            node.children[childIndex] = this.simplify( node.children[childIndex], errorThreshold, densityFunctions );
-
-            var child = node.children[childIndex].data;
-            if( child.type == Voxel.Type.Internal ) {
-                collapsible = false;
-            }
-            else {
-                foreach( var edge in child.edges ) {
-                    if( !edge.intersectsContour( ) ) {
-                        continue;
-                    }
-
-                    edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
-                    edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
-
-                    intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
-                }
-            }
-        }
-
-        if( !collapsible ) {
-            return node;
-        }
-
-        // calculate minimizing vertex
-        // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
-        // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
-        var minimizingVertex = voxel.center;
-
-        for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
-            minimizingVertex -= intersectionPlanes.Aggregate(
-                Vector3.zero,
-                ( accumulator, plane ) => {
-                    accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
-                    return accumulator;
-                }
-            ) / intersectionPlanes.Count;
-        }
-
-        // calculate surface normal
-        var surfaceNormal = Vector3.Normalize(
-            intersectionPlanes.Aggregate(
-                Vector3.zero,
-                ( accumulator, plane ) => {
-                    accumulator += plane.normal;
-                    return accumulator;
-                }
-            ) / intersectionPlanes.Count
-        );
-
-        // error value is simply how far the minimizing vertex is from the surface before correction
-        var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
-
-        // correct surface by forcing the minimizing vertex towards the zero crossing
-        // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-            var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
-            if( density == 0.0f ) {
-                // vertex is at the surface
-                break;
-            }
-            minimizingVertex -= surfaceNormal * density;
-        }
-
-        if( error > errorThreshold ) {
-            return node;
-        }
-
-        voxel.type   = Voxel.Type.Pseudo;
-        voxel.vertex = minimizingVertex;
-        voxel.normal = surfaceNormal;
-
-        node.children = null;
-
-        return node;
     }
 
 }

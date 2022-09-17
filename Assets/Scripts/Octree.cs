@@ -41,6 +41,16 @@ public class Octree<T> {
         }
     }
 
+    public static void climb( Octree<T> octree, Action<Octree<T>> climber ) {
+        if( octree.children != null ) {
+            foreach( var child in octree.children ) {
+                climb( child, climber );
+            }
+        }
+
+        climber( octree );
+    }
+
     public static Y reduce<Y>( Octree<T> octree, Y accumulator, Func<Y, Octree<T>, Y> reducer ) {
         accumulator = reducer( accumulator, octree );
 

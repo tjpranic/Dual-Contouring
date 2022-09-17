@@ -5,7 +5,7 @@ using UnityEngine;
 
 // dual contouring implementation using uniform grid
 
-public class DualContouring : Voxelizer {
+public class UniformDualContouring : Voxelizer {
 
     private class Corner : SurfaceExtractor.Corner {
 
@@ -271,7 +271,7 @@ public class DualContouring : Voxelizer {
             // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
             var minimizingVertex = voxel.center;
 
-            for( var minmizingIteration = 0; minmizingIteration < this.minimizerIterations; ++minmizingIteration ) {
+            for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
                 minimizingVertex -= intersectionPlanes.Aggregate(
                     Vector3.zero,
                     ( accumulator, plane ) => {
