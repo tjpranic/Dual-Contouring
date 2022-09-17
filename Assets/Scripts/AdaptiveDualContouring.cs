@@ -1225,6 +1225,7 @@ public class AdaptiveDualContouring : Voxelizer {
     }
 
     private void generateIndices( Octree<Voxel>[] nodes, Axis axis, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+        // node 0 will always be positioned at the most negative on every axis, allowing easy common edge finding
         var edge = axis switch {
             Axis.X => nodes[0].data.edges[3],
             Axis.Y => nodes[0].data.edges[7],

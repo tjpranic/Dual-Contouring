@@ -85,21 +85,6 @@ public class ManifoldDualContouring : Voxelizer {
             this.minimum = this.center - this.extents;
             this.maximum = this.center + this.extents;
 
-            /*
-            corner layout:
-                 4--------------7
-                /|             /|
-               / |            / |
-              /  |           /  |
-             5--------------6   |
-             |   |          |   |
-             |   |          |   |
-             |   3----------|---2
-             |  /           |  /
-             | /            | /
-             |/             |/
-             0--------------1
-            */
             this.corners = new Corner[] {
                 // bottom
                 new( this.minimum ),
@@ -113,21 +98,6 @@ public class ManifoldDualContouring : Voxelizer {
                 new( this.maximum ),
             };
 
-            /*
-            edge layout:
-                 +------3-------+
-                /|             /|
-               10|            11|
-              /  |           /  |
-             +---6---2------+   7
-             |   |          |   |
-             |   |          |   |
-             4   +------1---5---+
-             |  /           |  /
-             | 8            | 9
-             |/             |/
-             +-------0------+
-            */
             this.edges = new Edge[] {
                 // x axis
                 new( new Corner[] { this.corners[0], this.corners[1] } ),
@@ -232,52 +202,12 @@ public class ManifoldDualContouring : Voxelizer {
                 var size  = Vector3.one / Mathf.Pow( 2, depth );
 
                 return new Voxel[8] {
-                    /*
-                    lower child voxels layout:
-                                    3               2
-                             +--------------+--------------+
-                            /|             /|             /|
-                           / |            / |            / |
-                          /  |           /  |           /  |
-                         +--------------+--------------+   |
-                        /|   |         /|   |         /|   |
-                       / |   |        / |   |        / |   |
-                      /  |   +-------/--|---+-------/--|---+
-                     +--------------+--------------+   |  /
-                     |   | /        |   | /        |   | /
-                     |   |/         |   |/         |   |/
-                     |   +----------|---+----------|---+
-                     |  /           |  /           |  /
-                     | /            | /            | /
-                     |/             |/             |/
-                     +--------------+--------------+
-                            0              1
-                    */
+                    // bottom 4 child voxels
                     new( type, depth, parent.center + ( new Vector3( -1.0f, -1.0f, -1.0f ) / scale ), size ),
                     new( type, depth, parent.center + ( new Vector3(  1.0f, -1.0f, -1.0f ) / scale ), size ),
                     new( type, depth, parent.center + ( new Vector3(  1.0f, -1.0f,  1.0f ) / scale ), size ),
                     new( type, depth, parent.center + ( new Vector3( -1.0f, -1.0f,  1.0f ) / scale ), size ),
-                    /*
-                    upper child voxels layout:
-                                    4               7
-                             +--------------+--------------+
-                            /|             /|             /|
-                           / |            / |            / |
-                          /  |           /  |           /  |
-                         +--------------+--------------+   |
-                        /|   |         /|   |         /|   |
-                       / |   |        / |   |        / |   |
-                      /  |   +-------/--|---+-------/--|---+
-                     +--------------+--------------+   |  /
-                     |   | /        |   | /        |   | /
-                     |   |/         |   |/         |   |/
-                     |   +----------|---+----------|---+
-                     |  /           |  /           |  /
-                     | /            | /            | /
-                     |/             |/             |/
-                     +--------------+--------------+
-                            5              6
-                    */
+                    // top 4 child voxels
                     new( type, depth, parent.center + ( new Vector3( -1.0f,  1.0f,  1.0f ) / scale ), size ),
                     new( type, depth, parent.center + ( new Vector3( -1.0f,  1.0f, -1.0f ) / scale ), size ),
                     new( type, depth, parent.center + ( new Vector3(  1.0f,  1.0f, -1.0f ) / scale ), size ),
@@ -414,7 +344,7 @@ public class ManifoldDualContouring : Voxelizer {
         foreach( var triangles in indices ) {
 
             // TODO: solve the mystery of the duplicate indices
-            UnityEngine.Debug.Log( triangles.Value.Count );
+            UnityEngine.Debug.Log( $"Vertex count: {vertices.Count} | Index count: {triangles.Value.Count}" );
 
             mesh.SetTriangles( triangles.Value, subMeshCount );
             ++subMeshCount;
@@ -484,6 +414,8 @@ public class ManifoldDualContouring : Voxelizer {
         Z
     }
 
+    // for details on how clusterCell/clusterFace/clusterEdge work, see contourCell/contourFace/contourEdge
+
     private void clusterCell( Octree<Voxel> node, IEnumerable<DensityFunction> densityFunctions ) {
         var cluster = new List<Voxel>( );
 
@@ -500,22 +432,6 @@ public class ManifoldDualContouring : Voxelizer {
             this.clusterCell( node.children[7], densityFunctions );
 
             // contour common face pairs in children
-
-            /*
-                    +--------------+--------------+
-                   /|             /|             /|
-                  / |            / |            / |
-                 /  |           /  |           /  |
-                +--------------+--------------+   |
-                |   |          |   |          |   |
-                |   |          |   |          |   |
-                |   +----------|---+----------|---+
-                |  /           |  /           |  /
-                | /            | /            | /
-                |/             |/             |/
-                +--------------+--------------+
-                       0              1
-            */
 
             // x axis faces
             this.clusterFace(
@@ -554,29 +470,6 @@ public class ManifoldDualContouring : Voxelizer {
                 cluster
             );
 
-            /*
-                    +--------------+
-                   /|             /|
-                  / |            / |
-                 /  |           /  | 1
-                +--------------+   |
-                |   |          |   |
-                |   |          |   |
-                |   +----------|---+
-                |  /|          |  /|
-                | / |          | / |
-                |/  |          |/  |
-                +--------------+   |
-                |   |          |   | 0
-                |   |          |   |
-                |   +----------|---+
-                |  /           |  /
-                | /            | /
-                |/             |/
-                +--------------+
-                 
-            */
-
             // y axis faces
             this.clusterFace(
                 new Octree<Voxel>[] {
@@ -613,26 +506,6 @@ public class ManifoldDualContouring : Voxelizer {
                 Axis.Y,
                 cluster
             );
-
-            /*
-                        +--------------+
-                       /|             /|
-                      / |            / |
-                     /  |           /  |
-                    +--------------+   |
-                   /|   |         /|   |
-                  / |   |        / |   |
-                 /  |   +-------/--|---+
-                +--------------+   |  /
-                |   | /        |   | / 1
-                |   |/         |   |/
-                |   +----------|---+
-                |  /           |  /
-                | /            | / 0
-                |/             |/
-                +--------------+
-                 
-            */
 
             // z axis faces
             this.clusterFace(
@@ -672,21 +545,6 @@ public class ManifoldDualContouring : Voxelizer {
             );
 
             // contour common edges of children
-
-            /*
-            common edges of child voxels:
-                         Y+   Z+
-                         +   +
-                         |  /
-                         | /
-                         |/
-              X- +-------+-------+ X+
-                        /|
-                       / |
-                      /  |
-                     +   +
-                    Z-   Y-
-            */
 
             // x axis edges
             this.clusterEdge(
@@ -761,6 +619,8 @@ public class ManifoldDualContouring : Voxelizer {
         if( cluster.Count == 0 ) {
             return;
         }
+
+        // solve QEF for vertex cluster
 
         var intersectionPlanes = new List<Plane>( );
 
@@ -1206,6 +1066,8 @@ public class ManifoldDualContouring : Voxelizer {
         }
     }
 
+    // see contourCell/contourFace/contourEdge in adaptive dual contouring for diagrams
+
     private void contourCell( Octree<Voxel> node, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
         if( node.data.type == Voxel.Type.Internal ) {
 
@@ -1220,22 +1082,6 @@ public class ManifoldDualContouring : Voxelizer {
             this.contourCell( node.children[7], vertices, normals, indices );
 
             // contour common face pairs in children
-
-            /*
-                    +--------------+--------------+
-                   /|             /|             /|
-                  / |            / |            / |
-                 /  |           /  |           /  |
-                +--------------+--------------+   |
-                |   |          |   |          |   |
-                |   |          |   |          |   |
-                |   +----------|---+----------|---+
-                |  /           |  /           |  /
-                | /            | /            | /
-                |/             |/             |/
-                +--------------+--------------+
-                       0              1
-            */
 
             // x axis faces
             this.contourFace(
@@ -1282,29 +1128,6 @@ public class ManifoldDualContouring : Voxelizer {
                 indices
             );
 
-            /*
-                    +--------------+
-                   /|             /|
-                  / |            / |
-                 /  |           /  | 1
-                +--------------+   |
-                |   |          |   |
-                |   |          |   |
-                |   +----------|---+
-                |  /|          |  /|
-                | / |          | / |
-                |/  |          |/  |
-                +--------------+   |
-                |   |          |   | 0
-                |   |          |   |
-                |   +----------|---+
-                |  /           |  /
-                | /            | /
-                |/             |/
-                +--------------+
-                 
-            */
-
             // y axis faces
             this.contourFace(
                 new Octree<Voxel>[] {
@@ -1349,26 +1172,6 @@ public class ManifoldDualContouring : Voxelizer {
                 normals,
                 indices
             );
-
-            /*
-                        +--------------+
-                       /|             /|
-                      / |            / |
-                     /  |           /  |
-                    +--------------+   |
-                   /|   |         /|   |
-                  / |   |        / |   |
-                 /  |   +-------/--|---+
-                +--------------+   |  /
-                |   | /        |   | / 1
-                |   |/         |   |/
-                |   +----------|---+
-                |  /           |  /
-                | /            | / 0
-                |/             |/
-                +--------------+
-                 
-            */
 
             // z axis faces
             this.contourFace(
@@ -1416,21 +1219,6 @@ public class ManifoldDualContouring : Voxelizer {
             );
 
             // contour common edges of children
-
-            /*
-            common edges of child voxels:
-                         Y+   Z+
-                         +   +
-                         |  /
-                         | /
-                         |/
-              X- +-------+-------+ X+
-                        /|
-                       / |
-                      /  |
-                     +   +
-                    Z-   Y-
-            */
 
             // x axis edges
             this.contourEdge(
@@ -1962,6 +1750,8 @@ public class ManifoldDualContouring : Voxelizer {
                 nodes[2].data,
                 nodes[3].data
             };
+
+            // find the collapsible node furthest up the tree for each voxel in the cluster
             for( var nodeIndex = 0; nodeIndex < nodes.Length; ++nodeIndex ) {
                 var parent = nodes[nodeIndex].data.parent;
                 while( parent != null ) {
