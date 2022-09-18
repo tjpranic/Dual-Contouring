@@ -65,9 +65,10 @@ public class UniformDualContouring : Voxelizer {
         public Corner[] corners { get; }
         public Edge[]   edges   { get; }
 
-        public Vector3 vertex { get; set; }
-        public Vector3 normal { get; set; }
-        public int     index  { get; set; } = -1;
+        public QEFSolver<QEF> qef    { get; set; }
+        public Vector3        vertex { get; set; } = Vector3.zero;
+        public Vector3        normal { get; set; } = Vector3.zero;
+        public int            index  { get; set; } = -1;
 
         public Voxel( Vector3 center, Vector3 size ) {
             this.center  = center;
@@ -253,7 +254,7 @@ public class UniformDualContouring : Voxelizer {
                 continue;
             }
 
-            var intersectionPlanes = new List<Plane>( );
+            voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
 
             foreach( var edge in voxel.edges ) {
                 if( !edge.intersectsContour( ) ) {
@@ -263,49 +264,12 @@ public class UniformDualContouring : Voxelizer {
                 edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
                 edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
 
-                intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
+                voxel.qef.add( edge.intersection, edge.normal );
             }
 
-            // calculate minimizing vertex
-            // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
-            // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
-            var minimizingVertex = voxel.center;
+            ( voxel.vertex, voxel.normal, _ ) = voxel.qef.solve( voxel, densityFunctions );
 
-            for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
-                minimizingVertex -= intersectionPlanes.Aggregate(
-                    Vector3.zero,
-                    ( accumulator, plane ) => {
-                        accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
-                        return accumulator;
-                    }
-                ) / intersectionPlanes.Count;
-            }
-
-            // calculate surface normal
-            var surfaceNormal = Vector3.Normalize(
-                intersectionPlanes.Aggregate(
-                    Vector3.zero,
-                    ( accumulator, plane ) => {
-                        accumulator += plane.normal;
-                        return accumulator;
-                    }
-                ) / intersectionPlanes.Count
-            );
-
-            // correct surface by forcing the minimizing vertex towards the zero crossing
-            // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-            for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-                var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
-                if( density == 0.0f ) {
-                    // vertex is at the surface
-                    break;
-                }
-                minimizingVertex -= surfaceNormal * density;
-            }
-
-            voxel.vertex = minimizingVertex;
-            voxel.normal = surfaceNormal;
-            voxel.index  = index++;
+            voxel.index = index++;
         }
 
         // generate vertices and indices

@@ -69,11 +69,13 @@ public class AdaptiveDualContouring : Voxelizer {
         public Corner[] corners { get; }
         public Edge[]   edges   { get; }
 
-        public Type    type   { get; set; }
-        public int     depth  { get; set; }
-        public Vector3 vertex { get; set; } = Vector3.zero;
-        public Vector3 normal { get; set; } = Vector3.zero;
-        public int     index  { get; set; } = -1;
+        public Type           type   { get; set; }
+        public int            depth  { get; set; }
+        public QEFSolver<QEF> qef    { get; set; }
+        public Vector3        vertex { get; set; } = Vector3.zero;
+        public Vector3        normal { get; set; } = Vector3.zero;
+        public float          error  { get; set; } = float.MaxValue;
+        public int            index  { get; set; } = -1;
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -329,6 +331,11 @@ public class AdaptiveDualContouring : Voxelizer {
             ( node ) => {
                 var voxel = node.data;
 
+                if( voxel.type == Voxel.Type.Internal ) {
+                    // only process leaf nodes
+                    return;
+                }
+
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
                     voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
@@ -337,7 +344,7 @@ public class AdaptiveDualContouring : Voxelizer {
                     return;
                 }
 
-                var intersectionPlanes = new List<Plane>( );
+                voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -347,48 +354,10 @@ public class AdaptiveDualContouring : Voxelizer {
                     edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
                     edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
 
-                    intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
+                    voxel.qef.add( edge.intersection, edge.normal );
                 }
 
-                // calculate minimizing vertex
-                // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
-                // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
-                var minimizingVertex = voxel.center;
-
-                for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
-                    minimizingVertex -= intersectionPlanes.Aggregate(
-                        Vector3.zero,
-                        ( accumulator, plane ) => {
-                            accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
-                            return accumulator;
-                        }
-                    ) / intersectionPlanes.Count;
-                }
-
-                // calculate surface normal
-                var surfaceNormal = Vector3.Normalize(
-                    intersectionPlanes.Aggregate(
-                        Vector3.zero,
-                        ( accumulator, plane ) => {
-                            accumulator += plane.normal;
-                            return accumulator;
-                        }
-                    ) / intersectionPlanes.Count
-                );
-
-                // correct surface by forcing the minimizing vertex towards the zero crossing
-                // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-                for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-                    var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
-                    if( density == 0.0f ) {
-                        // vertex is at the surface
-                        break;
-                    }
-                    minimizingVertex -= surfaceNormal * density;
-                }
-
-                voxel.vertex = minimizingVertex;
-                voxel.normal = surfaceNormal;
+                ( voxel.vertex, voxel.normal, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
             }
         );
 
@@ -1304,7 +1273,7 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        var intersectionPlanes = new List<Plane>( );
+        voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
 
         var collapsible = true;
         for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
@@ -1314,17 +1283,8 @@ public class AdaptiveDualContouring : Voxelizer {
             if( child.type == Voxel.Type.Internal ) {
                 collapsible = false;
             }
-            else {
-                foreach( var edge in child.edges ) {
-                    if( !edge.intersectsContour( ) ) {
-                        continue;
-                    }
-
-                    edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
-                    edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
-
-                    intersectionPlanes.Add( new( edge.normal, edge.intersection ) );
-                }
+            else if( child.qef != null ) {
+                voxel.qef.combine( ( QEF )child.qef );
             }
         }
 
@@ -1332,45 +1292,11 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        // calculate minimizing vertex
-        // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
-        // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
-        var minimizingVertex = voxel.center;
-
-        for( var minimizingIteration = 0; minimizingIteration < this.minimizerIterations; ++minimizingIteration ) {
-            minimizingVertex -= intersectionPlanes.Aggregate(
-                Vector3.zero,
-                ( accumulator, plane ) => {
-                    accumulator += plane.GetDistanceToPoint( minimizingVertex ) * plane.normal;
-                    return accumulator;
-                }
-            ) / intersectionPlanes.Count;
+        if( voxel.qef.empty ) {
+            return node;
         }
 
-        // calculate surface normal
-        var surfaceNormal = Vector3.Normalize(
-            intersectionPlanes.Aggregate(
-                Vector3.zero,
-                ( accumulator, plane ) => {
-                    accumulator += plane.normal;
-                    return accumulator;
-                }
-            ) / intersectionPlanes.Count
-        );
-
-        // error value is simply how far the minimizing vertex is from the surface before correction
-        var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
-
-        // correct surface by forcing the minimizing vertex towards the zero crossing
-        // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-            var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
-            if( density == 0.0f ) {
-                // vertex is at the surface
-                break;
-            }
-            minimizingVertex -= surfaceNormal * density;
-        }
+        var ( minimizingVertex, surfaceNormal, error ) = voxel.qef.solve( voxel, densityFunctions );
 
         if( error > errorThreshold ) {
             return node;

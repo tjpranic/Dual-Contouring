@@ -2,13 +2,11 @@
 using System.Linq;
 using UnityEngine;
 
-// TODO: integrate this in somehow
-
 public class QEF : QEFSolver<QEF> {
 
-    public Vector3 vertex { get; private set; } = Vector3.zero;
-    public Vector3 normal { get; private set; } = Vector3.zero;
-    public float   error  { get; private set; } = float.MaxValue;
+    public bool empty {
+        get { return intersectionPlanes.Count == 0; }
+    }
 
     private readonly int minimizerIterations;
     private readonly int surfaceCorrectionIterations;
@@ -28,7 +26,7 @@ public class QEF : QEFSolver<QEF> {
         this.intersectionPlanes.AddRange( other.intersectionPlanes );
     }
 
-    public void solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+    public ( Vector3 vertex, Vector3 normal, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
         // calculate minimizing vertex
         // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
         // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
@@ -56,7 +54,7 @@ public class QEF : QEFSolver<QEF> {
         );
 
         // error value is simply how far the minimizing vertex is from the surface before correction
-        this.error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
+        var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
 
         // correct surface by forcing the minimizing vertex towards the zero crossing
         // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
@@ -69,8 +67,7 @@ public class QEF : QEFSolver<QEF> {
             minimizingVertex -= surfaceNormal * density;
         }
 
-        this.vertex = minimizingVertex;
-        this.normal = surfaceNormal;
+        return ( minimizingVertex, surfaceNormal, error );
     }
 
 }
