@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
+// TODO: modiify contouring functions to create a symmetric contour
+
 public class AdaptiveDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {

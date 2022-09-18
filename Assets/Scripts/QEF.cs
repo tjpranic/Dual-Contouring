@@ -4,22 +4,11 @@ using UnityEngine;
 
 // TODO: integrate this in somehow
 
-public class QEF : QEFSolver {
+public class QEF : QEFSolver<QEF> {
 
-    private Vector3 _vertex = Vector3.zero;
-    public Vector3 vertex {
-        get { return this._vertex; }
-    }
-
-    private Vector3 _normal = Vector3.zero;
-    public Vector3 normal {
-        get { return this._normal; }
-    }
-
-    private float _error = float.NaN;
-    public float error {
-        get { return this._error; }
-    }
+    public Vector3 vertex { get; private set; } = Vector3.zero;
+    public Vector3 normal { get; private set; } = Vector3.zero;
+    public float   error  { get; private set; } = float.MaxValue;
 
     private readonly int minimizerIterations;
     private readonly int surfaceCorrectionIterations;
@@ -33,6 +22,10 @@ public class QEF : QEFSolver {
 
     public void add( Vector3 intersection, Vector3 normal ) {
         this.intersectionPlanes.Add( new( normal, intersection ) );
+    }
+
+    public void combine( QEF other ) {
+        this.intersectionPlanes.AddRange( other.intersectionPlanes );
     }
 
     public void solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
@@ -63,7 +56,7 @@ public class QEF : QEFSolver {
         );
 
         // error value is simply how far the minimizing vertex is from the surface before correction
-        this._error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
+        this.error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
 
         // correct surface by forcing the minimizing vertex towards the zero crossing
         // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
@@ -76,8 +69,8 @@ public class QEF : QEFSolver {
             minimizingVertex -= surfaceNormal * density;
         }
 
-        this._vertex = minimizingVertex;
-        this._normal = surfaceNormal;
+        this.vertex = minimizingVertex;
+        this.normal = surfaceNormal;
     }
 
 }

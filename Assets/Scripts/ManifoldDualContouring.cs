@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
+// TODO: implement manifold criterion
+// TODO: separate vertex tree from the octree
+// TODO: implement support for multiple vertices per voxel
+
 public class ManifoldDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {
@@ -71,10 +75,11 @@ public class ManifoldDualContouring : Voxelizer {
         public Vector3 vertex      { get; set; } = Vector3.zero;
         public Vector3 normal      { get; set; } = Vector3.zero;
         public int     index       { get; set; } = -1;
-        public float   error       { get; set; } = 0.0f;
+        public float   error       { get; set; } = float.MaxValue;
         public Voxel   parent      { get; set; } = null;
-        public bool    clustered   { get; set; } = false;
         public bool    collapsible { get; set; } = false;
+
+        // note that there is only one set of vertex related data as only 1 vertex per cell is currently allowed
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -326,6 +331,11 @@ public class ManifoldDualContouring : Voxelizer {
             ( node ) => {
                 var voxel = node.data;
 
+                if( voxel.type == Voxel.Type.Internal ) {
+                    // only process leaf nodes
+                    return;
+                }
+
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
                     voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
@@ -399,7 +409,7 @@ public class ManifoldDualContouring : Voxelizer {
 
         if( UnityEngine.Debug.isDebugBuild ) {
             // verify the validity of the octree clustering
-            Octree<Voxel>.climb(
+            Octree<Voxel>.walk(
                 this.octree,
                 ( node ) => {
                     if( node.data.hasFeaturePoint( ) && node.data.type == Voxel.Type.Internal ) {
@@ -735,7 +745,7 @@ public class ManifoldDualContouring : Voxelizer {
                 cluster
             );
 
-            // grab voxels of direct children (I don't know why this works)
+            // grab voxels of direct children
             foreach( var child in node.children ) {
                 cluster.Add( child.data );
             }
@@ -1181,15 +1191,7 @@ public class ManifoldDualContouring : Voxelizer {
             }
         }
 
-        foreach( var node in nodes ) {
-            if( !node.data.clustered && node.data.hasFeaturePoint( ) ) {
-                // ensure the node is only clustered to one parent
-                // theres probably a better way of doing this, but whatever
-                node.data.clustered = true;
-
-                cluster.Add( node.data );
-            }
-        }
+        // surface indices would be assigned down here, if I allowed more than 1 vertex per cell :^)
     }
 
     // see contourCell/contourFace/contourEdge in adaptive dual contouring for diagrams
