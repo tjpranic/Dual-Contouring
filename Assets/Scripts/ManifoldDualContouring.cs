@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-// TODO: implement manifold criterion
 // TODO: separate vertex tree from the octree
+// TODO: implement manifold criterion
 // TODO: implement support for multiple vertices per voxel
 
 public class ManifoldDualContouring : Voxelizer {
@@ -75,9 +75,9 @@ public class ManifoldDualContouring : Voxelizer {
         public QEFSolver<QEF> qef         { get; set; }
         public Vector3        vertex      { get; set; } = Vector3.zero;
         public Vector3        normal      { get; set; } = Vector3.zero;
-        public float          error       { get; set; } = float.MaxValue;
+        public float          error       { get; set; } = 0.0f;
         public Voxel          parent      { get; set; } = null;
-        public bool           collapsible { get; set; } = false;
+        public bool           collapsible { get; set; } = true;
         public int            index       { get; set; } = -1;
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {
@@ -392,7 +392,7 @@ public class ManifoldDualContouring : Voxelizer {
         Octree<Voxel>.climb(
             this.octree,
             ( node ) => {
-                if( node.data.hasFeaturePoint( ) && node.data.type == Voxel.Type.Internal ) {
+                if( node.data.type == Voxel.Type.Internal ) {
                     var collapsible = node.data.error < this.errorThreshold;
                     if( collapsible ) {
                         foreach( var child in node.children ) {

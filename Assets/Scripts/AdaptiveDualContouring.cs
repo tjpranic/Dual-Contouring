@@ -74,7 +74,7 @@ public class AdaptiveDualContouring : Voxelizer {
         public QEFSolver<QEF> qef    { get; set; }
         public Vector3        vertex { get; set; } = Vector3.zero;
         public Vector3        normal { get; set; } = Vector3.zero;
-        public float          error  { get; set; } = float.MaxValue;
+        public float          error  { get; set; } = 0.0f;
         public int            index  { get; set; } = -1;
 
         public Voxel( Type type, int depth, Vector3 center, Vector3 size ) {

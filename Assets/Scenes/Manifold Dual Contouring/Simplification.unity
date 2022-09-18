@@ -769,7 +769,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   lightSource: {fileID: 1293997822}
-  mode: 1
+  mode: 0
 --- !u!1 &1371545725
 GameObject:
   m_ObjectHideFlags: 0
