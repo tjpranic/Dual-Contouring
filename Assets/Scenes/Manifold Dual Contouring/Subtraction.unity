@@ -197,7 +197,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   resolution: 5
   vertexMode: 1
-  debugFlags: 0
+  debugFlags: 24
   debugCornerSize: 0.0125
   debugEdgeSize: 0.025
   debugMinimizingVertexSize: 0.1

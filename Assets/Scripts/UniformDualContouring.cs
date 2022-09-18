@@ -403,7 +403,7 @@ public class UniformDualContouring : Voxelizer {
                 : ( edge.corners[1].position, edge.corners[0].position );
 
             var intersection = Vector3.zero;
-            for( var iteration = 0; iteration < this.binarySearchIterations; ++iteration ) {
+            for( var binarySearchIterations = 0; binarySearchIterations < this.binarySearchIterations; ++binarySearchIterations ) {
                 intersection = start + ( 0.5f * ( end - start ) );
 
                 var density = SurfaceExtractor.calculateDensity( intersection, densityFunctions );

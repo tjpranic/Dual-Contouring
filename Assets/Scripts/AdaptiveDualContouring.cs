@@ -434,7 +434,7 @@ public class AdaptiveDualContouring : Voxelizer {
                 : ( edge.corners[1].position, edge.corners[0].position );
 
             var intersection = Vector3.zero;
-            for( var iteration = 0; iteration < this.binarySearchIterations; ++iteration ) {
+            for( var binarySearchIterations = 0; binarySearchIterations < this.binarySearchIterations; ++binarySearchIterations ) {
                 intersection = start + ( 0.5f * ( end - start ) );
 
                 var density = SurfaceExtractor.calculateDensity( intersection, densityFunctions );
@@ -1235,6 +1235,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
         if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
+            // generate vertex and normal
             foreach( var node in nodes ) {
                 if( node.data.index == -1 ) {
                     node.data.index = vertices.Count;
@@ -1243,6 +1244,8 @@ public class AdaptiveDualContouring : Voxelizer {
                     normals.Add  ( node.data.normal );
                 }
             }
+
+            // generate indices
 
             int[] triangles;
 
