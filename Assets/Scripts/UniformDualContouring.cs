@@ -33,7 +33,7 @@ public class UniformDualContouring : Voxelizer {
         public Vector3                   intersection { get; set; }
         public Vector3                   normal       { get; set; }
 
-        public Edge( Corner[] corners ) {
+        public Edge( SurfaceExtractor.Corner[] corners ) {
             this.corners = corners;
         }
 
@@ -57,13 +57,14 @@ public class UniformDualContouring : Voxelizer {
 
     private class Voxel : SurfaceExtractor.Voxel {
 
-        public Vector3  center  { get; }
-        public Vector3  size    { get; }
-        public Vector3  extents { get; }
-        public Vector3  minimum { get; }
-        public Vector3  maximum { get; }
-        public Corner[] corners { get; }
-        public Edge[]   edges   { get; }
+        public SurfaceExtractor.Voxel.Type type    { get; set; }
+        public Vector3                     center  { get; }
+        public Vector3                     size    { get; }
+        public Vector3                     extents { get; }
+        public Vector3                     minimum { get; }
+        public Vector3                     maximum { get; }
+        public SurfaceExtractor.Corner[]   corners { get; }
+        public SurfaceExtractor.Edge[]     edges   { get; }
 
         public QEFSolver<QEF> qef    { get; set; }
         public Vector3        vertex { get; set; } = Vector3.zero;
@@ -71,6 +72,7 @@ public class UniformDualContouring : Voxelizer {
         public int            index  { get; set; } = -1;
 
         public Voxel( Vector3 center, Vector3 size ) {
+            this.type    = SurfaceExtractor.Voxel.Type.None;
             this.center  = center;
             this.size    = size;
             this.extents = size / 2;
@@ -122,20 +124,20 @@ public class UniformDualContouring : Voxelizer {
             */
             this.edges = new Edge[] {
                 // x axis
-                new( new Corner[] { this.corners[0], this.corners[1] } ),
-                new( new Corner[] { this.corners[3], this.corners[2] } ),
-                new( new Corner[] { this.corners[5], this.corners[6] } ),
-                new( new Corner[] { this.corners[4], this.corners[7] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[1] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[3], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[6] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[7] } ),
                 // y axis
-                new( new Corner[] { this.corners[5], this.corners[0] } ),
-                new( new Corner[] { this.corners[6], this.corners[1] } ),
-                new( new Corner[] { this.corners[4], this.corners[3] } ),
-                new( new Corner[] { this.corners[7], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[0] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[1] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[3] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[7], this.corners[2] } ),
                 // z axis
-                new( new Corner[] { this.corners[0], this.corners[3] } ),
-                new( new Corner[] { this.corners[1], this.corners[2] } ),
-                new( new Corner[] { this.corners[5], this.corners[4] } ),
-                new( new Corner[] { this.corners[6], this.corners[7] } )
+                new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[3] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[4] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[7] } )
             };
         }
 
@@ -356,7 +358,7 @@ public class UniformDualContouring : Voxelizer {
         return mesh;
     }
 
-    private Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
+    private Vector3 approximateIntersection( SurfaceExtractor.Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
         if( edge.corners[0].density == 0.0f || edge.corners[1].density == 0.0f ) {
             // one of the corners is at the exact intersection
             return edge.corners[0].density == 0.0f ? edge.corners[0].position : edge.corners[1].position;
@@ -411,7 +413,7 @@ public class UniformDualContouring : Voxelizer {
         return Vector3.Normalize( positive - negative );
     }
 
-    private void generateIndices( Dictionary<int, List<int>> indices, Voxel[] voxels, Edge edge ) {
+    private void generateIndices( Dictionary<int, List<int>> indices, Voxel[] voxels, SurfaceExtractor.Edge edge ) {
         // indices should only be generated from void - solid intersections
         UnityEngine.Debug.Assert(
             ( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 ) ||
@@ -442,26 +444,11 @@ public class UniformDualContouring : Voxelizer {
             };
         }
 
-        var subMeshIndex = this.findHighestMaterialBit( edge );
+        var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
         if( !indices.ContainsKey( subMeshIndex ) ) {
             indices.Add( subMeshIndex, new( ) );
         }
         indices[subMeshIndex].AddRange( triangles );
-    }
-
-    private int findHighestMaterialBit( Edge edge ) {
-        var materialIndex = edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void
-            ? edge.corners[1].materialIndex
-            : edge.corners[0].materialIndex;
-
-        // return index of highest set bit in material index
-        for( var bitIndex = ( sizeof( int ) * 8 ) - 1; bitIndex >= 0; --bitIndex ) {
-            if( ( ( int )materialIndex >> bitIndex ) > 0 ) {
-                return bitIndex;
-            }
-        }
-
-        throw new Exception( "Unable to calculate sub mesh index" );
     }
 
 }

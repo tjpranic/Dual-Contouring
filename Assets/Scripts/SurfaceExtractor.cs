@@ -23,13 +23,15 @@ public interface SurfaceExtractor {
 
         public Vector3       position      { get; }
         public float         density       { get; set; }
-        public MaterialIndex materialIndex { get; }
+        public MaterialIndex materialIndex { get; set; }
 
     }
 
     public interface Edge : IEquatable<Edge> {
 
-        public Corner[] corners { get; }
+        public Vector3  intersection { get; set; }
+        public Vector3  normal       { get; set; }
+        public Corner[] corners      { get; }
 
         public bool intersectsContour( );
 
@@ -37,10 +39,20 @@ public interface SurfaceExtractor {
 
     public interface Voxel : IEquatable<Voxel> {
 
-        public Vector3 center { get; }
-        public Vector3 size   { get; }
-        public Vector3 vertex { get; }
-        public Vector3 normal { get; }
+        public enum Type {
+            None     = -1,
+            Internal =  0,
+            Leaf     =  1,
+            Pseudo   =  2
+        }
+
+        public Type     type    { get; set; }
+        public Vector3  center  { get; }
+        public Vector3  size    { get; }
+        public Vector3  vertex  { get; }
+        public Vector3  normal  { get; }
+        public Corner[] corners { get; }
+        public Edge[]   edges   { get; }
 
         public bool hasFeaturePoint( );
 
@@ -62,6 +74,21 @@ public interface SurfaceExtractor {
                 _                                            => throw new Exception( "Unknown combination mode specified" ),
             }
         );
+    }
+
+    public static int findHighestMaterialBit( Edge edge ) {
+        var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
+            ? edge.corners[1].materialIndex
+            : edge.corners[0].materialIndex;
+
+        // return index of highest set bit in material index
+        for( var bitIndex = ( sizeof( int ) * 8 ) - 1; bitIndex >= 0; --bitIndex ) {
+            if( ( ( int )materialIndex >> bitIndex ) > 0 ) {
+                return bitIndex;
+            }
+        }
+
+        throw new Exception( "Unable to calculate sub mesh index, no material set" );
     }
 
 }
