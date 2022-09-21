@@ -129,10 +129,10 @@ public class UniformDualContouring : Voxelizer {
                 new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[6] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[7] } ),
                 // y axis
-                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[0] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[1] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[3] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[7], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[5] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[6] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[3], this.corners[4] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[2], this.corners[7] } ),
                 // z axis
                 new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[3] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[2] } ),
@@ -304,24 +304,20 @@ public class UniformDualContouring : Voxelizer {
                         };
                         var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
 
-                        if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
-                             this.generateIndices( indices, voxels, edge );
-                        }
+                        this.generateIndices( voxels, edge, indices );
                     }
 
                     // y axis
                     if( x + 1 < this.grid.GetLength( 0 ) && z + 1 < this.grid.GetLength( 2 ) ) {
                         var voxels = new Voxel[] {
                             voxel,
-                            this.grid[x,     y, z + 1],
                             this.grid[x + 1, y, z    ],
-                            this.grid[x + 1, y, z + 1]
+                            this.grid[x,     y, z + 1],
+                            this.grid[x + 1, y, z + 1],
                         };
                         var edge = voxel.edges[7];
 
-                        if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
-                            this.generateIndices( indices, voxels, edge );
-                        }
+                        this.generateIndices( voxels, edge, indices );
                     }
 
                     // z axis
@@ -334,9 +330,7 @@ public class UniformDualContouring : Voxelizer {
                         };
                         var edge = voxel.edges[11];
 
-                        if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
-                            this.generateIndices( indices, voxels, edge );
-                        }
+                        this.generateIndices( voxels, edge, indices );
                     }
                 }
             }
@@ -413,42 +407,45 @@ public class UniformDualContouring : Voxelizer {
         return Vector3.Normalize( positive - negative );
     }
 
-    private void generateIndices( Dictionary<int, List<int>> indices, Voxel[] voxels, SurfaceExtractor.Edge edge ) {
-        // indices should only be generated from void - solid intersections
-        UnityEngine.Debug.Assert(
-            ( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 ) ||
-            ( edge.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
-        );
+    private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, Dictionary<int, List<int>> indices ) {
+        if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
-        int[] triangles;
+            // indices should only be generated from void - solid intersections
+            UnityEngine.Debug.Assert(
+                ( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 ) ||
+                ( edge.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+            );
 
-        // ensure quad is indexed facing outward
-        if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
-            triangles = new int[] {
-                voxels[0].index,
-                voxels[1].index,
-                voxels[2].index,
-                voxels[2].index,
-                voxels[1].index,
-                voxels[3].index
-            };
-        }
-        else {
-            triangles = new int[] {
-                voxels[3].index,
-                voxels[1].index,
-                voxels[2].index,
-                voxels[2].index,
-                voxels[1].index,
-                voxels[0].index
-            };
-        }
+            int[] triangles;
 
-        var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
-        if( !indices.ContainsKey( subMeshIndex ) ) {
-            indices.Add( subMeshIndex, new( ) );
+            // ensure quad is indexed facing outward
+            if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
+                triangles = new int[] {
+                    voxels[0].index,
+                    voxels[1].index,
+                    voxels[2].index,
+                    voxels[3].index,
+                    voxels[2].index,
+                    voxels[1].index
+                };
+            }
+            else {
+                triangles = new int[] {
+                    voxels[1].index,
+                    voxels[2].index,
+                    voxels[3].index,
+                    voxels[2].index,
+                    voxels[1].index,
+                    voxels[0].index
+                };
+            }
+
+            var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
+            if( !indices.ContainsKey( subMeshIndex ) ) {
+                indices.Add( subMeshIndex, new( ) );
+            }
+            indices[subMeshIndex].AddRange( triangles );
         }
-        indices[subMeshIndex].AddRange( triangles );
     }
 
 }

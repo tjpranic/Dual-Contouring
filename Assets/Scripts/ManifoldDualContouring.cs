@@ -107,10 +107,10 @@ public class ManifoldDualContouring : Voxelizer {
                 new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[6] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[7] } ),
                 // y axis
-                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[0] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[1] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[3] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[7], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[5] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[6] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[3], this.corners[4] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[2], this.corners[7] } ),
                 // z axis
                 new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[3] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[2] } ),
@@ -582,8 +582,8 @@ public class ManifoldDualContouring : Voxelizer {
 
             // contour common face pairs in children of given face pairs
 
-            foreach( var faceNodes in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.clusterFace( faceNodes, axis, position, cluster );
+            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
+                this.clusterFace( facePair, axis, position, cluster );
             }
 
             // contour common edges in children of given face pairs
@@ -680,8 +680,8 @@ public class ManifoldDualContouring : Voxelizer {
 
             // contour common face pairs in children of given face pairs
 
-            foreach( var faceNodes in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.contourFace( faceNodes, axis, position, vertices, normals, indices );
+            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
+                this.contourFace( facePair, axis, position, vertices, normals, indices );
             }
 
             // contour common edges in children of given face pairs
@@ -715,7 +715,7 @@ public class ManifoldDualContouring : Voxelizer {
 
     private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, HashSet<Triangle>> indices ) {
 
-        var edge = OctreeContouringTables<Voxel>.lookupEdgeInNode( nodes, axis, position );
+        var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
         if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
@@ -760,20 +760,20 @@ public class ManifoldDualContouring : Voxelizer {
                         voxels[2].index
                     );
                 }
-                if( voxels[0].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
+                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[1].index ) {
                     triangles[1] = new Triangle(
-                        voxels[0].index,
+                        voxels[3].index,
                         voxels[2].index,
-                        voxels[3].index
+                        voxels[1].index
                     );
                 }
             }
             else {
-                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[0].index ) {
+                if( voxels[1].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
                     triangles[0] = new Triangle(
-                        voxels[3].index,
+                        voxels[1].index,
                         voxels[2].index,
-                        voxels[0].index
+                        voxels[3].index
                     );
                 }
                 if( voxels[2].index != voxels[1].index && voxels[1].index != voxels[0].index ) {

@@ -131,10 +131,10 @@ public class AdaptiveDualContouring : Voxelizer {
                 new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[6] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[7] } ),
                 // y axis
-                new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[0] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[1] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[4], this.corners[3] } ),
-                new( new SurfaceExtractor.Corner[] { this.corners[7], this.corners[2] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[5] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[6] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[3], this.corners[4] } ),
+                new( new SurfaceExtractor.Corner[] { this.corners[2], this.corners[7] } ),
                 // z axis
                 new( new SurfaceExtractor.Corner[] { this.corners[0], this.corners[3] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[1], this.corners[2] } ),
@@ -503,8 +503,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
             // contour common face pairs in children of given face pairs
 
-            foreach( var faceNodes in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.contourFace( faceNodes, axis, position, vertices, normals, indices );
+            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
+                this.contourFace( facePair, axis, position, vertices, normals, indices );
             }
 
             // contour common edges in children of given face pairs
@@ -538,7 +538,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
     private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
 
-        var edge = OctreeContouringTables<Voxel>.lookupEdgeInNode( nodes, axis, position );
+        var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
         if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
@@ -562,16 +562,16 @@ public class AdaptiveDualContouring : Voxelizer {
                     nodes[0].data.index,
                     nodes[1].data.index,
                     nodes[2].data.index,
-                    nodes[0].data.index,
+                    nodes[3].data.index,
                     nodes[2].data.index,
-                    nodes[3].data.index
+                    nodes[1].data.index
                 };
             }
             else {
                 triangles = new int[] {
-                    nodes[3].data.index,
+                    nodes[1].data.index,
                     nodes[2].data.index,
-                    nodes[0].data.index,
+                    nodes[3].data.index,
                     nodes[2].data.index,
                     nodes[1].data.index,
                     nodes[0].data.index
