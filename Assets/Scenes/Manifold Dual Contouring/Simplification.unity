@@ -326,6 +326,7 @@ MonoBehaviour:
   binarySearchIterations: 6
   surfaceCorrectionIterations: 6
   intersectionApproximationMode: 0
+  solverType: 0
 --- !u!1 &646194171
 GameObject:
   m_ObjectHideFlags: 0

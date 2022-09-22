@@ -421,12 +421,12 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   simplification: 0
-  simplificationMode: 0
   errorThreshold: 0.01
   minimizerIterations: 6
   binarySearchIterations: 6
   surfaceCorrectionIterations: 6
   intersectionApproximationMode: 0
+  solverType: 0
 --- !u!1 &1615694499
 GameObject:
   m_ObjectHideFlags: 0

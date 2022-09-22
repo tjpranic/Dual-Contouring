@@ -69,14 +69,14 @@ public class ManifoldDualContouring : Voxelizer {
         public SurfaceExtractor.Corner[]   corners { get; }
         public SurfaceExtractor.Edge[]     edges   { get; }
 
-        public int            depth       { get; set; }
-        public QEFSolver<QEF> qef         { get; set; }
-        public Vector3        vertex      { get; set; } = Vector3.zero;
-        public Vector3        normal      { get; set; } = Vector3.zero;
-        public float          error       { get; set; } = 0.0f;
-        public Voxel          parent      { get; set; } = null;
-        public bool           collapsible { get; set; } = true;
-        public int            index       { get; set; } = -1;
+        public int       depth       { get; set; }
+        public QEFSolver qef         { get; set; }
+        public Vector3   vertex      { get; set; } = Vector3.zero;
+        public Vector3   normal      { get; set; } = Vector3.zero;
+        public float     error       { get; set; } = 0.0f;
+        public Voxel     parent      { get; set; } = null;
+        public bool      collapsible { get; set; } = true;
+        public int       index       { get; set; } = -1;
 
         public Voxel( SurfaceExtractor.Voxel.Type type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -255,6 +255,13 @@ public class ManifoldDualContouring : Voxelizer {
 
     public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
 
+    public enum SolverType {
+        Simple,
+        SVD
+    }
+
+    public SolverType solverType = SolverType.Simple;
+
     public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
@@ -295,27 +302,7 @@ public class ManifoldDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        var density = densityFunction.sample( corner.position );
-
-                        // set material bit if the corner is inside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Union && density < 0.0f ) {
-                            corner.materialIndex |= densityFunction.materialIndex;
-                        }
-                        // unset material bit if the corner is outside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Intersection && density > 0.0f ) {
-                            corner.materialIndex &= ~densityFunction.materialIndex;
-                        }
-                        // unset material bit if the corner is inside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Subtraction && density < 0.0f ) {
-                            corner.materialIndex &= ~densityFunction.materialIndex;
-                        }
-
-                        corner.density = densityFunction.combinationMode switch {
-                            DensityFunction.CombinationMode.Union        => Mathf.Min( corner.density,  density ),
-                            DensityFunction.CombinationMode.Intersection => Mathf.Max( corner.density,  density ),
-                            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( corner.density, -density ),
-                            _                                            => throw new Exception( "Unknown combination mode specified" ),
-                        };
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensity( corner, densityFunction );
                     }
                 }
             }
@@ -341,7 +328,11 @@ public class ManifoldDualContouring : Voxelizer {
                     return;
                 }
 
-                voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
+                voxel.qef = solverType switch {
+                    SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    _                 => throw new Exception( "Unknown solver type specified" )
+                };
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -363,7 +354,7 @@ public class ManifoldDualContouring : Voxelizer {
         this.clusterCell( this.octree, Position.Root, densityFunctions );
 
         if( UnityEngine.Debug.isDebugBuild ) {
-            // verify the validity of the octree clustering
+            // verify the validity of the vertex clustering
             Octree<Voxel>.walk(
                 this.octree,
                 ( node ) => {
@@ -556,11 +547,15 @@ public class ManifoldDualContouring : Voxelizer {
 
         // solve QEF for vertex cluster
 
-        node.data.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
+        node.data.qef = solverType switch {
+            SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            _                 => throw new Exception( "Unknown solver type specified" )
+        };
 
         foreach( var child in cluster ) {
             if( child.qef != null ) {
-                node.data.qef.combine( ( QEF )child.qef );
+                node.data.qef.combine( child.qef );
             }
         }
 

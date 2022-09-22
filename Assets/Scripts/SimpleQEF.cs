@@ -1,8 +1,9 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 
-public class QEF : QEFSolver<QEF> {
+public class SimpleQEF : QEFSolver {
 
     public bool empty {
         get { return intersectionPlanes.Count == 0; }
@@ -13,7 +14,7 @@ public class QEF : QEFSolver<QEF> {
 
     private readonly List<Plane> intersectionPlanes = new( );
 
-    public QEF( int minimizerIterations, int surfaceCorrectionIterations ) {
+    public SimpleQEF( int minimizerIterations, int surfaceCorrectionIterations ) {
         this.minimizerIterations         = minimizerIterations;
         this.surfaceCorrectionIterations = surfaceCorrectionIterations;
     }
@@ -22,11 +23,20 @@ public class QEF : QEFSolver<QEF> {
         this.intersectionPlanes.Add( new( normal, intersection ) );
     }
 
-    public void combine( QEF other ) {
-        this.intersectionPlanes.AddRange( other.intersectionPlanes );
+    public void combine( QEFSolver other ) {
+        if( other is SimpleQEF solver ) {
+            this.intersectionPlanes.AddRange( solver.intersectionPlanes );
+        }
+        else {
+            throw new Exception( "Unable to combine different derived solver" );
+        }
     }
 
     public ( Vector3 vertex, Vector3 normal, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+        if( this.empty ) {
+            throw new Exception( "Unable to solve QEF, no intersections accumulated" );
+        }
+
         // calculate minimizing vertex
         // see https://gamedev.stackexchange.com/questions/83457/can-someone-explain-dual-contouring
         // and https://gamedev.stackexchange.com/questions/111387/dual-contouring-finding-the-feature-point-normals-off
@@ -56,16 +66,7 @@ public class QEF : QEFSolver<QEF> {
         // error value is simply how far the minimizing vertex is from the surface before correction
         var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
 
-        // correct surface by forcing the minimizing vertex towards the zero crossing
-        // see https://www.reddit.com/r/VoxelGameDev/comments/mhiec0/how_are_people_getting_good_results_with_dual/gti0b8d/
-        for( var surfaceCorrectionIteration = 0; surfaceCorrectionIteration < this.surfaceCorrectionIterations; ++surfaceCorrectionIteration ) {
-            var density = SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions );
-            if( density == 0.0f ) {
-                // vertex is at the surface
-                break;
-            }
-            minimizingVertex -= surfaceNormal * density;
-        }
+        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, this.surfaceCorrectionIterations, densityFunctions );
 
         return ( minimizingVertex, surfaceNormal, error );
     }

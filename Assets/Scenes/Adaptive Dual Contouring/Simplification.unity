@@ -351,11 +351,12 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   simplification: 1
-  errorThreshold: 0.006
+  errorThreshold: 0.007
   minimizerIterations: 6
   binarySearchIterations: 6
   surfaceCorrectionIterations: 6
   intersectionApproximationMode: 0
+  solverType: 0
 --- !u!4 &1429825957
 Transform:
   m_ObjectHideFlags: 0

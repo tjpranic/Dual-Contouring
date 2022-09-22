@@ -66,10 +66,10 @@ public class UniformDualContouring : Voxelizer {
         public SurfaceExtractor.Corner[]   corners { get; }
         public SurfaceExtractor.Edge[]     edges   { get; }
 
-        public QEFSolver<QEF> qef    { get; set; }
-        public Vector3        vertex { get; set; } = Vector3.zero;
-        public Vector3        normal { get; set; } = Vector3.zero;
-        public int            index  { get; set; } = -1;
+        public QEFSolver qef    { get; set; }
+        public Vector3   vertex { get; set; } = Vector3.zero;
+        public Vector3   normal { get; set; } = Vector3.zero;
+        public int       index  { get; set; } = -1;
 
         public Voxel( Vector3 center, Vector3 size ) {
             this.type    = SurfaceExtractor.Voxel.Type.None;
@@ -172,7 +172,7 @@ public class UniformDualContouring : Voxelizer {
 
     public override IEnumerable<SurfaceExtractor.Corner> corners {
         get {
-            return this.grid.Flatten( ).Aggregate(
+            return this.grid.flatten( ).Aggregate(
                 new List<SurfaceExtractor.Corner>( ),
                 ( accumulator, voxel ) => {
                     accumulator.AddRange( voxel.corners );
@@ -184,7 +184,7 @@ public class UniformDualContouring : Voxelizer {
 
     public override IEnumerable<SurfaceExtractor.Edge> edges {
         get {
-            return this.grid.Flatten( ).Aggregate(
+            return this.grid.flatten( ).Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
                     accumulator.AddRange( voxel.edges );
@@ -195,8 +195,15 @@ public class UniformDualContouring : Voxelizer {
     }
 
     public override IEnumerable<SurfaceExtractor.Voxel> voxels {
-        get { return this.grid.Flatten( ); }
+        get { return this.grid.flatten( ); }
     }
+
+    public enum SolverType {
+        Simple,
+        SVD
+    }
+
+    public SolverType solverType = SolverType.Simple;
 
     public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
 
@@ -219,27 +226,7 @@ public class UniformDualContouring : Voxelizer {
         foreach( var voxel in this.grid ) {
             foreach( var corner in voxel.corners ) {
                 foreach( var densityFunction in densityFunctions ) {
-                    var density = densityFunction.sample( corner.position );
-
-                    // set material bit if the corner is inside of the shape
-                    if( densityFunction.combinationMode == DensityFunction.CombinationMode.Union && density < 0.0f ) {
-                        corner.materialIndex |= densityFunction.materialIndex;
-                    }
-                    // unset material bit if the corner is outside of the shape
-                    if( densityFunction.combinationMode == DensityFunction.CombinationMode.Intersection && density > 0.0f ) {
-                        corner.materialIndex &= ~densityFunction.materialIndex;
-                    }
-                    // unset material bit if the corner is inside of the shape
-                    if( densityFunction.combinationMode == DensityFunction.CombinationMode.Subtraction && density < 0.0f ) {
-                        corner.materialIndex &= ~densityFunction.materialIndex;
-                    }
-
-                    corner.density = densityFunction.combinationMode switch {
-                        DensityFunction.CombinationMode.Union        => Mathf.Min( corner.density,  density ),
-                        DensityFunction.CombinationMode.Intersection => Mathf.Max( corner.density,  density ),
-                        DensityFunction.CombinationMode.Subtraction  => Mathf.Max( corner.density, -density ),
-                        _                                            => throw new Exception( "Unknown combination mode specified" ),
-                    };
+                    ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensity( corner, densityFunction );
                 }
             }
         }
@@ -256,7 +243,11 @@ public class UniformDualContouring : Voxelizer {
                 continue;
             }
 
-            voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
+            voxel.qef = solverType switch {
+                SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                _                 => throw new Exception( "Unknown solver type specified" )
+            };
 
             foreach( var edge in voxel.edges ) {
                 if( !edge.intersectsContour( ) ) {

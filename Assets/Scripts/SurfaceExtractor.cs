@@ -64,6 +64,33 @@ public interface SurfaceExtractor {
 
     public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
 
+    public static ( float density, MaterialIndex material ) calculateDensity( Corner corner, DensityFunction densityFunction ) {
+        var density  = densityFunction.sample( corner.position );
+        var material = corner.materialIndex;
+
+        // set material bit if the corner is inside of the shape
+        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Union && density < 0.0f ) {
+            material |= densityFunction.materialIndex;
+        }
+        // unset material bit if the corner is outside of the shape
+        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Intersection && density > 0.0f ) {
+            material &= ~densityFunction.materialIndex;
+        }
+        // unset material bit if the corner is inside of the shape
+        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Subtraction && density < 0.0f ) {
+            material &= ~densityFunction.materialIndex;
+        }
+
+        density = densityFunction.combinationMode switch {
+            DensityFunction.CombinationMode.Union        => Mathf.Min( corner.density,  density ),
+            DensityFunction.CombinationMode.Intersection => Mathf.Max( corner.density,  density ),
+            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( corner.density, -density ),
+            _                                            => throw new Exception( "Unknown combination mode specified" ),
+        };
+
+        return ( density, material );
+    }
+
     public static float calculateDensity( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
         return densityFunctions.Aggregate(
             float.MaxValue,

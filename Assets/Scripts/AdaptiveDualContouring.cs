@@ -65,12 +65,12 @@ public class AdaptiveDualContouring : Voxelizer {
         public SurfaceExtractor.Corner[]   corners { get; }
         public SurfaceExtractor.Edge[]     edges   { get; }
 
-        public int            depth  { get; set; }
-        public QEFSolver<QEF> qef    { get; set; }
-        public Vector3        vertex { get; set; } = Vector3.zero;
-        public Vector3        normal { get; set; } = Vector3.zero;
-        public float          error  { get; set; } = 0.0f;
-        public int            index  { get; set; } = -1;
+        public int       depth  { get; set; }
+        public QEFSolver qef    { get; set; }
+        public Vector3   vertex { get; set; } = Vector3.zero;
+        public Vector3   normal { get; set; } = Vector3.zero;
+        public float     error  { get; set; } = 0.0f;
+        public int       index  { get; set; } = -1;
 
         public Voxel( SurfaceExtractor.Voxel.Type type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -213,6 +213,13 @@ public class AdaptiveDualContouring : Voxelizer {
 
     public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
 
+    public enum SolverType {
+        Simple,
+        SVD
+    }
+
+    public SolverType solverType = SolverType.Simple;
+
     public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
@@ -294,27 +301,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        var density = densityFunction.sample( corner.position );
-
-                        // set material bit if the corner is inside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Union && density < 0.0f ) {
-                            corner.materialIndex |= densityFunction.materialIndex;
-                        }
-                        // unset material bit if the corner is outside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Intersection && density > 0.0f ) {
-                            corner.materialIndex &= ~densityFunction.materialIndex;
-                        }
-                        // unset material bit if the corner is inside of the shape
-                        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Subtraction && density < 0.0f ) {
-                            corner.materialIndex &= ~densityFunction.materialIndex;
-                        }
-
-                        corner.density = densityFunction.combinationMode switch {
-                            DensityFunction.CombinationMode.Union        => Mathf.Min( corner.density,  density ),
-                            DensityFunction.CombinationMode.Intersection => Mathf.Max( corner.density,  density ),
-                            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( corner.density, -density ),
-                            _                                            => throw new Exception( "Unknown combination mode specified" ),
-                        };
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensity( corner, densityFunction );
                     }
                 }
             }
@@ -327,11 +314,6 @@ public class AdaptiveDualContouring : Voxelizer {
             ( node ) => {
                 var voxel = node.data;
 
-                if( voxel.type == SurfaceExtractor.Voxel.Type.Internal ) {
-                    // only process leaf nodes
-                    return;
-                }
-
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
                     voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
@@ -340,7 +322,11 @@ public class AdaptiveDualContouring : Voxelizer {
                     return;
                 }
 
-                voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
+                voxel.qef = solverType switch {
+                    SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    _                 => throw new Exception( "Unknown solver type specified" )
+                };
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -594,7 +580,11 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        voxel.qef = new QEF( this.minimizerIterations, this.surfaceCorrectionIterations );
+        voxel.qef = solverType switch {
+            SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            _                 => throw new Exception( "Unknown solver type specified" )
+        };
 
         var collapsible = true;
         for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
@@ -605,7 +595,7 @@ public class AdaptiveDualContouring : Voxelizer {
                 collapsible = false;
             }
             else if( child.qef != null ) {
-                voxel.qef.combine( ( QEF )child.qef );
+                voxel.qef.combine( child.qef );
             }
         }
 
