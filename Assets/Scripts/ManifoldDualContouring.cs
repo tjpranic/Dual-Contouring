@@ -315,11 +315,6 @@ public class ManifoldDualContouring : Voxelizer {
             ( node ) => {
                 var voxel = node.data;
 
-                if( voxel.type == SurfaceExtractor.Voxel.Type.Internal ) {
-                    // only process leaf nodes
-                    return;
-                }
-
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
                     voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
