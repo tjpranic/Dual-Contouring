@@ -1,17 +1,40 @@
 ﻿using System;
 using System.Collections.Generic;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 [RequireComponent( typeof( MeshRenderer ) )]
 public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
+    public int resolution = 2;
+
+    [SerializeField( )]
+    private int _minimizerIterations = 6;
+    public int minimizerIterations {
+        get { return this._minimizerIterations;  }
+        set { this._minimizerIterations = value; }
+    }
+
+    [SerializeField( )]
+    private int _binarySearchIterations = 6;
+    public int binarySearchIterations {
+        get { return this._binarySearchIterations;  }
+        set { this._binarySearchIterations = value; }
+    }
+
+    [SerializeField( )]
+    private int _surfaceCorrectionIterations = 6;
+    public int surfaceCorrectionIterations {
+        get { return this._surfaceCorrectionIterations;  }
+        set { this._surfaceCorrectionIterations = value; }
+    }
+
     public enum VertexMode {
         Shared,
         Split
     }
 
-    public int        resolution = 2;
     public VertexMode vertexMode = VertexMode.Shared;
 
     [Flags]
@@ -210,10 +233,29 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     }
 
-    public abstract IEnumerable<SurfaceExtractor.Corner> corners { get; }
-    public abstract IEnumerable<SurfaceExtractor.Edge>   edges   { get; }
-    public abstract IEnumerable<SurfaceExtractor.Voxel>  voxels  { get; }
+    public abstract SurfaceExtractor.Implementation                implementation                { get; set; }
+    public abstract QEFSolver.Type                                 qefSolver                     { get; set; }
+    public abstract SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode { get; set; }
+    public abstract IEnumerable<SurfaceExtractor.Corner>           corners                       { get; }
+    public abstract IEnumerable<SurfaceExtractor.Edge>             edges                         { get; }
+    public abstract IEnumerable<SurfaceExtractor.Voxel>            voxels                        { get; }
 
     public abstract Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
+
+}
+
+[CustomEditor( typeof( Voxelizer ) )]
+public class VoxelizerEditor : Editor {
+
+    public override void OnInspectorGUI( ) {
+        base.OnInspectorGUI( );
+
+        var voxelizer = this.target as Voxelizer;
+
+        // only SVD solver is available for GPU implementation
+        if( voxelizer.implementation == SurfaceExtractor.Implementation.GPU ) {
+            voxelizer.qefSolver = QEFSolver.Type.SVD;
+        }
+    }
 
 }

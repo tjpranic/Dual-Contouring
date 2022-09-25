@@ -407,6 +407,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   resolution: 5
+  _minimizerIterations: 6
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 0
   vertexMode: 1
   debugFlags: 24
   debugCornerSize: 0.0125
@@ -421,12 +424,10 @@ MonoBehaviour:
   debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
-  errorThreshold: 0.9
-  minimizerIterations: 6
-  binarySearchIterations: 6
-  surfaceCorrectionIterations: 0
-  intersectionApproximationMode: 0
-  solverType: 1
+  _implementation: 0
+  _qefSolver: 1
+  _intersectionApproximationMode: 0
+  errorThreshold: 0.014
 --- !u!1 &1615694499
 GameObject:
   m_ObjectHideFlags: 0

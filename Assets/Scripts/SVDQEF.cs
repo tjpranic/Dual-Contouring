@@ -5,23 +5,40 @@ using UnityEngine;
 
 public class SVDQEF : QEFSolver {
 
+    public struct Data {
+
+        public SymmetricMatrix3x3.Data ATA;
+        public Vector3                 ATB;
+        public float                   BTB;
+        public Vector3                 massPoint;
+        public int                     intersectionCount;
+
+        public Data( SVDQEF qef ) {
+            this.ATA               = new SymmetricMatrix3x3.Data( qef.ATA );
+            this.ATB               = qef.ATB;
+            this.BTB               = qef.BTB;
+            this.massPoint         = qef.massPoint;
+            this.intersectionCount = qef.intersectionCount;
+        }
+
+    }
+
     private const float SVDTolerance           = 1e-6f;
     private const float PseudoInverseTolerance = 1e-6f;
 
+    public int  minimizerIterations         { get; set; }
+    public int  surfaceCorrectionIterations { get; set; }
     public bool empty {
         get { return this.intersectionCount == 0; }
     }
 
-    private QEF.SymmetricMatrix3x3 ATA = new( );
-    private Vector3                ATB;
-    private float                  BTB;
-    private Vector3                massPoint;
-    private int                    intersectionCount;
+    private SymmetricMatrix3x3 ATA = new( );
+    private Vector3            ATB;
+    private float              BTB;
+    private Vector3            massPoint;
+    private int                intersectionCount;
 
-    private readonly int minimizerIterations;
-    private readonly int surfaceCorrectionIterations;
-
-    public SVDQEF( int minimizerIterations, int surfaceCorrectionIterations  ) {
+    public SVDQEF( int minimizerIterations, int surfaceCorrectionIterations ) {
         this.minimizerIterations         = minimizerIterations;
         this.surfaceCorrectionIterations = surfaceCorrectionIterations;
     }
@@ -76,26 +93,25 @@ public class SVDQEF : QEFSolver {
             }
         ) / this.intersectionCount;
 
-        var ata       = this.ATA;
-        var atb       = this.ATB;
+        // copy QEF data into temporaries so the SVD solve doesn't affect future QEF combinations
+        var ATA       = this.ATA;
+        var ATB       = this.ATB;
         var massPoint = this.massPoint / this.intersectionCount;
 
-        atb -= ata.multiplyVector( massPoint );
+        ATB -= ATA.multiplyVector( massPoint );
 
-        var ( minimizingVertex, error ) = QEF.SVD.solve( ata, atb, SVDTolerance, this.minimizerIterations, PseudoInverseTolerance );
+        var ( minimizingVertex, error ) = SVD.solve( ATA, ATB, SVDTolerance, this.minimizerIterations, PseudoInverseTolerance );
 
         minimizingVertex += massPoint;
 
-        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, this.surfaceCorrectionIterations, densityFunctions );
+        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, densityFunctions, this.surfaceCorrectionIterations );
 
         return ( minimizingVertex, surfaceNormal, error );
     }
 
-}
-
-namespace QEF {
-
     public class Matrix3x3 {
+
+        public static Matrix3x3 identity = new( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
         public float m00, m01, m02, m10, m11, m12, m20, m21, m22 = 0.0f;
 
@@ -118,15 +134,15 @@ namespace QEF {
         }
 
         public Matrix3x3( SymmetricMatrix3x3 other ) {
-            this[0, 0] = other.m00;
-            this[0, 1] = other.m01;
-            this[0, 2] = other.m02;
+            this[0, 0] = other[0, 0];
+            this[0, 1] = other[0, 1];
+            this[0, 2] = other[0, 2];
             this[1, 0] = 0.0f;
-            this[1, 1] = other.m11;
-            this[1, 2] = other.m12;
+            this[1, 1] = other[1, 1];
+            this[1, 2] = other[1, 2];
             this[2, 0] = 0.0f;
             this[2, 1] = 0.0f;
-            this[2, 2] = other.m22;
+            this[2, 2] = other[2, 2];
         }
 
         public float this[int row, int column] {
@@ -192,70 +208,66 @@ namespace QEF {
             };
         }
 
-        public void rotate01Post( float c, float s ) {
-            float m00 = this[0, 0],
-                m01 = this[0, 1],
-                m10 = this[1, 0],
-                m11 = this[1, 1],
-                m20 = this[2, 0],
-                m21 = this[2, 1];
-
-            this[0, 0] = ( c * m00 ) - ( s * m01 );
-            this[0, 1] = ( s * m00 ) + ( c * m01 );
-            this[1, 0] = ( c * m10 ) - ( s * m11 );
-            this[1, 1] = ( s * m10 ) + ( c * m11 );
-            this[2, 0] = ( c * m20 ) - ( s * m21 );
-            this[2, 1] = ( s * m20 ) + ( c * m21 );
+        public Matrix3x3 rotate01Post( float c, float s ) {
+            return new Matrix3x3(
+                ( c * this[0, 0] ) - ( s * this[0, 1] ),
+                ( s * this[0, 0] ) + ( c * this[0, 1] ),
+                this[0, 2],
+                ( c * this[1, 0] ) - ( s * this[1, 1] ),
+                ( s * this[1, 0] ) + ( c * this[1, 1] ),
+                this[1, 2],
+                ( c * this[2, 0] ) - ( s * this[2, 1] ),
+                ( s * this[2, 0] ) + ( c * this[2, 1] ),
+                this[2, 2]
+            );
         }
 
-        public void rotate02Post( float c, float s ) {
-            float m00 = this[0, 0],
-                m02 = this[0, 2],
-                m10 = this[1, 0],
-                m12 = this[1, 2],
-                m20 = this[2, 0],
-                m22 = this[2, 2];
-
-            this[0, 0] = ( c * m00 ) - ( s * m02 );
-            this[0, 2] = ( s * m00 ) + ( c * m02 );
-            this[1, 0] = ( c * m10 ) - ( s * m12 );
-            this[1, 2] = ( s * m10 ) + ( c * m12 );
-            this[2, 0] = ( c * m20 ) - ( s * m22 );
-            this[2, 2] = ( s * m20 ) + ( c * m22 );
+        public Matrix3x3 rotate02Post( float c, float s ) {
+            return new Matrix3x3(
+                ( c * this[0, 0] ) - ( s * this[0, 2] ),
+                this[0, 1],
+                ( s * this[0, 0] ) + ( c * this[0, 2] ),
+                ( c * this[1, 0] ) - ( s * this[1, 2] ),
+                this[1, 1],
+                ( s * this[1, 0] ) + ( c * this[1, 2] ),
+                ( c * this[2, 0] ) - ( s * this[2, 2] ),
+                this[2, 1],
+                ( s * this[2, 0] ) + ( c * this[2, 2] )
+            );
         }
 
-        public void rotate12Post( float c, float s ) {
-            float m01 = this[0, 1],
-                m02 = this[0, 2],
-                m11 = this[1, 1],
-                m12 = this[1, 2],
-                m21 = this[2, 1],
-                m22 = this[2, 2];
-
-            this[0, 1] = ( c * m01 ) - ( s * m02 );
-            this[0, 2] = ( s * m01 ) + ( c * m02 );
-            this[1, 1] = ( c * m11 ) - ( s * m12 );
-            this[1, 2] = ( s * m11 ) + ( c * m12 );
-            this[2, 1] = ( c * m21 ) - ( s * m22 );
-            this[2, 2] = ( s * m21 ) + ( c * m22 );
+        public Matrix3x3 rotate12Post( float c, float s ) {
+            return new Matrix3x3(
+                this[0, 0],
+                ( c * this[0, 1] ) - ( s * this[0, 2] ),
+                ( s * this[0, 1] ) + ( c * this[0, 2] ),
+                this[1, 0],
+                ( c * this[1, 1] ) - ( s * this[1, 2] ),
+                ( s * this[1, 1] ) + ( c * this[1, 2] ),
+                this[2, 0],
+                ( c * this[2, 1] ) - ( s * this[2, 2] ),
+                ( s * this[2, 1] ) + ( c * this[2, 2] )
+            );
         }
 
-        public static ( float, float ) calculateSymmetricGivensCoefficients( float app, float apq, float aqq ) {
-            var c = 1.0f;
-            var s = 0.0f;
-            if( apq != 0 ) {
-                var tau = ( aqq - app ) / ( 2.0f * apq );
-                var stt = Mathf.Sqrt( 1.0f + ( tau * tau ) );
-                var tan = 1.0f / ( tau >= 0 ? tau + stt : tau - stt );
-
-                c = 1.0f / Mathf.Sqrt( 1.0f + ( tan * tan ) );
-                s = tan * c;
-            }
-            return ( c, s );
-        }
     }
 
     public class SymmetricMatrix3x3 {
+
+        public struct Data {
+
+            public float m00, m01, m02, m11, m12, m22;
+
+            public Data( SymmetricMatrix3x3 matrix ) {
+                this.m00 = matrix[0, 0];
+                this.m01 = matrix[0, 1];
+                this.m02 = matrix[0, 2];
+                this.m11 = matrix[1, 1];
+                this.m12 = matrix[1, 2];
+                this.m22 = matrix[2, 2];
+            }
+
+        }
 
         public float m00, m01, m02, m11, m12, m22 = 0.0f;
 
@@ -268,15 +280,6 @@ namespace QEF {
             this[1, 1] = m11;
             this[1, 2] = m12;
             this[2, 2] = m22;
-        }
-
-        public SymmetricMatrix3x3( SymmetricMatrix3x3 other ) {
-            this[0, 0] = other.m00;
-            this[0, 1] = other.m01;
-            this[0, 2] = other.m02;
-            this[1, 1] = other.m11;
-            this[1, 2] = other.m12;
-            this[2, 2] = other.m22;
         }
 
         public float this[int row, int column] {
@@ -354,100 +357,112 @@ namespace QEF {
             };
         }
 
-        public ( float, float ) rotate01( ) {
-            var ( c, s ) = Matrix3x3.calculateSymmetricGivensCoefficients( this[0, 0], this[0, 1], this[1, 1] );
-
+        public SymmetricMatrix3x3 rotate01( float c, float s ) {
             var cc  = c * c;
             var ss  = s * s;
             var mix = 2 * c * s * this[0, 1];
 
-            float m00 = this[0, 0], m02 = this[0, 2], m11 = this[1, 1], m12 = this[1, 2];
-
-            this[0, 0] = ( cc * m00 ) - mix + ( ss * m11 );
-            this[0, 1] = 0.0f;
-            this[0, 2] = ( c  * m02 ) -       ( s  * m12 );
-            this[1, 1] = ( ss * m00 ) + mix + ( cc * m11 );
-            this[1, 2] = ( s  * m02 ) +       ( c  * m12 );
-
-            return ( c, s );
+            return new SymmetricMatrix3x3(
+                ( cc * this[0, 0] ) - mix + ( ss * this[1, 1] ),
+                0.0f,
+                ( c  * this[0, 2] ) -       ( s  * this[1, 2] ),
+                ( ss * this[0, 0] ) + mix + ( cc * this[1, 1] ),
+                ( s  * this[0, 2] ) +       ( c  * this[1, 2] ),
+                this[2, 2]
+            );
         }
 
-        public ( float, float ) rotate02( ) {
-            var ( c, s ) = Matrix3x3.calculateSymmetricGivensCoefficients( this[0, 0], this[0, 2], this[2, 2] );
-
+        public SymmetricMatrix3x3 rotate02( float c, float s ) {
             var cc  = c * c;
             var ss  = s * s;
             var mix = 2 * c * s * this[0, 2];
 
-            float m00 = this[0, 0], m01 = this[0, 1], m12 = this[1, 2], m22 = this[2, 2];
-
-            this[0, 0] = ( cc * m00 ) - mix + ( ss * m22 );
-            this[0, 1] = ( c  * m01 ) -       ( s  * m12 );
-            this[0, 2] = 0.0f;
-            this[1, 2] = ( s  * m01 ) +       ( c  * m12 );
-            this[2, 2] = ( ss * m00 ) + mix + ( cc * m22 );
-
-            return ( c, s );
+            return new SymmetricMatrix3x3(
+                ( cc * this[0, 0] ) - mix + ( ss * this[2, 2] ),
+                ( c  * this[0, 1] ) -       ( s  * this[1, 2] ),
+                0.0f,
+                this[1, 1],
+                ( s  * this[0, 1] ) +       ( c  * this[1, 2] ),
+                ( ss * this[0, 0] ) + mix + ( cc * this[2, 2] )
+            );
         }
 
-        public ( float, float ) rotate12( ) {
-            var ( c, s ) = Matrix3x3.calculateSymmetricGivensCoefficients( this[1, 1], this[1, 2], this[2, 2] );
-
+        public SymmetricMatrix3x3 rotate12( float c, float s ) {
             var cc  = c * c;
             var ss  = s * s;
             var mix = 2 * c * s * this[1, 2];
 
-            float m01 = this[0, 1], m02 = this[0, 2], m11 = this[1, 1], m22 = this[2, 2];
-
-            this[0, 1] = ( c  * m01 ) -       ( s  * m02 );
-            this[0, 2] = ( s  * m01 ) +       ( c  * m02 );
-            this[1, 1] = ( cc * m11 ) - mix + ( ss * m22 );
-            this[1, 2] = 0.0f;
-            this[2, 2] = ( ss * m11 ) + mix + ( cc * m22 );
-
-            return ( c, s );
+            return new SymmetricMatrix3x3(
+                this[0, 0],
+                ( c  * this[0, 1] ) -       ( s  * this[0, 2] ),
+                ( s  * this[0, 1] ) +       ( c  * this[0, 2] ),
+                ( cc * this[1, 1] ) - mix + ( ss * this[2, 2] ),
+                0.0f,
+                ( ss * this[1, 1] ) + mix + ( cc * this[2, 2] )
+            );
         }
 
     }
 
     public static class SVD {
 
+        public static ( float, float ) calculateSymmetricGivensCoefficients( float app, float apq, float aqq ) {
+            var c = 1.0f;
+            var s = 0.0f;
+            if( apq != 0.0f ) {
+                var tau = ( aqq - app ) / ( 2.0f * apq );
+                var stt = Mathf.Sqrt( 1.0f + ( tau * tau ) );
+                var tan = 1.0f / ( tau >= 0.0f ? tau + stt : tau - stt );
+
+                c = 1.0f / Mathf.Sqrt( 1.0f + ( tan * tan ) );
+                s = tan * c;
+            }
+            return ( c, s );
+        }
+
         public static ( SymmetricMatrix3x3, Matrix3x3 ) rotate01( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {
             if( VTAV[0, 1] != 0.0f ) {
-                var ( _, _ ) = VTAV.rotate01( );
+                var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV[0, 0], VTAV[0, 1], VTAV[1, 1] );
 
-                var c = 0.0f;
-                var s = 0.0f;
-                V.rotate01Post( c, s );
+                VTAV = VTAV.rotate01( c, s );
+
+                ( c, s ) = ( 0.0f, 0.0f );
+
+                V = V.rotate01Post( c, s );
             }
             return ( VTAV, V );
         }
 
         public static ( SymmetricMatrix3x3, Matrix3x3 ) rotate02( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {
             if( VTAV[0, 2] != 0.0f ) {
-                var ( _, _ ) = VTAV.rotate02( );
+                var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV[0, 0], VTAV[0, 2], VTAV[2, 2] );
 
-                var c = 0.0f;
-                var s = 0.0f;
-                V.rotate02Post( c, s );
+                VTAV = VTAV.rotate02( c, s );
+
+                // not sure why these are needed
+                ( c, s ) = ( 0.0f, 0.0f );
+
+                V = V.rotate02Post( c, s );
             }
             return ( VTAV, V );
         }
 
         public static ( SymmetricMatrix3x3, Matrix3x3 ) rotate12( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {
             if( VTAV[1, 2] != 0.0f ) {
-                var ( _, _ ) = VTAV.rotate12( );
+                var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV[1, 1], VTAV[1, 2], VTAV[2, 2] );
 
-                var c = 0.0f;
-                var s = 0.0f;
-                V.rotate12Post( c, s );
+                VTAV = VTAV.rotate12( c, s );
+
+                ( c, s ) = ( 0.0f, 0.0f );
+
+                V = V.rotate12Post( c, s );
             }
             return ( VTAV, V );
         }
 
-        public static ( Matrix3x3, SymmetricMatrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, float tolerance, int sweeps ) {
-            var VTAV = new SymmetricMatrix3x3( ATA );
-            var V    = new Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+        public static ( SymmetricMatrix3x3, Matrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, float tolerance, int sweeps ) {
+            var VTAV = ATA;
+            var V    = Matrix3x3.identity;
 
             var delta = tolerance * VTAV.frobeniusNorm( );
 
@@ -457,7 +472,7 @@ namespace QEF {
                 ( VTAV, V ) = rotate12( VTAV, V );
             }
 
-            return ( V, VTAV );
+            return ( VTAV, V );
         }
 
         public static float calculateError( SymmetricMatrix3x3 ATA, Vector3 x, Vector3 ATB ) {
@@ -491,7 +506,7 @@ namespace QEF {
         }
 
         public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, float tolerance, int sweeps, float pseudoInverseTolerance ) {
-            var ( V, VTAV ) = getSymmetricSVD( ATA, tolerance, sweeps );
+            var ( VTAV, V ) = getSymmetricSVD( ATA, tolerance, sweeps );
 
             var x = pseudoInverse( VTAV, V, pseudoInverseTolerance ).multiplyVector( ATB );
 

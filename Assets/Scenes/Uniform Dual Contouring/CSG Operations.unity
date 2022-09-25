@@ -447,7 +447,8 @@ MonoBehaviour:
   binarySearchIterations: 6
   surfaceCorrectionIterations: 6
   intersectionApproximationMode: 0
-  solverType: 0
+  _implementation: 0
+  _qefSolver: 0
 --- !u!4 &965221076
 Transform:
   m_ObjectHideFlags: 0

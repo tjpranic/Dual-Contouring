@@ -421,11 +421,12 @@ MonoBehaviour:
   debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
-  minimizerIterations: 6
-  binarySearchIterations: 6
-  surfaceCorrectionIterations: 0
-  intersectionApproximationMode: 0
-  solverType: 1
+  _minimizerIterations: 6
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 0
+  _implementation: 0
+  _qefSolver: 1
+  _intersectionApproximationMode: 0
 --- !u!1 &1615694499
 GameObject:
   m_ObjectHideFlags: 0

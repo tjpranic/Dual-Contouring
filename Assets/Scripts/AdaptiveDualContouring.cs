@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using UnityEditor;
 using UnityEngine;
 
 using Axis     = OctreeContouringTables<AdaptiveDualContouring.Voxel>.Axis;
@@ -157,6 +158,29 @@ public class AdaptiveDualContouring : Voxelizer {
 
     }
 
+    [Space( )]
+
+    [SerializeField( )]
+    private SurfaceExtractor.Implementation _implementation = SurfaceExtractor.Implementation.CPU;
+    public override SurfaceExtractor.Implementation implementation {
+        get { return this._implementation;  }
+        set { this._implementation = value; }
+    }
+
+    [SerializeField( )]
+    private QEFSolver.Type _qefSolver = QEFSolver.Type.Simple;
+    public override QEFSolver.Type qefSolver {
+        get { return this._qefSolver;  }
+        set { this._qefSolver = value; }
+    }
+
+    [SerializeField( )]
+    private SurfaceExtractor.IntersectionApproximationMode _intersectionApproximationMode = SurfaceExtractor.IntersectionApproximationMode.BinarySearch;
+    public override SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode {
+        get { return this._intersectionApproximationMode;  }
+        set { this._intersectionApproximationMode = value; }
+    }
+
     public override IEnumerable<SurfaceExtractor.Corner> corners {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
@@ -201,24 +225,6 @@ public class AdaptiveDualContouring : Voxelizer {
 
     [Min( 0.0f )]
     public float errorThreshold = 0.01f;
-
-    public int minimizerIterations         = 6;
-    public int binarySearchIterations      = 6;
-    public int surfaceCorrectionIterations = 6;
-
-    public enum IntersectionApproximationMode {
-        BinarySearch,
-        LinearInterpolation
-    }
-
-    public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
-
-    public enum SolverType {
-        Simple,
-        SVD
-    }
-
-    public SolverType solverType = SolverType.Simple;
 
     public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
 
@@ -301,7 +307,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensity( corner, densityFunction );
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
                     }
                 }
             }
@@ -322,10 +328,10 @@ public class AdaptiveDualContouring : Voxelizer {
                     return;
                 }
 
-                voxel.qef = solverType switch {
-                    SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    _                 => throw new Exception( "Unknown solver type specified" )
+                voxel.qef = this.qefSolver switch {
+                    QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    _                     => throw new Exception( "Unknown solver type specified" )
                 };
 
                 foreach( var edge in voxel.edges ) {
@@ -333,8 +339,8 @@ public class AdaptiveDualContouring : Voxelizer {
                         continue;
                     }
 
-                    edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
-                    edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
+                    edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximationMode, this.binarySearchIterations );
+                    edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                     voxel.qef.add( edge.intersection, edge.normal );
                 }
@@ -374,61 +380,6 @@ public class AdaptiveDualContouring : Voxelizer {
         }
 
         return mesh;
-    }
-
-    private Vector3 approximateIntersection( SurfaceExtractor.Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
-        if( edge.corners[0].density == 0.0f || edge.corners[1].density == 0.0f ) {
-            // one of the corners is at the exact intersection
-            return edge.corners[0].density == 0.0f ? edge.corners[0].position : edge.corners[1].position;
-        }
-        if( this.intersectionApproximationMode == IntersectionApproximationMode.BinarySearch ) {
-            var ( start, end ) = edge.corners[0].density < edge.corners[1].density
-                ? ( edge.corners[0].position, edge.corners[1].position )
-                : ( edge.corners[1].position, edge.corners[0].position );
-
-            var intersection = Vector3.zero;
-            for( var binarySearchIterations = 0; binarySearchIterations < this.binarySearchIterations; ++binarySearchIterations ) {
-                intersection = start + ( 0.5f * ( end - start ) );
-
-                var density = SurfaceExtractor.calculateDensity( intersection, densityFunctions );
-
-                if( density < 0.0f ) {
-                    start = intersection;
-                }
-                else if( density > 0.0f ) {
-                    end = intersection;
-                }
-                else if( density == 0.0f ) {
-                    break;
-                }
-            }
-
-            return intersection;
-        }
-        else if( this.intersectionApproximationMode == IntersectionApproximationMode.LinearInterpolation ) {
-            return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
-        }
-        throw new Exception( "Unknown intersection approximation mode specified" );
-    }
-
-    private Vector3 calculateNormal( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
-        var step = 0.1f;
-
-        // sample surrounding x, y, z locations and take the difference
-
-        var positive = Vector3.positiveInfinity;
-
-        positive.x = SurfaceExtractor.calculateDensity( point + new Vector3( step, 0.0f, 0.0f ), densityFunctions );
-        positive.y = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, step, 0.0f ), densityFunctions );
-        positive.z = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, 0.0f, step ), densityFunctions );
-
-        var negative = Vector3.positiveInfinity;
-
-        negative.x = SurfaceExtractor.calculateDensity( point - new Vector3( step, 0.0f, 0.0f ), densityFunctions );
-        negative.y = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, step, 0.0f ), densityFunctions );
-        negative.z = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, 0.0f, step ), densityFunctions );
-
-        return Vector3.Normalize( positive - negative );
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
@@ -580,10 +531,10 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        voxel.qef = solverType switch {
-            SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            _                 => throw new Exception( "Unknown solver type specified" )
+        voxel.qef = this.qefSolver switch {
+            QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            _                     => throw new Exception( "Unknown solver type specified" )
         };
 
         var collapsible = true;
@@ -620,6 +571,15 @@ public class AdaptiveDualContouring : Voxelizer {
         node.children = null;
 
         return node;
+    }
+
+}
+
+[CustomEditor( typeof( AdaptiveDualContouring ) )]
+public class AdaptiveDualContouringEditor : VoxelizerEditor {
+
+    public override void OnInspectorGUI( ) {
+        base.OnInspectorGUI( );
     }
 
 }

@@ -5,12 +5,11 @@ using UnityEngine;
 
 public class SimpleQEF : QEFSolver {
 
+    public int  minimizerIterations         { get; set; }
+    public int  surfaceCorrectionIterations { get; set; }
     public bool empty {
         get { return intersectionPlanes.Count == 0; }
     }
-
-    private readonly int minimizerIterations;
-    private readonly int surfaceCorrectionIterations;
 
     private readonly List<Plane> intersectionPlanes = new( );
 
@@ -66,7 +65,7 @@ public class SimpleQEF : QEFSolver {
         // error value is simply how far the minimizing vertex is from the surface before correction
         var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
 
-        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, this.surfaceCorrectionIterations, densityFunctions );
+        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, densityFunctions, this.surfaceCorrectionIterations );
 
         return ( minimizingVertex, surfaceNormal, error );
     }

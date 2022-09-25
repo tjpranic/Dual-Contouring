@@ -1,13 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using UnityEditor;
 using UnityEngine;
 
 // dual contouring implementation using uniform grid
 
 public class UniformDualContouring : Voxelizer {
 
-    private class Corner : SurfaceExtractor.Corner {
+    public class Corner : SurfaceExtractor.Corner {
+
+        public struct Data {
+
+            public Vector3                        position;
+            public float                          density;
+            public SurfaceExtractor.MaterialIndex materialIndex;
+
+            public Data( SurfaceExtractor.Corner corner ) {
+                this.position      = corner.position;
+                this.density       = corner.density;
+                this.materialIndex = corner.materialIndex;
+            }
+
+        }
 
         public Vector3                        position      { get; }
         public float                          density       { get; set; } = float.MaxValue;
@@ -27,7 +43,23 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    private class Edge : SurfaceExtractor.Edge {
+    public class Edge : SurfaceExtractor.Edge {
+
+        public struct Data {
+
+            public Corner.Data corner0;
+            public Corner.Data corner1;
+            public Vector3     intersection;
+            public Vector3     normal;
+
+            public Data( SurfaceExtractor.Edge edge ) {
+                this.corner0      = new Corner.Data( edge.corners[0] );
+                this.corner1      = new Corner.Data( edge.corners[2] );
+                this.intersection = edge.intersection;
+                this.normal       = edge.normal;
+            }
+
+        }
 
         public SurfaceExtractor.Corner[] corners      { get; }
         public Vector3                   intersection { get; set; }
@@ -55,9 +87,82 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    private class Voxel : SurfaceExtractor.Voxel {
+    public class Voxel : SurfaceExtractor.Voxel {
 
-        public SurfaceExtractor.Voxel.Type type    { get; set; }
+        public struct Data {
+
+            public Vector3     center;
+            public Vector3     size;
+            public Vector3     extents;
+            public Vector3     minimum;
+            public Vector3     maximum;
+            public SVDQEF.Data qef;
+            public Vector3     vertex;
+            public Vector3     normal;
+            public int         index;
+
+            public Corner.Data corner0;
+            public Corner.Data corner1;
+            public Corner.Data corner2;
+            public Corner.Data corner3;
+            public Corner.Data corner4;
+            public Corner.Data corner5;
+            public Corner.Data corner6;
+            public Corner.Data corner7;
+
+            public Edge.Data edge0;
+            public Edge.Data edge1;
+            public Edge.Data edge2;
+            public Edge.Data edge3;
+            public Edge.Data edge4;
+            public Edge.Data edge5;
+            public Edge.Data edge6;
+            public Edge.Data edge7;
+            public Edge.Data edge8;
+            public Edge.Data edge9;
+            public Edge.Data edge10;
+            public Edge.Data edge11;
+
+            public Data( Voxel voxel ) {
+                if( voxel.qef is SVDQEF solver ) {
+                    this.center  = voxel.center;
+                    this.size    = voxel.size;
+                    this.extents = voxel.extents;
+                    this.minimum = voxel.minimum;
+                    this.maximum = voxel.maximum;
+                    this.qef     = new SVDQEF.Data( solver );
+                    this.vertex  = voxel.vertex;
+                    this.normal  = voxel.normal;
+                    this.index   = voxel.index;
+
+                    this.corner0 = new Corner.Data( voxel.corners[0] );
+                    this.corner1 = new Corner.Data( voxel.corners[1] );
+                    this.corner2 = new Corner.Data( voxel.corners[2] );
+                    this.corner3 = new Corner.Data( voxel.corners[3] );
+                    this.corner4 = new Corner.Data( voxel.corners[4] );
+                    this.corner5 = new Corner.Data( voxel.corners[5] );
+                    this.corner6 = new Corner.Data( voxel.corners[6] );
+                    this.corner7 = new Corner.Data( voxel.corners[7] );
+
+                    this.edge0  = new Edge.Data( voxel.edges[0] );
+                    this.edge1  = new Edge.Data( voxel.edges[1] );
+                    this.edge2  = new Edge.Data( voxel.edges[2] );
+                    this.edge3  = new Edge.Data( voxel.edges[3] );
+                    this.edge4  = new Edge.Data( voxel.edges[4] );
+                    this.edge5  = new Edge.Data( voxel.edges[5] );
+                    this.edge6  = new Edge.Data( voxel.edges[6] );
+                    this.edge7  = new Edge.Data( voxel.edges[7] );
+                    this.edge8  = new Edge.Data( voxel.edges[8] );
+                    this.edge9  = new Edge.Data( voxel.edges[9] );
+                    this.edge10 = new Edge.Data( voxel.edges[10] );
+                    this.edge11 = new Edge.Data( voxel.edges[11] );
+                }
+                throw new Exception( "Cannot create voxel data, incompatible QEF type" );
+            }
+
+        }
+
+        public SurfaceExtractor.Voxel.Type type    { get; set; } = SurfaceExtractor.Voxel.Type.None;
         public Vector3                     center  { get; }
         public Vector3                     size    { get; }
         public Vector3                     extents { get; }
@@ -72,7 +177,6 @@ public class UniformDualContouring : Voxelizer {
         public int       index  { get; set; } = -1;
 
         public Voxel( Vector3 center, Vector3 size ) {
-            this.type    = SurfaceExtractor.Voxel.Type.None;
             this.center  = center;
             this.size    = size;
             this.extents = size / 2;
@@ -155,20 +259,28 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    private Voxel[,,] grid;
-
-    public enum IntersectionApproximationMode {
-        BinarySearch,
-        LinearInterpolation
-    }
-
     [Space( )]
 
-    public int minimizerIterations         = 6;
-    public int binarySearchIterations      = 6;
-    public int surfaceCorrectionIterations = 6;
+    [SerializeField( )]
+    private SurfaceExtractor.Implementation _implementation = SurfaceExtractor.Implementation.CPU;
+    public override SurfaceExtractor.Implementation implementation {
+        get { return this._implementation;  }
+        set { this._implementation = value; }
+    }
 
-    public IntersectionApproximationMode intersectionApproximationMode = IntersectionApproximationMode.BinarySearch;
+    [SerializeField( )]
+    private QEFSolver.Type _qefSolver = QEFSolver.Type.Simple;
+    public override QEFSolver.Type qefSolver {
+        get { return this._qefSolver;  }
+        set { this._qefSolver = value; }
+    }
+
+    [SerializeField( )]
+    private SurfaceExtractor.IntersectionApproximationMode _intersectionApproximationMode = SurfaceExtractor.IntersectionApproximationMode.BinarySearch;
+    public override SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode {
+        get { return this._intersectionApproximationMode;  }
+        set { this._intersectionApproximationMode = value; }
+    }
 
     public override IEnumerable<SurfaceExtractor.Corner> corners {
         get {
@@ -198,12 +310,7 @@ public class UniformDualContouring : Voxelizer {
         get { return this.grid.flatten( ); }
     }
 
-    public enum SolverType {
-        Simple,
-        SVD
-    }
-
-    public SolverType solverType = SolverType.Simple;
+    private Voxel[,,] grid;
 
     public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
 
@@ -221,12 +328,42 @@ public class UniformDualContouring : Voxelizer {
             }
         }
 
+        /* testing code go away
+        if( this.implementation == SurfaceExtractor.Implementation.GPU ) {
+            var gpu = new GPUUniformDualContouring( );
+
+            var configuration = new GPUUniformDualContouring.Configuration[] { new( resolution ) };
+            var voxels        = new Voxel.Data[resolution * resolution * resolution];
+
+            gpu.testKernel(
+                "buildVoxelGrid",
+                new ( string, Array )[] {
+                    ( "Configuration", configuration )
+                },
+                new ( string, Array )[] {
+                    ( "voxels", voxels )
+                },
+                new Vector3Int( resolution, resolution, resolution )
+            );
+
+            for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
+                for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
+                    for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
+                        var voxelIndex = ( z * resolution * resolution ) + ( y * resolution ) + x;
+
+                        this.grid[x, y, z] = new Voxel( voxels[voxelIndex].center, voxels[voxelIndex].size );
+                    }
+                }
+            }
+        }
+        */
+
         // sample corner densities
 
         foreach( var voxel in this.grid ) {
             foreach( var corner in voxel.corners ) {
                 foreach( var densityFunction in densityFunctions ) {
-                    ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensity( corner, densityFunction );
+                    ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
                 }
             }
         }
@@ -243,10 +380,10 @@ public class UniformDualContouring : Voxelizer {
                 continue;
             }
 
-            voxel.qef = solverType switch {
-                SolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                SolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                _                 => throw new Exception( "Unknown solver type specified" )
+            voxel.qef = this.qefSolver switch {
+                QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                _                     => throw new Exception( "Unknown solver type specified" )
             };
 
             foreach( var edge in voxel.edges ) {
@@ -254,8 +391,8 @@ public class UniformDualContouring : Voxelizer {
                     continue;
                 }
 
-                edge.intersection = this.approximateIntersection ( edge,              densityFunctions );
-                edge.normal       = this.calculateNormal         ( edge.intersection, densityFunctions );
+                edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximationMode, this.binarySearchIterations );
+                edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                 voxel.qef.add( edge.intersection, edge.normal );
             }
@@ -343,61 +480,6 @@ public class UniformDualContouring : Voxelizer {
         return mesh;
     }
 
-    private Vector3 approximateIntersection( SurfaceExtractor.Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
-        if( edge.corners[0].density == 0.0f || edge.corners[1].density == 0.0f ) {
-            // one of the corners is at the exact intersection
-            return edge.corners[0].density == 0.0f ? edge.corners[0].position : edge.corners[1].position;
-        }
-        if( this.intersectionApproximationMode == IntersectionApproximationMode.BinarySearch ) {
-            var ( start, end ) = edge.corners[0].density < edge.corners[1].density
-                ? ( edge.corners[0].position, edge.corners[1].position )
-                : ( edge.corners[1].position, edge.corners[0].position );
-
-            var intersection = Vector3.zero;
-            for( var binarySearchIterations = 0; binarySearchIterations < this.binarySearchIterations; ++binarySearchIterations ) {
-                intersection = start + ( 0.5f * ( end - start ) );
-
-                var density = SurfaceExtractor.calculateDensity( intersection, densityFunctions );
-
-                if( density < 0.0f ) {
-                    start = intersection;
-                }
-                else if( density > 0.0f ) {
-                    end = intersection;
-                }
-                else if( density == 0.0f ) {
-                    break;
-                }
-            }
-
-            return intersection;
-        }
-        else if( this.intersectionApproximationMode == IntersectionApproximationMode.LinearInterpolation ) {
-            return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
-        }
-        throw new Exception( "Unknown intersection approximation mode specified" );
-    }
-
-    private Vector3 calculateNormal( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
-        var step = 0.1f;
-
-        // sample surrounding x, y, z locations and take the difference
-
-        var positive = Vector3.positiveInfinity;
-
-        positive.x = SurfaceExtractor.calculateDensity( point + new Vector3( step, 0.0f, 0.0f ), densityFunctions );
-        positive.y = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, step, 0.0f ), densityFunctions );
-        positive.z = SurfaceExtractor.calculateDensity( point + new Vector3( 0.0f, 0.0f, step ), densityFunctions );
-
-        var negative = Vector3.positiveInfinity;
-
-        negative.x = SurfaceExtractor.calculateDensity( point - new Vector3( step, 0.0f, 0.0f ), densityFunctions );
-        negative.y = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, step, 0.0f ), densityFunctions );
-        negative.z = SurfaceExtractor.calculateDensity( point - new Vector3( 0.0f, 0.0f, step ), densityFunctions );
-
-        return Vector3.Normalize( positive - negative );
-    }
-
     private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, Dictionary<int, List<int>> indices ) {
         if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
@@ -436,6 +518,152 @@ public class UniformDualContouring : Voxelizer {
                 indices.Add( subMeshIndex, new( ) );
             }
             indices[subMeshIndex].AddRange( triangles );
+        }
+    }
+
+}
+
+[CustomEditor( typeof( UniformDualContouring ) )]
+public class UniformDualContouringEditor : VoxelizerEditor {
+
+    public override void OnInspectorGUI( ) {
+        base.OnInspectorGUI( );
+    }
+
+}
+
+public class GPUUniformDualContouring {
+
+    // constant buffer data needs to be padded so every element starts on a 4 byte aligned address
+    // https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-packing-rules
+    [StructLayout( LayoutKind.Explicit )]
+    public struct Configuration {
+        [FieldOffset( 0 * 4 )] public int resolution;
+        [FieldOffset( 1 * 4 )] public float test1;
+        [FieldOffset( 2 * 4 )] public float test2;
+        [FieldOffset( 3 * 4 )] public float test3;
+
+        public Configuration( int resolution ) {
+            this.resolution = resolution;
+
+            this.test1 = 0.0f;
+            this.test2 = 0.0f;
+            this.test3 = 0.0f;
+        }
+    }
+
+    private readonly ComputeShader uniformDualContouring;
+
+    private ComputeBuffer configurationBuffer;
+    private ComputeBuffer voxelsBuffer;
+    //...
+
+    private readonly int buildVoxelGridKernel;
+    //...
+
+    public GPUUniformDualContouring( ) {
+        this.uniformDualContouring = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
+
+        this.buildVoxelGridKernel = this.uniformDualContouring.FindKernel( "buildVoxelGrid" );
+        //...
+    }
+
+    public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
+        var configuration = new Configuration[] { new( resolution ) };
+
+        this.configurationBuffer.SetData( configuration );
+
+        this.buildVoxelGrid( resolution );
+        //...
+
+        return new Mesh( );
+    }
+
+    private void buildVoxelGrid( int resolution ) {
+        this.uniformDualContouring.SetBuffer ( this.buildVoxelGridKernel, "voxels", this.voxelsBuffer );
+        this.uniformDualContouring.Dispatch  ( this.buildVoxelGridKernel, resolution, resolution, resolution );
+    }
+
+    public void resizeBuffers(
+        Configuration[]                    configuration,
+        UniformDualContouring.Voxel.Data[] voxels
+    ) {
+        this.releaseBuffers( );
+
+        this.configurationBuffer = new ComputeBuffer( 1,             Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
+        this.voxelsBuffer        = new ComputeBuffer( voxels.Length, Marshal.SizeOf( typeof( UniformDualContouring.Voxel.Data ) ) );
+
+        var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
+        this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
+
+        this.configurationBuffer.SetData( configuration );
+
+        this.voxelsBuffer.SetData( voxels );
+    }
+
+    public void assignBuffers(
+        Configuration[]                    configuration,
+        UniformDualContouring.Voxel.Data[] voxels
+    ) {
+        this.configurationBuffer?.SetData ( configuration );
+        this.voxelsBuffer?.SetData        ( voxels );
+    }
+
+    public void releaseBuffers( ) {
+        this.configurationBuffer?.Release( );
+        this.voxelsBuffer?.Release( );
+    }
+
+    public void testKernel(
+        string              kernelName,
+        ( string, Array )[] constantBuffers,
+        ( string, Array )[] buffers,
+        Vector3Int          threadGroups
+     ) {
+        var shader = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
+
+        var kernel = shader.FindKernel( kernelName );
+
+        var constantComputeBuffers = new List<ComputeBuffer>( );
+        foreach( var constantBuffer in constantBuffers ) {
+            var constantComputeBuffer = new ComputeBuffer(
+                constantBuffer.Item2.Length,
+                Marshal.SizeOf( constantBuffer.Item2.GetType( ).GetElementType( ) ),
+                ComputeBufferType.Constant
+            );
+            constantComputeBuffer.SetData( constantBuffer.Item2 );
+
+            constantComputeBuffers.Add( constantComputeBuffer );
+
+            shader.SetConstantBuffer(
+                Shader.PropertyToID( constantBuffer.Item1 ),
+                constantComputeBuffer,
+                0,
+                Marshal.SizeOf( constantBuffer.Item2.GetType( ).GetElementType( ) )
+            );
+        }
+
+        var computeBuffers = new List<ComputeBuffer>( );
+        foreach( var buffer in buffers ) {
+            var computeBuffer = new ComputeBuffer(
+                buffer.Item2.Length,
+                Marshal.SizeOf( buffer.Item2.GetType( ).GetElementType( ) )
+            );
+            computeBuffer.SetData( buffer.Item2 );
+
+            computeBuffers.Add( computeBuffer );
+
+            shader.SetBuffer( kernel, buffer.Item1, computeBuffer );
+        }
+
+        shader.Dispatch( kernel, threadGroups.x, threadGroups.y, threadGroups.z );
+
+        for( var i = 0; i < computeBuffers.Count; ++i ) {
+            computeBuffers[i].GetData( buffers[i].Item2 );
+            computeBuffers[i].Release( );
+        }
+        foreach( var computeBuffer in constantComputeBuffers ) {
+            computeBuffer.Release( );
         }
     }
 

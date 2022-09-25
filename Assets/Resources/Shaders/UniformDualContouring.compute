@@ -1,0 +1,176 @@
+#pragma kernel buildVoxelGrid
+
+struct SymmetricMatrix3x3 {
+    float m00, m01, m02, m11, m12, m22;
+};
+
+SymmetricMatrix3x3 createSymmetricMatrix3x3( ) {
+    SymmetricMatrix3x3 symmetricMatrix3x3;
+
+    symmetricMatrix3x3.m00 = 0.0f;
+    symmetricMatrix3x3.m01 = 0.0f;
+    symmetricMatrix3x3.m02 = 0.0f;
+    symmetricMatrix3x3.m11 = 0.0f;
+    symmetricMatrix3x3.m12 = 0.0f;
+    symmetricMatrix3x3.m22 = 0.0f;
+
+    return symmetricMatrix3x3;
+}
+
+
+struct SVDQEF {
+    SymmetricMatrix3x3 ATA;
+    float3             ATB;
+    float              BTB;
+    float3             massPoint;
+    uint               intersectionCount;
+};
+
+SVDQEF createSVDQEF( ) {
+    SVDQEF svdqef;
+
+    svdqef.ATA               = createSymmetricMatrix3x3( );
+    svdqef.ATB               = float3( 0.0f, 0.0f, 0.0f );
+    svdqef.BTB               = 0.0f;
+    svdqef.massPoint         = float3( 0.0f, 0.0f, 0.0f );
+    svdqef.intersectionCount = 0;
+
+    return svdqef;
+}
+
+
+#define MATERIAL_INDEX_VOID 0
+#define MATERIAL_INDEX_MATERIAL1 1
+#define MATERIAL_INDEX_MATERIAL2 2
+#define MATERIAL_INDEX_MATERIAL3 4
+#define MATERIAL_INDEX_MATERIAL4 8
+#define MATERIAL_INDEX_MATERIAL5 16
+#define MATERIAL_INDEX_MATERIAL6 32
+#define MATERIAL_INDEX_MATERIAL7 64
+#define MATERIAL_INDEX_MATERIAL8 128
+#define MATERIAL_INDEX_MATERIAL9 256
+
+struct Corner {
+    float3 position;
+    float  density;
+    uint   materialIndex;
+};
+
+Corner createCorner( float3 position ) {
+    Corner corner;
+
+    corner.position      = position;
+    corner.density       = 0.0f;
+    corner.materialIndex = 0;
+
+    return corner;
+}
+
+struct Edge {
+    Corner corner0;
+    Corner corner1;
+    float3 intersection;
+    float3 normal;
+};
+
+Edge createEdge( Corner corner0, Corner corner1 ) {
+    Edge edge;
+
+    edge.corner0      = corner0;
+    edge.corner1      = corner1;
+    edge.intersection = float3( 0.0f, 0.0f, 0.0f );
+    edge.normal       = float3( 0.0f, 0.0f, 0.0f );
+
+    return edge;
+}
+
+struct Voxel {
+    float3 center;
+    float3 size;
+    float3 extents;
+    float3 minimum;
+    float3 maximum;
+    SVDQEF qef;
+    float3 vertex;
+    float3 normal;
+    int    index;
+
+    Corner corner0;
+    Corner corner1;
+    Corner corner2;
+    Corner corner3;
+    Corner corner4;
+    Corner corner5;
+    Corner corner6;
+    Corner corner7;
+
+    Edge edge0;
+    Edge edge1;
+    Edge edge2;
+    Edge edge3;
+    Edge edge4;
+    Edge edge5;
+    Edge edge6;
+    Edge edge7;
+    Edge edge8;
+    Edge edge9;
+    Edge edge10;
+    Edge edge11;
+};
+
+Voxel createVoxel( float3 center, float3 size, int r ) {
+    Voxel voxel;
+
+    voxel.center  = center;
+    voxel.size    = size;
+    voxel.extents = size / 2;
+    voxel.minimum = center - voxel.extents;
+    voxel.maximum = center + voxel.extents;
+    voxel.qef     = createSVDQEF( );
+    voxel.vertex  = float3( 0.0f, 0.0f, 0.0f );
+    voxel.normal  = float3( 0.0f, 0.0f, 0.0f );
+    voxel.index   = r;
+
+    voxel.corner0 = createCorner( voxel.minimum );
+    voxel.corner1 = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.minimum.z ) );
+    voxel.corner2 = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.maximum.z ) );
+    voxel.corner3 = createCorner( float3( voxel.minimum.x, voxel.minimum.y, voxel.maximum.z ) );
+    voxel.corner4 = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.maximum.z ) );
+    voxel.corner5 = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.minimum.z ) );
+    voxel.corner6 = createCorner( float3( voxel.maximum.x, voxel.maximum.y, voxel.minimum.z ) );
+    voxel.corner7 = createCorner( voxel.maximum );
+
+    voxel.edge0  = createEdge( voxel.corner0, voxel.corner1 );
+    voxel.edge1  = createEdge( voxel.corner3, voxel.corner2 );
+    voxel.edge2  = createEdge( voxel.corner5, voxel.corner6 );
+    voxel.edge3  = createEdge( voxel.corner4, voxel.corner7 );
+    voxel.edge4  = createEdge( voxel.corner0, voxel.corner5 );
+    voxel.edge5  = createEdge( voxel.corner1, voxel.corner6 );
+    voxel.edge6  = createEdge( voxel.corner3, voxel.corner4 );
+    voxel.edge7  = createEdge( voxel.corner2, voxel.corner7 );
+    voxel.edge8  = createEdge( voxel.corner0, voxel.corner3 );
+    voxel.edge9  = createEdge( voxel.corner1, voxel.corner2 );
+    voxel.edge10 = createEdge( voxel.corner5, voxel.corner4 );
+    voxel.edge11 = createEdge( voxel.corner6, voxel.corner7 );
+
+    return voxel;
+}
+
+cbuffer Configuration {
+    uint resolution;
+    float test1;
+    float test2;
+    float test3;
+}
+
+RWStructuredBuffer<Voxel> voxels;
+
+[numthreads( 1, 1 ,1 )]
+void buildVoxelGrid( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
+
+    float3 size   = float3( 1.0f, 1.0f, 1.0f ) / resolution;                                                // center voxel relative to 0, 0, 0
+    float3 center = ( float3( dispatchThreadID.x, dispatchThreadID.y, dispatchThreadID.z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
+
+    voxels[voxelIndex] = createVoxel( center, size, resolution );
+}

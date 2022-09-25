@@ -1,0 +1,111 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!181963792 &2655988077585873504
+Preset:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: ManifoldDualContouring
+  m_TargetType:
+    m_NativeTypeID: 114
+    m_ManagedTypePPtr: {fileID: 11500000, guid: c306715021c0c47419d2aae7ab80ff8c, type: 3}
+    m_ManagedTypeFallback: 
+  m_Properties:
+  - target: {fileID: 0}
+    propertyPath: m_Enabled
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: m_EditorHideFlags
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: m_EditorClassIdentifier
+    value: 
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: resolution
+    value: 5
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: vertexMode
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugFlags
+    value: 24
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugCornerSize
+    value: 0.0125
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeSize
+    value: 0.025
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexSize
+    value: 0.1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalSize
+    value: 0.025
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugCellMesh
+    value: 
+    objectReference: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+  - target: {fileID: 0}
+    propertyPath: debugCellMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+  - target: {fileID: 0}
+    propertyPath: debugCornerMesh
+    value: 
+    objectReference: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+  - target: {fileID: 0}
+    propertyPath: debugCornerMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeIntersectionMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalMaterial
+    value: 
+    objectReference: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+  - target: {fileID: 0}
+    propertyPath: errorThreshold
+    value: 6e-12
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: minimizerIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: binarySearchIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: surfaceCorrectionIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: intersectionApproximationMode
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: qefSolver
+    value: 0
+    objectReference: {fileID: 0}
+  m_ExcludedProperties: []
