@@ -10,7 +10,7 @@ public interface SurfaceExtractor {
         GPU
     }
 
-    public enum IntersectionApproximationMode {
+    public enum IntersectionApproximation {
         BinarySearch,
         LinearInterpolation
     }
@@ -68,41 +68,43 @@ public interface SurfaceExtractor {
 
     }
 
+    public int resolution                  { get; set; }
     public int minimizerIterations         { get; set; }
     public int binarySearchIterations      { get; set; }
     public int surfaceCorrectionIterations { get; set; }
 
-    public Implementation                implementation                { get; set; }
-    public QEFSolver.Type                qefSolver                     { get; set; }
-    public IntersectionApproximationMode intersectionApproximationMode { get; set; }
+    public Implementation            implementation            { get; set; }
+    public IntersectionApproximation intersectionApproximation { get; set; }
+    public QEFSolver.Type            qefSolver                 { get; set; }
 
+    public Mesh                mesh    { get; }
     public IEnumerable<Corner> corners { get; }
     public IEnumerable<Edge>   edges   { get; }
     public IEnumerable<Voxel>  voxels  { get; }
 
-    public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
+    public void voxelize( IEnumerable<DensityFunction> densityFunctions );
 
     public static ( float density, MaterialIndex material ) calculateDensityAndMaterial( Corner corner, DensityFunction densityFunction ) {
         var density  = densityFunction.sample( corner.position );
         var material = corner.materialIndex;
 
         // set material bit if the corner is inside of the shape
-        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Union && density < 0.0f ) {
+        if( densityFunction.combination == DensityFunction.Combination.Union && density < 0.0f ) {
             material |= densityFunction.materialIndex;
         }
         // unset material bit if the corner is outside of the shape
-        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Intersection && density > 0.0f ) {
+        if( densityFunction.combination == DensityFunction.Combination.Intersection && density > 0.0f ) {
             material &= ~densityFunction.materialIndex;
         }
         // unset material bit if the corner is inside of the shape
-        if( densityFunction.combinationMode == DensityFunction.CombinationMode.Subtraction && density < 0.0f ) {
+        if( densityFunction.combination == DensityFunction.Combination.Subtraction && density < 0.0f ) {
             material &= ~densityFunction.materialIndex;
         }
 
-        density = densityFunction.combinationMode switch {
-            DensityFunction.CombinationMode.Union        => Mathf.Min( corner.density,  density ),
-            DensityFunction.CombinationMode.Intersection => Mathf.Max( corner.density,  density ),
-            DensityFunction.CombinationMode.Subtraction  => Mathf.Max( corner.density, -density ),
+        density = densityFunction.combination switch {
+            DensityFunction.Combination.Union        => Mathf.Min( corner.density,  density ),
+            DensityFunction.Combination.Intersection => Mathf.Max( corner.density,  density ),
+            DensityFunction.Combination.Subtraction  => Mathf.Max( corner.density, -density ),
             _                                            => throw new Exception( "Unknown combination mode specified" ),
         };
 
@@ -112,21 +114,21 @@ public interface SurfaceExtractor {
     public static float calculateDensity( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
         return densityFunctions.Aggregate(
             float.MaxValue,
-            ( density, densityFunction ) => densityFunction.combinationMode switch {
-                DensityFunction.CombinationMode.Union        => Mathf.Min( density,  densityFunction.sample( point ) ),
-                DensityFunction.CombinationMode.Intersection => Mathf.Max( density,  densityFunction.sample( point ) ),
-                DensityFunction.CombinationMode.Subtraction  => Mathf.Max( density, -densityFunction.sample( point ) ),
+            ( density, densityFunction ) => densityFunction.combination switch {
+                DensityFunction.Combination.Union        => Mathf.Min( density,  densityFunction.sample( point ) ),
+                DensityFunction.Combination.Intersection => Mathf.Max( density,  densityFunction.sample( point ) ),
+                DensityFunction.Combination.Subtraction  => Mathf.Max( density, -densityFunction.sample( point ) ),
                 _                                            => throw new Exception( "Unknown combination mode specified" ),
             }
         );
     }
 
-    public static Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions, IntersectionApproximationMode intersectionApproximationMode, int binarySearchIterations ) {
+    public static Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions, IntersectionApproximation intersectionApproximationMode, int binarySearchIterations ) {
         if( edge.corners[0].density == 0.0f || edge.corners[1].density == 0.0f ) {
             // one of the corners is at the exact intersection
             return edge.corners[0].density == 0.0f ? edge.corners[0].position : edge.corners[1].position;
         }
-        if( intersectionApproximationMode == IntersectionApproximationMode.BinarySearch ) {
+        if( intersectionApproximationMode == IntersectionApproximation.BinarySearch ) {
             var ( start, end ) = edge.corners[0].density < edge.corners[1].density
                 ? ( edge.corners[0].position, edge.corners[1].position )
                 : ( edge.corners[1].position, edge.corners[0].position );
@@ -150,7 +152,7 @@ public interface SurfaceExtractor {
 
             return intersection;
         }
-        else if( intersectionApproximationMode == IntersectionApproximationMode.LinearInterpolation ) {
+        else if( intersectionApproximationMode == IntersectionApproximation.LinearInterpolation ) {
             return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
         }
         throw new Exception( "Unknown intersection approximation mode specified" );

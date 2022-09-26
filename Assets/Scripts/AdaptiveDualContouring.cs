@@ -7,13 +7,19 @@ using UnityEngine;
 using Axis     = OctreeContouringTables<AdaptiveDualContouring.Voxel>.Axis;
 using Position = OctreeContouringTables<AdaptiveDualContouring.Voxel>.Position;
 
+using MaterialIndex             = SurfaceExtractor.MaterialIndex;
+using VoxelType                 = SurfaceExtractor.Voxel.Type;
+using Implementation            = SurfaceExtractor.Implementation;
+using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using QEFSolverType             = QEFSolver.Type;
+
 public class AdaptiveDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {
 
-        public Vector3                        position      { get; }
-        public float                          density       { get; set; } = float.MaxValue;
-        public SurfaceExtractor.MaterialIndex materialIndex { get; set; } = SurfaceExtractor.MaterialIndex.Void;
+        public Vector3       position      { get; }
+        public float         density       { get; set; } = float.MaxValue;
+        public MaterialIndex materialIndex { get; set; } = MaterialIndex.Void;
 
         public Corner( Vector3 position ) {
             this.position = position;
@@ -40,9 +46,9 @@ public class AdaptiveDualContouring : Voxelizer {
 
         public bool intersectsContour( ) {
             return (
-                this.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && this.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1
+                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material1
             ) || (
-                this.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && this.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1
+                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material1
             );
         }
 
@@ -57,14 +63,14 @@ public class AdaptiveDualContouring : Voxelizer {
 
     public class Voxel : SurfaceExtractor.Voxel {
 
-        public SurfaceExtractor.Voxel.Type type    { get; set; }
-        public Vector3                     center  { get; }
-        public Vector3                     size    { get; }
-        public Vector3                     extents { get; }
-        public Vector3                     minimum { get; }
-        public Vector3                     maximum { get; }
-        public SurfaceExtractor.Corner[]   corners { get; }
-        public SurfaceExtractor.Edge[]     edges   { get; }
+        public VoxelType                 type    { get; set; }
+        public Vector3                   center  { get; }
+        public Vector3                   size    { get; }
+        public Vector3                   extents { get; }
+        public Vector3                   minimum { get; }
+        public Vector3                   maximum { get; }
+        public SurfaceExtractor.Corner[] corners { get; }
+        public SurfaceExtractor.Edge[]   edges   { get; }
 
         public int       depth  { get; set; }
         public QEFSolver qef    { get; set; }
@@ -73,7 +79,7 @@ public class AdaptiveDualContouring : Voxelizer {
         public float     error  { get; set; } = 0.0f;
         public int       index  { get; set; } = -1;
 
-        public Voxel( SurfaceExtractor.Voxel.Type type, int depth, Vector3 center, Vector3 size ) {
+        public Voxel( VoxelType type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
             this.depth   = depth;
             this.center  = center;
@@ -161,30 +167,35 @@ public class AdaptiveDualContouring : Voxelizer {
     [Space( )]
 
     [SerializeField( )]
-    private SurfaceExtractor.Implementation _implementation = SurfaceExtractor.Implementation.CPU;
-    public override SurfaceExtractor.Implementation implementation {
+    private Implementation _implementation = Implementation.CPU;
+    public override Implementation implementation {
         get { return this._implementation;  }
         set { this._implementation = value; }
     }
 
     [SerializeField( )]
-    private QEFSolver.Type _qefSolver = QEFSolver.Type.Simple;
-    public override QEFSolver.Type qefSolver {
+    private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
+    public override IntersectionApproximation intersectionApproximation {
+        get { return this._intersectionApproximation;  }
+        set { this._intersectionApproximation = value; }
+    }
+
+    [SerializeField( )]
+    private QEFSolverType _qefSolver = QEFSolverType.Simple;
+    public override QEFSolverType qefSolver {
         get { return this._qefSolver;  }
         set { this._qefSolver = value; }
     }
 
-    [SerializeField( )]
-    private SurfaceExtractor.IntersectionApproximationMode _intersectionApproximationMode = SurfaceExtractor.IntersectionApproximationMode.BinarySearch;
-    public override SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode {
-        get { return this._intersectionApproximationMode;  }
-        set { this._intersectionApproximationMode = value; }
+    private Mesh _mesh;
+    public override Mesh mesh {
+        get { return this._mesh; }
     }
 
     public override IEnumerable<SurfaceExtractor.Corner> corners {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != SurfaceExtractor.Voxel.Type.Internal
+                ( node ) => node.type != VoxelType.Internal
             ).Aggregate(
                 new List<SurfaceExtractor.Corner>( ),
                 ( accumulator, voxel ) => {
@@ -198,7 +209,7 @@ public class AdaptiveDualContouring : Voxelizer {
     public override IEnumerable<SurfaceExtractor.Edge> edges {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != SurfaceExtractor.Voxel.Type.Internal
+                ( node ) => node.type != VoxelType.Internal
             ).Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
@@ -212,7 +223,7 @@ public class AdaptiveDualContouring : Voxelizer {
     public override IEnumerable<SurfaceExtractor.Voxel> voxels {
         get {
             return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != SurfaceExtractor.Voxel.Type.Internal
+                ( node ) => node.type != VoxelType.Internal
             );
         }
     }
@@ -226,19 +237,19 @@ public class AdaptiveDualContouring : Voxelizer {
     [Min( 0.0f )]
     public float errorThreshold = 0.01f;
 
-    public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
+    public override void voxelize( IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
 
         this.octree = Octree<Voxel>.build(
-            new( SurfaceExtractor.Voxel.Type.Internal, 0, Vector3.zero, Vector3.one ),
+            new( VoxelType.Internal, 0, Vector3.zero, Vector3.one ),
             ( parent ) => {
-                if( parent.depth == ( resolution - 1 ) ) {
+                if( parent.depth == ( this.resolution - 1 ) ) {
                     return null;
                 }
 
                 var depth = parent.depth + 1;
-                var type  = depth < ( resolution - 1 ) ? SurfaceExtractor.Voxel.Type.Internal : SurfaceExtractor.Voxel.Type.Leaf;
+                var type  = depth < ( this.resolution - 1 ) ? VoxelType.Internal : VoxelType.Leaf;
                 var scale = Mathf.Pow( 2, depth + 1 );
                 var size  = Vector3.one / Mathf.Pow( 2, depth );
 
@@ -321,17 +332,17 @@ public class AdaptiveDualContouring : Voxelizer {
                 var voxel = node.data;
 
                 if(
-                    voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
-                    voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+                    voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
+                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material1 )
                 ) {
                     // cell is either fully inside or outside the volume, skip
                     return;
                 }
 
                 voxel.qef = this.qefSolver switch {
-                    QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    _                     => throw new Exception( "Unknown solver type specified" )
+                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    _                    => throw new Exception( "Unknown solver type specified" )
                 };
 
                 foreach( var edge in voxel.edges ) {
@@ -339,7 +350,7 @@ public class AdaptiveDualContouring : Voxelizer {
                         continue;
                     }
 
-                    edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximationMode, this.binarySearchIterations );
+                    edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                     voxel.qef.add( edge.intersection, edge.normal );
@@ -366,24 +377,23 @@ public class AdaptiveDualContouring : Voxelizer {
 
         this.contourCell( this.octree, Position.Root, vertices, normals, indices );
 
-        var mesh = new Mesh {
+        // build mesh
+        this._mesh = new Mesh {
             vertices = vertices.ToArray( ),
             normals  = normals.ToArray( )
         };
 
-        mesh.subMeshCount = indices.Keys.Count;
+        this._mesh.subMeshCount = indices.Keys.Count;
 
         var subMeshCount = 0;
         foreach( var triangles in indices ) {
-            mesh.SetTriangles( triangles.Value, subMeshCount );
+            this._mesh.SetTriangles( triangles.Value, subMeshCount );
             ++subMeshCount;
         }
-
-        return mesh;
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
-        if( node.data.type == SurfaceExtractor.Voxel.Type.Internal ) {
+        if( node.data.type == VoxelType.Internal ) {
 
             // contour cells in children
 
@@ -436,7 +446,7 @@ public class AdaptiveDualContouring : Voxelizer {
     private void contourFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
         UnityEngine.Debug.Assert( nodes.Length == 2 );
 
-        if( nodes[0].data.type == SurfaceExtractor.Voxel.Type.Internal || nodes[1].data.type == SurfaceExtractor.Voxel.Type.Internal ) {
+        if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
 
             // contour common face pairs in children of given face pairs
 
@@ -456,10 +466,10 @@ public class AdaptiveDualContouring : Voxelizer {
         UnityEngine.Debug.Assert( nodes.Length == 4 );
 
         if(
-            nodes[0].data.type != SurfaceExtractor.Voxel.Type.Internal &&
-            nodes[1].data.type != SurfaceExtractor.Voxel.Type.Internal &&
-            nodes[2].data.type != SurfaceExtractor.Voxel.Type.Internal &&
-            nodes[3].data.type != SurfaceExtractor.Voxel.Type.Internal
+            nodes[0].data.type != VoxelType.Internal &&
+            nodes[1].data.type != VoxelType.Internal &&
+            nodes[2].data.type != VoxelType.Internal &&
+            nodes[3].data.type != VoxelType.Internal
         ) {
             this.generateIndices( nodes, axis, position, vertices, normals, indices );
         }
@@ -494,7 +504,7 @@ public class AdaptiveDualContouring : Voxelizer {
             int[] triangles;
 
             // ensure quad is indexed facing outward
-            if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
+            if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
                 triangles = new int[] {
                     nodes[0].data.index,
                     nodes[1].data.index,
@@ -527,14 +537,14 @@ public class AdaptiveDualContouring : Voxelizer {
     private Octree<Voxel> simplify( Octree<Voxel> node, float errorThreshold, IEnumerable<DensityFunction> densityFunctions ) {
         var voxel = node.data;
 
-        if( voxel.type != SurfaceExtractor.Voxel.Type.Internal ) {
+        if( voxel.type != VoxelType.Internal ) {
             return node;
         }
 
         voxel.qef = this.qefSolver switch {
-            QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            _                     => throw new Exception( "Unknown solver type specified" )
+            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            _                    => throw new Exception( "Unknown solver type specified" )
         };
 
         var collapsible = true;
@@ -542,7 +552,7 @@ public class AdaptiveDualContouring : Voxelizer {
             node.children[childIndex] = this.simplify( node.children[childIndex], errorThreshold, densityFunctions );
 
             var child = node.children[childIndex].data;
-            if( child.type == SurfaceExtractor.Voxel.Type.Internal ) {
+            if( child.type == VoxelType.Internal ) {
                 collapsible = false;
             }
             else if( child.qef != null ) {
@@ -564,7 +574,7 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        voxel.type   = SurfaceExtractor.Voxel.Type.Pseudo;
+        voxel.type   = VoxelType.Pseudo;
         voxel.vertex = minimizingVertex;
         voxel.normal = surfaceNormal;
 

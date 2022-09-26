@@ -246,7 +246,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c306715021c0c47419d2aae7ab80ff8c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 5
+  _resolution: 5
+  _minimizerIterations: 6
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 6
   vertexMode: 1
   debugFlags: 24
   debugCornerSize: 0.0125
@@ -262,12 +265,9 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   _implementation: 0
+  _intersectionApproximation: 0
   _qefSolver: 1
-  _intersectionApproximationMode: 0
   errorThreshold: 0.014
-  minimizerIterations: 6
-  binarySearchIterations: 6
-  surfaceCorrectionIterations: 6
 --- !u!1 &501333545
 GameObject:
   m_ObjectHideFlags: 0
@@ -312,7 +312,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 2
 --- !u!1 &520868582
 GameObject:
@@ -358,7 +358,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &559438389
 GameObject:
@@ -404,7 +404,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 2
+  _combination: 2
   _materialIndex: 1
 --- !u!1 &831929553
 GameObject:
@@ -450,7 +450,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 2
 --- !u!1 &1293997817
 GameObject:
@@ -709,7 +709,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &1676175933
 GameObject:

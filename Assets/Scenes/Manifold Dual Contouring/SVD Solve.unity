@@ -406,7 +406,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c306715021c0c47419d2aae7ab80ff8c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 5
+  _resolution: 5
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 0
@@ -425,8 +425,8 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   _implementation: 0
+  _intersectionApproximation: 0
   _qefSolver: 1
-  _intersectionApproximationMode: 0
   errorThreshold: 0.014
 --- !u!1 &1615694499
 GameObject:

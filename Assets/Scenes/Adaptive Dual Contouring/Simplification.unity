@@ -369,7 +369,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d9db2d60c47c5544dbc11e5ad13d4c2c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 5
+  _resolution: 5
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
@@ -388,8 +388,8 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   _implementation: 0
+  _intersectionApproximation: 0
   _qefSolver: 0
-  _intersectionApproximationMode: 0
   simplification: 1
   errorThreshold: 0.007
 --- !u!4 &1429825957

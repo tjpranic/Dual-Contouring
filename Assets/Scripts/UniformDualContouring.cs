@@ -5,7 +5,13 @@ using System.Runtime.InteropServices;
 using UnityEditor;
 using UnityEngine;
 
-// dual contouring implementation using uniform grid
+// TODO: implement GPU uniform dual contouring
+
+using MaterialIndex             = SurfaceExtractor.MaterialIndex;
+using VoxelType                 = SurfaceExtractor.Voxel.Type;
+using Implementation            = SurfaceExtractor.Implementation;
+using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using QEFSolverType             = QEFSolver.Type;
 
 public class UniformDualContouring : Voxelizer {
 
@@ -13,9 +19,9 @@ public class UniformDualContouring : Voxelizer {
 
         public struct Data {
 
-            public Vector3                        position;
-            public float                          density;
-            public SurfaceExtractor.MaterialIndex materialIndex;
+            public Vector3       position;
+            public float         density;
+            public MaterialIndex materialIndex;
 
             public Data( SurfaceExtractor.Corner corner ) {
                 this.position      = corner.position;
@@ -25,9 +31,9 @@ public class UniformDualContouring : Voxelizer {
 
         }
 
-        public Vector3                        position      { get; }
-        public float                          density       { get; set; } = float.MaxValue;
-        public SurfaceExtractor.MaterialIndex materialIndex { get; set; } = SurfaceExtractor.MaterialIndex.Void;
+        public Vector3       position      { get; }
+        public float         density       { get; set; } = float.MaxValue;
+        public MaterialIndex materialIndex { get; set; } = MaterialIndex.Void;
 
         public Corner( Vector3 position ) {
             this.position = position;
@@ -71,9 +77,9 @@ public class UniformDualContouring : Voxelizer {
 
         public bool intersectsContour( ) {
             return (
-                this.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && this.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1
+                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material1
             ) || (
-                this.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && this.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1
+                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material1
             );
         }
 
@@ -162,14 +168,14 @@ public class UniformDualContouring : Voxelizer {
 
         }
 
-        public SurfaceExtractor.Voxel.Type type    { get; set; } = SurfaceExtractor.Voxel.Type.None;
-        public Vector3                     center  { get; }
-        public Vector3                     size    { get; }
-        public Vector3                     extents { get; }
-        public Vector3                     minimum { get; }
-        public Vector3                     maximum { get; }
-        public SurfaceExtractor.Corner[]   corners { get; }
-        public SurfaceExtractor.Edge[]     edges   { get; }
+        public VoxelType                 type    { get; set; } = VoxelType.None;
+        public Vector3                   center  { get; }
+        public Vector3                   size    { get; }
+        public Vector3                   extents { get; }
+        public Vector3                   minimum { get; }
+        public Vector3                   maximum { get; }
+        public SurfaceExtractor.Corner[] corners { get; }
+        public SurfaceExtractor.Edge[]   edges   { get; }
 
         public QEFSolver qef    { get; set; }
         public Vector3   vertex { get; set; } = Vector3.zero;
@@ -259,265 +265,398 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    [Space( )]
+    private class CPUImplementation {
 
-    [SerializeField( )]
-    private SurfaceExtractor.Implementation _implementation = SurfaceExtractor.Implementation.CPU;
-    public override SurfaceExtractor.Implementation implementation {
-        get { return this._implementation;  }
-        set { this._implementation = value; }
-    }
+        private Voxel[,,] grid;
 
-    [SerializeField( )]
-    private QEFSolver.Type _qefSolver = QEFSolver.Type.Simple;
-    public override QEFSolver.Type qefSolver {
-        get { return this._qefSolver;  }
-        set { this._qefSolver = value; }
-    }
+        public (
+            Mesh                                 mesh,
+            IEnumerable<SurfaceExtractor.Corner> corners,
+            IEnumerable<SurfaceExtractor.Edge>   edges,
+            IEnumerable<SurfaceExtractor.Voxel>  voxels
+        ) voxelize(
+            IEnumerable<DensityFunction> densityFunctions,
+            int                          resolution,
+            int                          minimizerIterations,
+            int                          binarySearchIterations,
+            int                          surfaceCorrectionIterations,
+            QEFSolverType                qefSolver,
+            IntersectionApproximation    intersectionApproximationMode
+        ) {
 
-    [SerializeField( )]
-    private SurfaceExtractor.IntersectionApproximationMode _intersectionApproximationMode = SurfaceExtractor.IntersectionApproximationMode.BinarySearch;
-    public override SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode {
-        get { return this._intersectionApproximationMode;  }
-        set { this._intersectionApproximationMode = value; }
-    }
+            // create uniformly subdivided voxel grid
 
-    public override IEnumerable<SurfaceExtractor.Corner> corners {
-        get {
-            return this.grid.flatten( ).Aggregate(
-                new List<SurfaceExtractor.Corner>( ),
-                ( accumulator, voxel ) => {
-                    accumulator.AddRange( voxel.corners );
-                    return accumulator;
+            this.grid = new Voxel[resolution, resolution, resolution];
+            for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
+                for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
+                    for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
+                        var size   = Vector3.one / resolution;                 // center voxel relative to 0, 0, 0
+                        var center = ( new Vector3( x, y, z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
+
+                        this.grid[x, y, z] = new Voxel( center, size );
+                    }
                 }
-            ).Distinct( );
-        }
-    }
+            }
 
-    public override IEnumerable<SurfaceExtractor.Edge> edges {
-        get {
-            return this.grid.flatten( ).Aggregate(
+            // sample corner densities
+
+            foreach( var voxel in this.grid ) {
+                foreach( var corner in voxel.corners ) {
+                    foreach( var densityFunction in densityFunctions ) {
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
+                    }
+                }
+            }
+
+            // find contour intersections and calculate minimizing vertices
+
+            var index = 0;
+            foreach( var voxel in this.grid ) {
+                if(
+                    voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
+                    voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+                ) {
+                    // cell is either fully inside or outside the volume, skip
+                    continue;
+                }
+
+                voxel.qef = qefSolver switch {
+                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations, surfaceCorrectionIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations, surfaceCorrectionIterations ),
+                    _                    => throw new Exception( "Unknown solver type specified" )
+                };
+
+                foreach( var edge in voxel.edges ) {
+                    if( !edge.intersectsContour( ) ) {
+                        continue;
+                    }
+
+                    edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, intersectionApproximationMode, binarySearchIterations );
+                    edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
+
+                    voxel.qef.add( edge.intersection, edge.normal );
+                }
+
+                ( voxel.vertex, voxel.normal, _ ) = voxel.qef.solve( voxel, densityFunctions );
+
+                voxel.index = index++;
+            }
+
+            // generate vertices and indices
+
+            var vertices = new List<Vector3>( );
+            var normals  = new List<Vector3>( );
+            var indices  = new Dictionary<int, List<int>>( );
+
+            for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
+                for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
+                    for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
+                        var voxel = this.grid[x, y, z];
+
+                        if( !voxel.hasFeaturePoint( ) ) {
+                            continue;
+                        }
+
+                        vertices.Add ( voxel.vertex );
+                        normals.Add  ( voxel.normal );
+
+                        // on every positive axis, generate indices using 4 voxel surrounding a common edge
+
+                        // x axis
+                        if( y + 1 < this.grid.GetLength( 1 ) && z + 1 < this.grid.GetLength( 2 ) ) {
+                            var voxels = new Voxel[] {
+                                voxel,
+                                this.grid[x, y,     z + 1],
+                                this.grid[x, y + 1, z    ],
+                                this.grid[x, y + 1, z + 1]
+                            };
+                            var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
+
+                            this.generateIndices( voxels, edge, indices );
+                        }
+
+                        // y axis
+                        if( x + 1 < this.grid.GetLength( 0 ) && z + 1 < this.grid.GetLength( 2 ) ) {
+                            var voxels = new Voxel[] {
+                                voxel,
+                                this.grid[x + 1, y, z    ],
+                                this.grid[x,     y, z + 1],
+                                this.grid[x + 1, y, z + 1],
+                            };
+                            var edge = voxel.edges[7];
+
+                            this.generateIndices( voxels, edge, indices );
+                        }
+
+                        // z axis
+                        if( x + 1 < this.grid.GetLength( 0 ) && y + 1 < this.grid.GetLength( 1 ) ) {
+                            var voxels = new Voxel[] {
+                                voxel,
+                                this.grid[x,     y + 1, z],
+                                this.grid[x + 1, y,     z],
+                                this.grid[x + 1, y + 1, z]
+                            };
+                            var edge = voxel.edges[11];
+
+                            this.generateIndices( voxels, edge, indices );
+                        }
+                    }
+                }
+            }
+
+            // build mesh
+            var mesh = new Mesh {
+                vertices = vertices.ToArray( ),
+                normals  = normals.ToArray( )
+            };
+
+            mesh.subMeshCount = indices.Keys.Count;
+
+            var subMeshCount = 0;
+            foreach( var triangles in indices ) {
+                mesh.SetTriangles( triangles.Value, subMeshCount );
+                ++subMeshCount;
+            }
+
+            // build debug information
+            var debugVoxels = this.grid.flatten( );
+
+            var debugEdges = debugVoxels.Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
                     accumulator.AddRange( voxel.edges );
                     return accumulator;
                 }
             ).Distinct( );
+
+            var debugCorners = debugVoxels.Aggregate(
+                new List<SurfaceExtractor.Corner>( ),
+                ( accumulator, voxel ) => {
+                    accumulator.AddRange( voxel.corners );
+                    return accumulator;
+                }
+            ).Distinct( );
+
+            return ( mesh, debugCorners, debugEdges, debugVoxels );
         }
+
+        private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, Dictionary<int, List<int>> indices ) {
+            if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+
+                // indices should only be generated from void - solid intersections
+                UnityEngine.Debug.Assert(
+                    ( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 ) ||
+                    ( edge.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+                );
+
+                int[] triangles;
+
+                // ensure quad is indexed facing outward
+                if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
+                    triangles = new int[] {
+                        voxels[0].index,
+                        voxels[1].index,
+                        voxels[2].index,
+                        voxels[3].index,
+                        voxels[2].index,
+                        voxels[1].index
+                    };
+                }
+                else {
+                    triangles = new int[] {
+                        voxels[1].index,
+                        voxels[2].index,
+                        voxels[3].index,
+                        voxels[2].index,
+                        voxels[1].index,
+                        voxels[0].index
+                    };
+                }
+
+                var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
+                if( !indices.ContainsKey( subMeshIndex ) ) {
+                    indices.Add( subMeshIndex, new( ) );
+                }
+                indices[subMeshIndex].AddRange( triangles );
+            }
+        }
+
     }
 
-    public override IEnumerable<SurfaceExtractor.Voxel> voxels {
-        get { return this.grid.flatten( ); }
-    }
+    public class GPUImplementation {
 
-    private Voxel[,,] grid;
+        // constant buffer data needs to be padded so every element starts on a 4 byte aligned address
+        // https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-packing-rules
+        [StructLayout( LayoutKind.Explicit )]
+        public struct Configuration {
+            [FieldOffset( 0 * 4 )] public int resolution;
+            [FieldOffset( 1 * 4 )] public int minimizerIterations;
+            [FieldOffset( 2 * 4 )] public int binarySearchIterations;
+            [FieldOffset( 3 * 4 )] public int surfaceCorrectionIterations;
+            [FieldOffset( 4 * 4 )] public int intersectionApproximationMode;
 
-    public override Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
-
-        // create uniformly subdivided voxel grid
-
-        this.grid = new Voxel[resolution, resolution, resolution];
-        for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
-            for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
-                for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
-                    var size   = Vector3.one / resolution;                 // center voxel relative to 0, 0, 0
-                    var center = ( new Vector3( x, y, z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
-
-                    this.grid[x, y, z] = new Voxel( center, size );
-                }
-            }
-        }
-
-        /* testing code go away
-        if( this.implementation == SurfaceExtractor.Implementation.GPU ) {
-            var gpu = new GPUUniformDualContouring( );
-
-            var configuration = new GPUUniformDualContouring.Configuration[] { new( resolution ) };
-            var voxels        = new Voxel.Data[resolution * resolution * resolution];
-
-            gpu.testKernel(
-                "buildVoxelGrid",
-                new ( string, Array )[] {
-                    ( "Configuration", configuration )
-                },
-                new ( string, Array )[] {
-                    ( "voxels", voxels )
-                },
-                new Vector3Int( resolution, resolution, resolution )
-            );
-
-            for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
-                for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
-                    for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
-                        var voxelIndex = ( z * resolution * resolution ) + ( y * resolution ) + x;
-
-                        this.grid[x, y, z] = new Voxel( voxels[voxelIndex].center, voxels[voxelIndex].size );
-                    }
-                }
-            }
-        }
-        */
-
-        // sample corner densities
-
-        foreach( var voxel in this.grid ) {
-            foreach( var corner in voxel.corners ) {
-                foreach( var densityFunction in densityFunctions ) {
-                    ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
-                }
-            }
-        }
-
-        // find contour intersections and calculate minimizing vertices
-
-        var index = 0;
-        foreach( var voxel in this.grid ) {
-            if(
-                voxel.corners.All( ( corner ) => corner.materialIndex == SurfaceExtractor.MaterialIndex.Void      ) ||
-                voxel.corners.All( ( corner ) => corner.materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+            public Configuration(
+                int                       resolution,
+                int                       minimizerIterations,
+                int                       binarySearchIterations,
+                int                       surfaceCorrectionIterations,
+                IntersectionApproximation intersectionApproximationMode
             ) {
-                // cell is either fully inside or outside the volume, skip
-                continue;
-            }
-
-            voxel.qef = this.qefSolver switch {
-                QEFSolver.Type.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                QEFSolver.Type.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                _                     => throw new Exception( "Unknown solver type specified" )
-            };
-
-            foreach( var edge in voxel.edges ) {
-                if( !edge.intersectsContour( ) ) {
-                    continue;
-                }
-
-                edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximationMode, this.binarySearchIterations );
-                edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
-
-                voxel.qef.add( edge.intersection, edge.normal );
-            }
-
-            ( voxel.vertex, voxel.normal, _ ) = voxel.qef.solve( voxel, densityFunctions );
-
-            voxel.index = index++;
-        }
-
-        // generate vertices and indices
-
-        var vertices = new List<Vector3>( );
-        var normals  = new List<Vector3>( );
-        var indices  = new Dictionary<int, List<int>>( );
-
-        for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
-            for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
-                for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
-                    var voxel = this.grid[x, y, z];
-
-                    if( !voxel.hasFeaturePoint( ) ) {
-                        continue;
-                    }
-
-                    vertices.Add ( voxel.vertex );
-                    normals.Add  ( voxel.normal );
-
-                    // on every positive axis, generate indices using 4 voxel surrounding a common edge
-
-                    // x axis
-                    if( y + 1 < this.grid.GetLength( 1 ) && z + 1 < this.grid.GetLength( 2 ) ) {
-                        var voxels = new Voxel[] {
-                            voxel,
-                            this.grid[x, y,     z + 1],
-                            this.grid[x, y + 1, z    ],
-                            this.grid[x, y + 1, z + 1]
-                        };
-                        var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
-
-                        this.generateIndices( voxels, edge, indices );
-                    }
-
-                    // y axis
-                    if( x + 1 < this.grid.GetLength( 0 ) && z + 1 < this.grid.GetLength( 2 ) ) {
-                        var voxels = new Voxel[] {
-                            voxel,
-                            this.grid[x + 1, y, z    ],
-                            this.grid[x,     y, z + 1],
-                            this.grid[x + 1, y, z + 1],
-                        };
-                        var edge = voxel.edges[7];
-
-                        this.generateIndices( voxels, edge, indices );
-                    }
-
-                    // z axis
-                    if( x + 1 < this.grid.GetLength( 0 ) && y + 1 < this.grid.GetLength( 1 ) ) {
-                        var voxels = new Voxel[] {
-                            voxel,
-                            this.grid[x,     y + 1, z],
-                            this.grid[x + 1, y,     z],
-                            this.grid[x + 1, y + 1, z]
-                        };
-                        var edge = voxel.edges[11];
-
-                        this.generateIndices( voxels, edge, indices );
-                    }
-                }
+                this.resolution                    = resolution;
+                this.minimizerIterations           = minimizerIterations;
+                this.binarySearchIterations        = binarySearchIterations;
+                this.surfaceCorrectionIterations   = surfaceCorrectionIterations;
+                this.intersectionApproximationMode = ( int )intersectionApproximationMode;
             }
         }
 
-        var mesh = new Mesh {
-            vertices = vertices.ToArray( ),
-            normals  = normals.ToArray( )
-        };
+        private readonly ComputeShader uniformDualContouring;
 
-        mesh.subMeshCount = indices.Keys.Count;
+        private ComputeBuffer configurationBuffer;
+        private ComputeBuffer voxelsBuffer;
+        //...
 
-        var subMeshCount = 0;
-        foreach( var triangles in indices ) {
-            mesh.SetTriangles( triangles.Value, subMeshCount );
-            ++subMeshCount;
+        private readonly int buildVoxelGridKernel;
+        //...
+
+        public GPUImplementation( ) {
+            this.uniformDualContouring = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
+
+            this.buildVoxelGridKernel = this.uniformDualContouring.FindKernel( "buildVoxelGrid" );
+            //...
         }
 
-        return mesh;
+        public (
+            Mesh                                 mesh,
+            IEnumerable<SurfaceExtractor.Corner> corners,
+            IEnumerable<SurfaceExtractor.Edge>   edges,
+            IEnumerable<SurfaceExtractor.Voxel>  voxels
+        ) voxelize(
+            IEnumerable<DensityFunction> densityFunctions,
+            int                          resolution,
+            int                          minimizerIterations,
+            int                          binarySearchIterations,
+            int                          surfaceCorrectionIterations,
+            IntersectionApproximation    intersectionApproximation
+        ) {
+            var configuration = new Configuration( resolution, minimizerIterations, binarySearchIterations, surfaceCorrectionIterations, intersectionApproximation );
+
+            this.createBuffers( configuration );
+
+            this.buildVoxelGrid( resolution );
+            //...
+
+            this.releaseBuffers( );
+
+            return ( null, null, null, null );
+        }
+
+        private void buildVoxelGrid( int resolution ) {
+            this.uniformDualContouring.SetBuffer ( this.buildVoxelGridKernel, "voxels", this.voxelsBuffer );
+            this.uniformDualContouring.Dispatch  ( this.buildVoxelGridKernel, resolution, resolution, resolution );
+        }
+
+        //...
+
+        private void createBuffers( Configuration configuration ) {
+            this.releaseBuffers( );
+
+            var voxels = new Voxel.Data[configuration.resolution * configuration.resolution * configuration.resolution];
+            //...
+
+            this.configurationBuffer = new ComputeBuffer( 1,             Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
+            this.voxelsBuffer        = new ComputeBuffer( voxels.Length, Marshal.SizeOf( typeof( Voxel.Data ) ) );
+            //...
+
+            var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
+            this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
+
+            this.configurationBuffer.SetData ( new Configuration[] { configuration } );
+            this.voxelsBuffer.SetData        ( voxels );
+            //...
+        }
+
+        private void releaseBuffers( ) {
+            this.configurationBuffer?.Release( );
+            this.voxelsBuffer?.Release( );
+        }
+
     }
 
-    private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, Dictionary<int, List<int>> indices ) {
-        if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+    [Space( )]
 
-            // indices should only be generated from void - solid intersections
-            UnityEngine.Debug.Assert(
-                ( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[1].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 ) ||
-                ( edge.corners[1].materialIndex == SurfaceExtractor.MaterialIndex.Void && edge.corners[0].materialIndex >= SurfaceExtractor.MaterialIndex.Material1 )
+    [SerializeField( )]
+    private Implementation _implementation = Implementation.CPU;
+    public override Implementation implementation {
+        get { return this._implementation;  }
+        set { this._implementation = value; }
+    }
+
+    [SerializeField( )]
+    private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
+    public override IntersectionApproximation intersectionApproximation {
+        get { return this._intersectionApproximation;  }
+        set { this._intersectionApproximation = value; }
+    }
+
+    [SerializeField( )]
+    private QEFSolverType _qefSolver = QEFSolverType.Simple;
+    public override QEFSolverType qefSolver {
+        get { return this._qefSolver;  }
+        set { this._qefSolver = value; }
+    }
+
+    private Mesh _mesh;
+    public override Mesh mesh {
+        get { return this._mesh; }
+    }
+
+    private IEnumerable<SurfaceExtractor.Corner> _corners;
+    public override IEnumerable<SurfaceExtractor.Corner> corners {
+        get { return this._corners; }
+    }
+
+    private IEnumerable<SurfaceExtractor.Edge> _edges;
+    public override IEnumerable<SurfaceExtractor.Edge> edges {
+        get { return this._edges; }
+    }
+
+    private IEnumerable<SurfaceExtractor.Voxel> _voxels;
+    public override IEnumerable<SurfaceExtractor.Voxel> voxels {
+        get { return this._voxels; }
+    }
+
+    private CPUImplementation cpuImplementation;
+    private GPUImplementation gpuImplementation;
+
+    public override void Start( ) {
+        this.cpuImplementation = new CPUImplementation( );
+        this.gpuImplementation = new GPUImplementation( );
+
+        base.Start( );
+    }
+
+    public override void voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+        if( this.implementation == Implementation.GPU ) {
+            ( this._mesh, this._corners, this._edges, this._voxels ) = this.gpuImplementation.voxelize(
+                densityFunctions,
+                this.resolution,
+                this.minimizerIterations,
+                this.binarySearchIterations,
+                this.surfaceCorrectionIterations,
+                this.intersectionApproximation
             );
-
-            int[] triangles;
-
-            // ensure quad is indexed facing outward
-            if( edge.corners[0].materialIndex == SurfaceExtractor.MaterialIndex.Void ) {
-                triangles = new int[] {
-                    voxels[0].index,
-                    voxels[1].index,
-                    voxels[2].index,
-                    voxels[3].index,
-                    voxels[2].index,
-                    voxels[1].index
-                };
-            }
-            else {
-                triangles = new int[] {
-                    voxels[1].index,
-                    voxels[2].index,
-                    voxels[3].index,
-                    voxels[2].index,
-                    voxels[1].index,
-                    voxels[0].index
-                };
-            }
-
-            var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
-            if( !indices.ContainsKey( subMeshIndex ) ) {
-                indices.Add( subMeshIndex, new( ) );
-            }
-            indices[subMeshIndex].AddRange( triangles );
+        }
+        else {
+            ( this._mesh, this._corners, this._edges, this._voxels ) = this.cpuImplementation.voxelize(
+                densityFunctions,
+                this.resolution,
+                this.minimizerIterations,
+                this.binarySearchIterations,
+                this.surfaceCorrectionIterations,
+                this.qefSolver,
+                this.intersectionApproximation
+            );
         }
     }
 
@@ -528,143 +667,6 @@ public class UniformDualContouringEditor : VoxelizerEditor {
 
     public override void OnInspectorGUI( ) {
         base.OnInspectorGUI( );
-    }
-
-}
-
-public class GPUUniformDualContouring {
-
-    // constant buffer data needs to be padded so every element starts on a 4 byte aligned address
-    // https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-packing-rules
-    [StructLayout( LayoutKind.Explicit )]
-    public struct Configuration {
-        [FieldOffset( 0 * 4 )] public int resolution;
-        [FieldOffset( 1 * 4 )] public float test1;
-        [FieldOffset( 2 * 4 )] public float test2;
-        [FieldOffset( 3 * 4 )] public float test3;
-
-        public Configuration( int resolution ) {
-            this.resolution = resolution;
-
-            this.test1 = 0.0f;
-            this.test2 = 0.0f;
-            this.test3 = 0.0f;
-        }
-    }
-
-    private readonly ComputeShader uniformDualContouring;
-
-    private ComputeBuffer configurationBuffer;
-    private ComputeBuffer voxelsBuffer;
-    //...
-
-    private readonly int buildVoxelGridKernel;
-    //...
-
-    public GPUUniformDualContouring( ) {
-        this.uniformDualContouring = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
-
-        this.buildVoxelGridKernel = this.uniformDualContouring.FindKernel( "buildVoxelGrid" );
-        //...
-    }
-
-    public Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions ) {
-        var configuration = new Configuration[] { new( resolution ) };
-
-        this.configurationBuffer.SetData( configuration );
-
-        this.buildVoxelGrid( resolution );
-        //...
-
-        return new Mesh( );
-    }
-
-    private void buildVoxelGrid( int resolution ) {
-        this.uniformDualContouring.SetBuffer ( this.buildVoxelGridKernel, "voxels", this.voxelsBuffer );
-        this.uniformDualContouring.Dispatch  ( this.buildVoxelGridKernel, resolution, resolution, resolution );
-    }
-
-    public void resizeBuffers(
-        Configuration[]                    configuration,
-        UniformDualContouring.Voxel.Data[] voxels
-    ) {
-        this.releaseBuffers( );
-
-        this.configurationBuffer = new ComputeBuffer( 1,             Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
-        this.voxelsBuffer        = new ComputeBuffer( voxels.Length, Marshal.SizeOf( typeof( UniformDualContouring.Voxel.Data ) ) );
-
-        var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
-        this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
-
-        this.configurationBuffer.SetData( configuration );
-
-        this.voxelsBuffer.SetData( voxels );
-    }
-
-    public void assignBuffers(
-        Configuration[]                    configuration,
-        UniformDualContouring.Voxel.Data[] voxels
-    ) {
-        this.configurationBuffer?.SetData ( configuration );
-        this.voxelsBuffer?.SetData        ( voxels );
-    }
-
-    public void releaseBuffers( ) {
-        this.configurationBuffer?.Release( );
-        this.voxelsBuffer?.Release( );
-    }
-
-    public void testKernel(
-        string              kernelName,
-        ( string, Array )[] constantBuffers,
-        ( string, Array )[] buffers,
-        Vector3Int          threadGroups
-     ) {
-        var shader = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
-
-        var kernel = shader.FindKernel( kernelName );
-
-        var constantComputeBuffers = new List<ComputeBuffer>( );
-        foreach( var constantBuffer in constantBuffers ) {
-            var constantComputeBuffer = new ComputeBuffer(
-                constantBuffer.Item2.Length,
-                Marshal.SizeOf( constantBuffer.Item2.GetType( ).GetElementType( ) ),
-                ComputeBufferType.Constant
-            );
-            constantComputeBuffer.SetData( constantBuffer.Item2 );
-
-            constantComputeBuffers.Add( constantComputeBuffer );
-
-            shader.SetConstantBuffer(
-                Shader.PropertyToID( constantBuffer.Item1 ),
-                constantComputeBuffer,
-                0,
-                Marshal.SizeOf( constantBuffer.Item2.GetType( ).GetElementType( ) )
-            );
-        }
-
-        var computeBuffers = new List<ComputeBuffer>( );
-        foreach( var buffer in buffers ) {
-            var computeBuffer = new ComputeBuffer(
-                buffer.Item2.Length,
-                Marshal.SizeOf( buffer.Item2.GetType( ).GetElementType( ) )
-            );
-            computeBuffer.SetData( buffer.Item2 );
-
-            computeBuffers.Add( computeBuffer );
-
-            shader.SetBuffer( kernel, buffer.Item1, computeBuffer );
-        }
-
-        shader.Dispatch( kernel, threadGroups.x, threadGroups.y, threadGroups.z );
-
-        for( var i = 0; i < computeBuffers.Count; ++i ) {
-            computeBuffers[i].GetData( buffers[i].Item2 );
-            computeBuffers[i].Release( );
-        }
-        foreach( var computeBuffer in constantComputeBuffers ) {
-            computeBuffer.Release( );
-        }
     }
 
 }

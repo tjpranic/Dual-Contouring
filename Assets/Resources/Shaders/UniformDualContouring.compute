@@ -158,9 +158,10 @@ Voxel createVoxel( float3 center, float3 size, int r ) {
 
 cbuffer Configuration {
     uint resolution;
-    float test1;
-    float test2;
-    float test3;
+    uint minimizerIterations;
+    uint binarySearchIterations;
+    uint surfaceCorrectionIterations;
+    uint intersectionApproximationMode;
 }
 
 RWStructuredBuffer<Voxel> voxels;

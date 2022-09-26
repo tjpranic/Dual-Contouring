@@ -295,7 +295,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &541284679
 GameObject:
@@ -341,7 +341,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 2
+  _combination: 2
   _materialIndex: 1
 --- !u!1 &894897394
 GameObject:
@@ -416,7 +416,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c306715021c0c47419d2aae7ab80ff8c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 5
+  _resolution: 5
+  _minimizerIterations: 6
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 6
   vertexMode: 1
   debugFlags: 24
   debugCornerSize: 0.0125
@@ -432,12 +435,9 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   _implementation: 0
+  _intersectionApproximation: 0
   _qefSolver: 0
   errorThreshold: 6e-12
-  minimizerIterations: 6
-  binarySearchIterations: 6
-  surfaceCorrectionIterations: 6
-  intersectionApproximationMode: 0
 --- !u!4 &894897397
 Transform:
   m_ObjectHideFlags: 0
@@ -499,7 +499,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 2
 --- !u!1 &955185860
 GameObject:
@@ -758,7 +758,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 2
 --- !u!1 &1684707856
 GameObject:
@@ -804,7 +804,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 2
+  _combination: 2
   _materialIndex: 3
 --- !u!1 &1739889157
 GameObject:
@@ -850,5 +850,5 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1

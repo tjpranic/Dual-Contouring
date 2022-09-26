@@ -17,10 +17,10 @@ public abstract class Volume : MonoBehaviour, DensityFunction {
     }
 
     [SerializeField( )]
-    private DensityFunction.CombinationMode _combinationMode = DensityFunction.CombinationMode.Union;
-    public DensityFunction.CombinationMode combinationMode {
-        get { return this._combinationMode;  }
-        set { this._combinationMode = value; }
+    private DensityFunction.Combination _combination = DensityFunction.Combination.Union;
+    public DensityFunction.Combination combination {
+        get { return this._combination;  }
+        set { this._combination = value; }
     }
 
     [SerializeField( )]

@@ -7,7 +7,12 @@ using UnityEngine.Rendering;
 [RequireComponent( typeof( MeshRenderer ) )]
 public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
-    public int resolution = 2;
+    [SerializeField( )]
+    private int _resolution = 2;
+    public int resolution {
+        get { return this._resolution;  }
+        set { this._resolution = value; }
+    }
 
     [SerializeField( )]
     private int _minimizerIterations = 6;
@@ -63,23 +68,24 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
     public Material debugMinimizingVertexMaterial;
     public Material debugSurfaceNormalMaterial;
 
-    public void Start( ) {
+    public virtual void Start( ) {
 
         var volumes = this.GetComponentsInChildren<Volume>( );
-        var mesh    = this.voxelize( this.resolution, volumes );
+
+        this.voxelize( volumes );
 
         var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
-        meshFilter.mesh = mesh;
+        meshFilter.mesh = this.mesh;
 
         // convert to flat shading by splitting vertices
         if( this.vertexMode == VertexMode.Split ) {
 
-            var vertices  = new Vector3[mesh.triangles.Length];
+            var vertices  = new Vector3[this.mesh.triangles.Length];
             var triangles = new Dictionary<int, int[]>( );
 
             var subMeshTriangleIndexStart = 0;
-            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+            for( var subMeshIndex = 0; subMeshIndex < this.mesh.subMeshCount; ++subMeshIndex ) {
                 var subMeshTriangles = meshFilter.mesh.GetTriangles( subMeshIndex );
                 for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
                     var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
@@ -92,7 +98,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
             }
 
             meshFilter.mesh.vertices = vertices;
-            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+            for( var subMeshIndex = 0; subMeshIndex < this.mesh.subMeshCount; ++subMeshIndex ) {
                 meshFilter.mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
             }
 
@@ -233,14 +239,16 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     }
 
-    public abstract SurfaceExtractor.Implementation                implementation                { get; set; }
-    public abstract QEFSolver.Type                                 qefSolver                     { get; set; }
-    public abstract SurfaceExtractor.IntersectionApproximationMode intersectionApproximationMode { get; set; }
-    public abstract IEnumerable<SurfaceExtractor.Corner>           corners                       { get; }
-    public abstract IEnumerable<SurfaceExtractor.Edge>             edges                         { get; }
-    public abstract IEnumerable<SurfaceExtractor.Voxel>            voxels                        { get; }
+    public abstract SurfaceExtractor.Implementation            implementation            { get; set; }
+    public abstract SurfaceExtractor.IntersectionApproximation intersectionApproximation { get; set; }
+    public abstract QEFSolver.Type                             qefSolver                 { get; set; }
 
-    public abstract Mesh voxelize( int resolution, IEnumerable<DensityFunction> densityFunctions );
+    public abstract Mesh                                 mesh    { get; }
+    public abstract IEnumerable<SurfaceExtractor.Corner> corners { get; }
+    public abstract IEnumerable<SurfaceExtractor.Edge>   edges   { get; }
+    public abstract IEnumerable<SurfaceExtractor.Voxel>  voxels  { get; }
+
+    public abstract void voxelize( IEnumerable<DensityFunction> densityFunctions );
 
 }
 

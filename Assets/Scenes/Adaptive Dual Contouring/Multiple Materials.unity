@@ -382,7 +382,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d9db2d60c47c5544dbc11e5ad13d4c2c, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  resolution: 5
+  _resolution: 5
+  _minimizerIterations: 6
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 6
   vertexMode: 1
   debugFlags: 24
   debugCornerSize: 0.0125
@@ -397,13 +400,11 @@ MonoBehaviour:
   debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+  _implementation: 0
+  _intersectionApproximation: 0
+  _qefSolver: 0
   simplification: 0
   errorThreshold: 0.01
-  minimizerIterations: 6
-  binarySearchIterations: 6
-  surfaceCorrectionIterations: 6
-  intersectionApproximationMode: 0
-  solverType: 0
 --- !u!4 &1915773021
 Transform:
   m_ObjectHideFlags: 0

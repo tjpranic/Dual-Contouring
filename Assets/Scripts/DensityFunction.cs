@@ -5,14 +5,14 @@
 
 public interface DensityFunction {
 
-    public enum CombinationMode {
+    public enum Combination {
         Union,
         Intersection,
         Subtraction
     }
 
-    public CombinationMode                combinationMode { get; set; }
-    public SurfaceExtractor.MaterialIndex materialIndex   { get; set; }
+    public Combination                    combination   { get; set; }
+    public SurfaceExtractor.MaterialIndex materialIndex { get; set; }
 
     public float sample( Vector3 position );
 
