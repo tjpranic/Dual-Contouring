@@ -4,6 +4,10 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using QEFSolverType             = QEFSolver.Type;
+
 [RequireComponent( typeof( MeshRenderer ) )]
 public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
@@ -33,6 +37,27 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
     public int surfaceCorrectionIterations {
         get { return this._surfaceCorrectionIterations;  }
         set { this._surfaceCorrectionIterations = value; }
+    }
+
+    [SerializeField( )]
+    private ImplementationType _implementation = ImplementationType.CPU;
+    public ImplementationType implementationType {
+        get { return this._implementation;  }
+        set { this._implementation = value; }
+    }
+
+    [SerializeField( )]
+    private QEFSolverType _qefSolver = QEFSolverType.Simple;
+    public QEFSolverType qefSolverType {
+        get { return this._qefSolver;  }
+        set { this._qefSolver = value; }
+    }
+
+    [SerializeField( )]
+    private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
+    public IntersectionApproximation intersectionApproximation {
+        get { return this._intersectionApproximation;  }
+        set { this._intersectionApproximation = value; }
     }
 
     public enum VertexMode {
@@ -72,20 +97,20 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
         var volumes = this.GetComponentsInChildren<Volume>( );
 
-        this.voxelize( volumes );
+        var ( mesh, corners, edges, voxels ) = this.voxelize( volumes );
 
         var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
-        meshFilter.mesh = this.mesh;
+        meshFilter.mesh = mesh;
 
         // convert to flat shading by splitting vertices
         if( this.vertexMode == VertexMode.Split ) {
 
-            var vertices  = new Vector3[this.mesh.triangles.Length];
+            var vertices  = new Vector3[mesh.triangles.Length];
             var triangles = new Dictionary<int, int[]>( );
 
             var subMeshTriangleIndexStart = 0;
-            for( var subMeshIndex = 0; subMeshIndex < this.mesh.subMeshCount; ++subMeshIndex ) {
+            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
                 var subMeshTriangles = meshFilter.mesh.GetTriangles( subMeshIndex );
                 for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
                     var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
@@ -98,7 +123,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
             }
 
             meshFilter.mesh.vertices = vertices;
-            for( var subMeshIndex = 0; subMeshIndex < this.mesh.subMeshCount; ++subMeshIndex ) {
+            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
                 meshFilter.mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
             }
 
@@ -117,7 +142,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                 voxelsObject.transform.parent = debugObject.transform;
 
             var voxelCount = 0;
-            foreach( var voxel in this.voxels ) {
+            foreach( var voxel in voxels ) {
                 var voxelObject                      = new GameObject( $"Voxel {++voxelCount}" );
                     voxelObject.transform.parent     = voxelsObject.transform;
                     voxelObject.transform.position   = voxel.center;
@@ -176,7 +201,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                 cornersObject.transform.parent = debugObject.transform;
 
             var cornerCount = 0;
-            foreach( var corner in this.corners ) {
+            foreach( var corner in corners ) {
                 var cornerObject                      = new GameObject( $"Corner {++cornerCount}" );
                     cornerObject.transform.parent     = cornersObject.transform;
                     cornerObject.transform.position   = corner.position;
@@ -203,7 +228,7 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
                 edgesObject.transform.parent = debugObject.transform;
 
             var edgeCount = 0;
-            foreach( var edge in this.edges ) {
+            foreach( var edge in edges ) {
                 var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
                     edgeObject.transform.parent = edgesObject.transform;
 
@@ -239,16 +264,12 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     }
 
-    public abstract SurfaceExtractor.Implementation            implementation            { get; set; }
-    public abstract SurfaceExtractor.IntersectionApproximation intersectionApproximation { get; set; }
-    public abstract QEFSolver.Type                             qefSolver                 { get; set; }
-
-    public abstract Mesh                                 mesh    { get; }
-    public abstract IEnumerable<SurfaceExtractor.Corner> corners { get; }
-    public abstract IEnumerable<SurfaceExtractor.Edge>   edges   { get; }
-    public abstract IEnumerable<SurfaceExtractor.Voxel>  voxels  { get; }
-
-    public abstract void voxelize( IEnumerable<DensityFunction> densityFunctions );
+    public abstract (
+        Mesh                                 mesh,
+        IEnumerable<SurfaceExtractor.Corner> corners,
+        IEnumerable<SurfaceExtractor.Edge>   edges,
+        IEnumerable<SurfaceExtractor.Voxel>  voxels
+    ) voxelize( IEnumerable<DensityFunction> densityFunctions );
 
 }
 
@@ -261,8 +282,8 @@ public class VoxelizerEditor : Editor {
         var voxelizer = this.target as Voxelizer;
 
         // only SVD solver is available for GPU implementation
-        if( voxelizer.implementation == SurfaceExtractor.Implementation.GPU ) {
-            voxelizer.qefSolver = QEFSolver.Type.SVD;
+        if( voxelizer.implementationType == ImplementationType.GPU ) {
+            voxelizer.qefSolverType = QEFSolverType.SVD;
         }
     }
 

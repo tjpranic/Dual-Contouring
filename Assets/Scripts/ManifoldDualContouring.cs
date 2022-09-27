@@ -170,117 +170,17 @@ public class ManifoldDualContouring : Voxelizer {
 
     [Space( )]
 
-    [SerializeField( )]
-    private Implementation _implementation = Implementation.CPU;
-    public override Implementation implementation {
-        get { return this._implementation;  }
-        set { this._implementation = value; }
-    }
-
-    [SerializeField( )]
-    private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
-    public override IntersectionApproximation intersectionApproximation {
-        get { return this._intersectionApproximation;  }
-        set { this._intersectionApproximation = value; }
-    }
-
-
-    [SerializeField( )]
-    private QEFSolverType _qefSolver = QEFSolverType.Simple;
-    public override QEFSolverType qefSolver {
-        get { return this._qefSolver;  }
-        set { this._qefSolver = value; }
-    }
-
-    private Mesh _mesh;
-    public override Mesh mesh {
-        get { return this._mesh; }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Corner> corners {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
-            ).Aggregate(
-                new List<SurfaceExtractor.Corner>( ),
-                ( accumulator, voxel ) => {
-                    Voxel highest = voxel;
-
-                    var parent = voxel.parent;
-                    while( parent != null ) {
-                        if( parent.collapsible ) {
-                            highest = parent;
-                        }
-                        parent = parent.parent;
-                    }
-
-                    UnityEngine.Debug.Assert( highest != null );
-
-                    accumulator.AddRange( highest.corners );
-                    return accumulator;
-                }
-            ).Distinct( );
-        }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Edge> edges {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
-            ).Aggregate(
-                new List<SurfaceExtractor.Edge>( ),
-                ( accumulator, voxel ) => {
-                    Voxel highest = voxel;
-
-                    var parent = voxel.parent;
-                    while( parent != null ) {
-                        if( parent.collapsible ) {
-                            highest = parent;
-                        }
-                        parent = parent.parent;
-                    }
-
-                    UnityEngine.Debug.Assert( highest != null );
-
-                    accumulator.AddRange( highest.edges );
-                    return accumulator;
-                }
-            ).Distinct( );
-        }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Voxel> voxels {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
-            ).Select(
-                ( voxel ) => {
-                    Voxel highest = voxel;
-
-                    var parent = voxel.parent;
-                    while( parent != null ) {
-                        if( parent.collapsible ) {
-                            highest = parent;
-                        }
-                        parent = parent.parent;
-                    }
-
-                    UnityEngine.Debug.Assert( highest != null );
-
-                    return highest;
-                }
-            ).Distinct( );
-        }
-    }
-
-    private Octree<Voxel> octree;
-
-    [Space( )]
-
     [Min( 0.0f )]
     public float errorThreshold = 6e-12f;
 
-    public override void voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+    private Octree<Voxel> octree;
+
+    public override (
+        Mesh                                 mesh,
+        IEnumerable<SurfaceExtractor.Corner> corners,
+        IEnumerable<SurfaceExtractor.Edge>   edges,
+        IEnumerable<SurfaceExtractor.Voxel>  voxels
+    ) voxelize( IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
 
@@ -320,7 +220,7 @@ public class ManifoldDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityWithMaterial( corner, densityFunction );
                     }
                 }
             }
@@ -341,7 +241,7 @@ public class ManifoldDualContouring : Voxelizer {
                     return;
                 }
 
-                voxel.qef = this.qefSolver switch {
+                voxel.qef = this.qefSolverType switch {
                     QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
                     QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
                     _                    => throw new Exception( "Unknown solver type specified" )
@@ -418,16 +318,16 @@ public class ManifoldDualContouring : Voxelizer {
         this.contourCell( this.octree, Position.Root, vertices, normals, indices );
 
         // build mesh
-        this._mesh = new Mesh {
+        var mesh = new Mesh {
             vertices = vertices.ToArray( ),
             normals  = normals.ToArray( )
         };
 
-        this._mesh.subMeshCount = indices.Keys.Count;
+        mesh.subMeshCount = indices.Keys.Count;
 
         var subMeshCount = 0;
         foreach( var triangles in indices ) {
-            this._mesh.SetTriangles(
+            mesh.SetTriangles(
                 triangles.Value.Aggregate(
                     new List<int>( triangles.Value.Count * 3 ),
                     ( accumulator, triangle ) => {
@@ -439,6 +339,73 @@ public class ManifoldDualContouring : Voxelizer {
             );
             ++subMeshCount;
         }
+
+        // build debug information
+        var voxels = Octree<Voxel>.flatten( this.octree ).Where(
+            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+        ).Select(
+            ( voxel ) => {
+                Voxel highest = voxel;
+
+                var parent = voxel.parent;
+                while( parent != null ) {
+                    if( parent.collapsible ) {
+                        highest = parent;
+                    }
+                    parent = parent.parent;
+                }
+
+                UnityEngine.Debug.Assert( highest != null );
+
+                return highest;
+            }
+        ).Distinct( );
+
+        var corners = Octree<Voxel>.flatten( this.octree ).Where(
+            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+        ).Aggregate(
+            new List<SurfaceExtractor.Corner>( ),
+            ( accumulator, voxel ) => {
+                Voxel highest = voxel;
+
+                var parent = voxel.parent;
+                while( parent != null ) {
+                    if( parent.collapsible ) {
+                        highest = parent;
+                    }
+                    parent = parent.parent;
+                }
+
+                UnityEngine.Debug.Assert( highest != null );
+
+                accumulator.AddRange( highest.corners );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        var edges = Octree<Voxel>.flatten( this.octree ).Where(
+            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+        ).Aggregate(
+            new List<SurfaceExtractor.Edge>( ),
+            ( accumulator, voxel ) => {
+                Voxel highest = voxel;
+
+                var parent = voxel.parent;
+                while( parent != null ) {
+                    if( parent.collapsible ) {
+                        highest = parent;
+                    }
+                    parent = parent.parent;
+                }
+
+                UnityEngine.Debug.Assert( highest != null );
+
+                accumulator.AddRange( highest.edges );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        return ( mesh, corners, edges, voxels );
     }
 
     private void clusterCell( Octree<Voxel> node, Position position, IEnumerable<DensityFunction> densityFunctions ) {
@@ -504,7 +471,7 @@ public class ManifoldDualContouring : Voxelizer {
 
         // solve QEF for vertex cluster
 
-        node.data.qef = this.qefSolver switch {
+        node.data.qef = this.qefSolverType switch {
             QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
             QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
             _                    => throw new Exception( "Unknown solver type specified" )

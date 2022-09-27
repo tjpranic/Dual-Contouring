@@ -5,9 +5,28 @@ using UnityEngine;
 
 public interface SurfaceExtractor {
 
-    public enum Implementation {
-        CPU,
-        GPU
+    public interface Implementation {
+
+        public enum Type {
+            CPU,
+            GPU
+        }
+
+        public (
+            Mesh                mesh,
+            IEnumerable<Corner> corners,
+            IEnumerable<Edge>   edges,
+            IEnumerable<Voxel>  voxels
+        ) voxelize(
+            IEnumerable<DensityFunction> densityFunctions,
+            int                          resolution,
+            int                          minimizerIterations,
+            int                          binarySearchIterations,
+            int                          surfaceCorrectionIterations,
+            QEFSolver.Type               qefSolverType,
+            IntersectionApproximation    intersectionApproximation
+        );
+
     }
 
     public enum IntersectionApproximation {
@@ -68,37 +87,36 @@ public interface SurfaceExtractor {
 
     }
 
-    public int resolution                  { get; set; }
-    public int minimizerIterations         { get; set; }
-    public int binarySearchIterations      { get; set; }
-    public int surfaceCorrectionIterations { get; set; }
+    public int                       resolution                  { get; set; }
+    public int                       minimizerIterations         { get; set; }
+    public int                       binarySearchIterations      { get; set; }
+    public int                       surfaceCorrectionIterations { get; set; }
+    public Implementation.Type       implementationType          { get; set; }
+    public QEFSolver.Type            qefSolverType               { get; set; }
+    public IntersectionApproximation intersectionApproximation   { get; set; }
 
-    public Implementation            implementation            { get; set; }
-    public IntersectionApproximation intersectionApproximation { get; set; }
-    public QEFSolver.Type            qefSolver                 { get; set; }
+    public (
+        Mesh                mesh,
+        IEnumerable<Corner> corners,
+        IEnumerable<Edge>   edges,
+        IEnumerable<Voxel>  voxels
+    ) voxelize( IEnumerable<DensityFunction> densityFunctions );
 
-    public Mesh                mesh    { get; }
-    public IEnumerable<Corner> corners { get; }
-    public IEnumerable<Edge>   edges   { get; }
-    public IEnumerable<Voxel>  voxels  { get; }
-
-    public void voxelize( IEnumerable<DensityFunction> densityFunctions );
-
-    public static ( float density, MaterialIndex material ) calculateDensityAndMaterial( Corner corner, DensityFunction densityFunction ) {
-        var density  = densityFunction.sample( corner.position );
-        var material = corner.materialIndex;
+    public static ( float density, MaterialIndex material ) calculateDensityWithMaterial( Corner corner, DensityFunction densityFunction ) {
+        var density       = densityFunction.sample( corner.position );
+        var materialIndex = corner.materialIndex;
 
         // set material bit if the corner is inside of the shape
         if( densityFunction.combination == DensityFunction.Combination.Union && density < 0.0f ) {
-            material |= densityFunction.materialIndex;
+            materialIndex |= densityFunction.materialIndex;
         }
         // unset material bit if the corner is outside of the shape
         if( densityFunction.combination == DensityFunction.Combination.Intersection && density > 0.0f ) {
-            material &= ~densityFunction.materialIndex;
+            materialIndex &= ~densityFunction.materialIndex;
         }
         // unset material bit if the corner is inside of the shape
         if( densityFunction.combination == DensityFunction.Combination.Subtraction && density < 0.0f ) {
-            material &= ~densityFunction.materialIndex;
+            materialIndex &= ~densityFunction.materialIndex;
         }
 
         density = densityFunction.combination switch {
@@ -108,7 +126,7 @@ public interface SurfaceExtractor {
             _                                            => throw new Exception( "Unknown combination mode specified" ),
         };
 
-        return ( density, material );
+        return ( density, materialIndex );
     }
 
     public static float calculateDensity( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {

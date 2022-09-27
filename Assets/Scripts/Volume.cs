@@ -1,6 +1,28 @@
 ﻿using UnityEngine;
 
+using DensityFunctionType = DensityFunction.Type;
+using Combination         = DensityFunction.Combination;
+using MaterialIndex       = SurfaceExtractor.MaterialIndex;
+
 public abstract class Volume : MonoBehaviour, DensityFunction {
+
+    public struct Data {
+
+        public DensityFunctionType type;
+        public Combination         combination;
+        public MaterialIndex       materialIndex;
+        public Vector3             origin;
+        public Vector3             extents;
+
+        public Data( Volume volume ) {
+            this.type          = volume.type;
+            this.combination   = volume.combination;
+            this.materialIndex = volume.materialIndex;
+            this.origin        = volume.origin;
+            this.extents       = volume.extents;
+        }
+
+    }
 
     public void Start( ) {
         Debug.Assert( this.GetComponentInParent<Voxelizer>( ) != null );
@@ -16,16 +38,18 @@ public abstract class Volume : MonoBehaviour, DensityFunction {
         get { return this.transform.localScale.divide( this.GetComponentInParent<Voxelizer>( ).transform.localScale ) / 2; }
     }
 
+    public abstract DensityFunctionType type { get; }
+
     [SerializeField( )]
-    private DensityFunction.Combination _combination = DensityFunction.Combination.Union;
-    public DensityFunction.Combination combination {
+    private Combination _combination = Combination.Union;
+    public Combination combination {
         get { return this._combination;  }
         set { this._combination = value; }
     }
 
     [SerializeField( )]
-    private SurfaceExtractor.MaterialIndex _materialIndex = SurfaceExtractor.MaterialIndex.Void;
-    public SurfaceExtractor.MaterialIndex materialIndex {
+    private MaterialIndex _materialIndex = MaterialIndex.Void;
+    public MaterialIndex materialIndex {
         get { return this._materialIndex;  }
         set { this._materialIndex = value; }
     }

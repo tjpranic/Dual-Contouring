@@ -2,6 +2,10 @@
 
 public class Ellipsoid : Volume {
 
+    public override DensityFunction.Type type {
+        get { return DensityFunction.Type.Ellipsoid; }
+    }
+
     public override float sample( Vector3 position ) {
         // avoid division by zero
         if( position - origin == Vector3.zero ) {

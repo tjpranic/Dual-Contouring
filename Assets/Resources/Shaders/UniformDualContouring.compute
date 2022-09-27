@@ -1,4 +1,6 @@
 #pragma kernel buildVoxelGrid
+#pragma kernel sampleCornerDensities
+#pragma kernel calculateMinimizingVertices
 
 struct SymmetricMatrix3x3 {
     float m00, m01, m02, m11, m12, m22;
@@ -37,7 +39,6 @@ SVDQEF createSVDQEF( ) {
 
     return svdqef;
 }
-
 
 #define MATERIAL_INDEX_VOID 0
 #define MATERIAL_INDEX_MATERIAL1 1
@@ -90,35 +91,15 @@ struct Voxel {
     float3 extents;
     float3 minimum;
     float3 maximum;
+    Corner corners[8];
+    Edge   edges[12];
     SVDQEF qef;
     float3 vertex;
     float3 normal;
     int    index;
-
-    Corner corner0;
-    Corner corner1;
-    Corner corner2;
-    Corner corner3;
-    Corner corner4;
-    Corner corner5;
-    Corner corner6;
-    Corner corner7;
-
-    Edge edge0;
-    Edge edge1;
-    Edge edge2;
-    Edge edge3;
-    Edge edge4;
-    Edge edge5;
-    Edge edge6;
-    Edge edge7;
-    Edge edge8;
-    Edge edge9;
-    Edge edge10;
-    Edge edge11;
 };
 
-Voxel createVoxel( float3 center, float3 size, int r ) {
+Voxel createVoxel( float3 center, float3 size ) {
     Voxel voxel;
 
     voxel.center  = center;
@@ -129,31 +110,93 @@ Voxel createVoxel( float3 center, float3 size, int r ) {
     voxel.qef     = createSVDQEF( );
     voxel.vertex  = float3( 0.0f, 0.0f, 0.0f );
     voxel.normal  = float3( 0.0f, 0.0f, 0.0f );
-    voxel.index   = r;
+    voxel.index   = -1;
 
-    voxel.corner0 = createCorner( voxel.minimum );
-    voxel.corner1 = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.minimum.z ) );
-    voxel.corner2 = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.maximum.z ) );
-    voxel.corner3 = createCorner( float3( voxel.minimum.x, voxel.minimum.y, voxel.maximum.z ) );
-    voxel.corner4 = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.maximum.z ) );
-    voxel.corner5 = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.minimum.z ) );
-    voxel.corner6 = createCorner( float3( voxel.maximum.x, voxel.maximum.y, voxel.minimum.z ) );
-    voxel.corner7 = createCorner( voxel.maximum );
+    voxel.corners[0] = createCorner( voxel.minimum );
+    voxel.corners[1] = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.minimum.z ) );
+    voxel.corners[2] = createCorner( float3( voxel.maximum.x, voxel.minimum.y, voxel.maximum.z ) );
+    voxel.corners[3] = createCorner( float3( voxel.minimum.x, voxel.minimum.y, voxel.maximum.z ) );
+    voxel.corners[4] = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.maximum.z ) );
+    voxel.corners[5] = createCorner( float3( voxel.minimum.x, voxel.maximum.y, voxel.minimum.z ) );
+    voxel.corners[6] = createCorner( float3( voxel.maximum.x, voxel.maximum.y, voxel.minimum.z ) );
+    voxel.corners[7] = createCorner( voxel.maximum );
 
-    voxel.edge0  = createEdge( voxel.corner0, voxel.corner1 );
-    voxel.edge1  = createEdge( voxel.corner3, voxel.corner2 );
-    voxel.edge2  = createEdge( voxel.corner5, voxel.corner6 );
-    voxel.edge3  = createEdge( voxel.corner4, voxel.corner7 );
-    voxel.edge4  = createEdge( voxel.corner0, voxel.corner5 );
-    voxel.edge5  = createEdge( voxel.corner1, voxel.corner6 );
-    voxel.edge6  = createEdge( voxel.corner3, voxel.corner4 );
-    voxel.edge7  = createEdge( voxel.corner2, voxel.corner7 );
-    voxel.edge8  = createEdge( voxel.corner0, voxel.corner3 );
-    voxel.edge9  = createEdge( voxel.corner1, voxel.corner2 );
-    voxel.edge10 = createEdge( voxel.corner5, voxel.corner4 );
-    voxel.edge11 = createEdge( voxel.corner6, voxel.corner7 );
+    voxel.edges[0]  = createEdge( voxel.corners[0], voxel.corners[1] );
+    voxel.edges[1]  = createEdge( voxel.corners[3], voxel.corners[2] );
+    voxel.edges[2]  = createEdge( voxel.corners[5], voxel.corners[6] );
+    voxel.edges[3]  = createEdge( voxel.corners[4], voxel.corners[7] );
+    voxel.edges[4]  = createEdge( voxel.corners[0], voxel.corners[5] );
+    voxel.edges[5]  = createEdge( voxel.corners[1], voxel.corners[6] );
+    voxel.edges[6]  = createEdge( voxel.corners[3], voxel.corners[4] );
+    voxel.edges[7]  = createEdge( voxel.corners[2], voxel.corners[7] );
+    voxel.edges[8]  = createEdge( voxel.corners[0], voxel.corners[3] );
+    voxel.edges[9]  = createEdge( voxel.corners[1], voxel.corners[2] );
+    voxel.edges[10] = createEdge( voxel.corners[5], voxel.corners[4] );
+    voxel.edges[11] = createEdge( voxel.corners[6], voxel.corners[7] );
 
     return voxel;
+}
+
+#define DENSITY_FUNCTION_TYPE_CUBOID 0
+#define DENSITY_FUNCTION_TYPE_ELLIPSOID 1
+
+#define DENSITY_FUNCTION_COMBINATION_UNION 0
+#define DENSITY_FUNCTION_COMBINATION_INTERSECTION 1
+#define DENSITY_FUNCTION_COMBINATION_SUBTRACTION 2
+
+struct DensityFunction {
+    uint   type;
+    uint   combination;
+    uint   materialIndex;
+    float3 origin;
+    float3 extents;
+};
+
+// element-wise multiply
+float3 multiply( float3 v1, float3 v2 ) {
+    return float3( v1.x * v2.x, v1.y * v2.y, v1.z * v2.z );
+}
+
+// element-wise divide
+float3 divide( float3 v1, float3 v2 ) {
+    return float3( v1.x / v2.x, v1.y / v2.y, v1.z / v2.z );
+}
+
+// element-wise absolute value
+float3 absolute( float3 v ) {
+    return float3( abs( v.x ), abs( v.y ), abs( v.z ) );
+}
+
+float3 maximum( float3 v1, float3 v2 ) {
+    return float3( max( v1.x, v2.x ), max( v1.y, v2.x ), max( v1.z, v2.x ) );
+}
+
+float sampleCuboid( float3 position, DensityFunction densityFunction ) {
+    float3 q = absolute( position - densityFunction.origin ) - densityFunction.extents;
+    return length( max( q, float3( 0.0f, 0.0f, 0.0f ) ) ) + min( max( q.x, max( q.y, q.z ) ), 0.0f );
+}
+
+float sampleEllipsoid( float3 position, DensityFunction densityFunction ) {
+    // avoid division by zero
+    if( length( position - densityFunction.origin ) == 0.0f ) {
+        return -1.0f;
+    }
+
+    float k0 = length( divide( ( position - densityFunction.origin ), densityFunction.extents ) );
+    float k1 = length( divide( ( position - densityFunction.origin ), multiply( densityFunction.extents, densityFunction.extents ) ) );
+
+    return k0 * ( k0 - 1.0f ) / k1;
+}
+
+float sampleDensityFunction( float3 position, DensityFunction densityFunction ) {
+    switch( densityFunction.type ) {
+        case DENSITY_FUNCTION_TYPE_CUBOID:
+            return sampleCuboid( position, densityFunction );
+        case DENSITY_FUNCTION_TYPE_ELLIPSOID:
+            return sampleEllipsoid( position, densityFunction );
+        default:
+            return 0.0f;
+    }
 }
 
 cbuffer Configuration {
@@ -162,16 +205,69 @@ cbuffer Configuration {
     uint binarySearchIterations;
     uint surfaceCorrectionIterations;
     uint intersectionApproximationMode;
+    uint densityFunctionCount;
 }
 
 RWStructuredBuffer<Voxel> voxels;
 
-[numthreads( 1, 1 ,1 )]
+[numthreads( 1, 1, 1 )]
 void buildVoxelGrid( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
     float3 size   = float3( 1.0f, 1.0f, 1.0f ) / resolution;                                                // center voxel relative to 0, 0, 0
     float3 center = ( float3( dispatchThreadID.x, dispatchThreadID.y, dispatchThreadID.z ) / resolution ) - ( size / 2 * ( resolution - 1 ) );
 
-    voxels[voxelIndex] = createVoxel( center, size, resolution );
+    voxels[voxelIndex] = createVoxel( center, size );
+}
+
+RWStructuredBuffer<DensityFunction> densityFunctions;
+
+[numthreads( 1, 1, 1 )]
+void sampleCornerDensities( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
+
+    for( uint cornerIndex = 0; cornerIndex < 8; ++cornerIndex ) {
+
+        for( uint densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
+
+            Corner          corner          = voxels[voxelIndex].corners[cornerIndex];
+            DensityFunction densityFunction = densityFunctions[densityFunctionIndex];
+
+            float density       = sampleDensityFunction( corner.position, densityFunction );
+            uint  materialIndex = corner.materialIndex;
+
+            // set material bit if the corner is inside of the shape
+            if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_UNION && density < 0.0f ) {
+                materialIndex |= densityFunction.materialIndex;
+            }
+            // unset material bit if the corner is outside of the shape
+            if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_INTERSECTION && density > 0.0f ) {
+                materialIndex &= ~densityFunction.materialIndex;
+            }
+            // unset material bit if the corner is inside of the shape
+            if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_SUBTRACTION && density < 0.0f ) {
+                materialIndex &= ~densityFunction.materialIndex;
+            }
+
+            switch( densityFunction.combination ) {
+                case DENSITY_FUNCTION_COMBINATION_UNION:
+                    density = min( corner.density,  density );
+                    break;
+                case DENSITY_FUNCTION_COMBINATION_INTERSECTION:
+                    density = max( corner.density,  density );
+                    break;
+                case DENSITY_FUNCTION_COMBINATION_SUBTRACTION:
+                    density = max( corner.density, -density );
+                    break;
+            }
+
+            voxels[voxelIndex].corners[cornerIndex].density       = density;
+            voxels[voxelIndex].corners[cornerIndex].materialIndex = materialIndex;
+        }
+    }
+}
+
+[numthreads( 1, 1 ,1 )]
+void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    //...
 }

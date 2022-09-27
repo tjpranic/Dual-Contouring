@@ -166,78 +166,19 @@ public class AdaptiveDualContouring : Voxelizer {
 
     [Space( )]
 
-    [SerializeField( )]
-    private Implementation _implementation = Implementation.CPU;
-    public override Implementation implementation {
-        get { return this._implementation;  }
-        set { this._implementation = value; }
-    }
-
-    [SerializeField( )]
-    private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
-    public override IntersectionApproximation intersectionApproximation {
-        get { return this._intersectionApproximation;  }
-        set { this._intersectionApproximation = value; }
-    }
-
-    [SerializeField( )]
-    private QEFSolverType _qefSolver = QEFSolverType.Simple;
-    public override QEFSolverType qefSolver {
-        get { return this._qefSolver;  }
-        set { this._qefSolver = value; }
-    }
-
-    private Mesh _mesh;
-    public override Mesh mesh {
-        get { return this._mesh; }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Corner> corners {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != VoxelType.Internal
-            ).Aggregate(
-                new List<SurfaceExtractor.Corner>( ),
-                ( accumulator, voxel ) => {
-                    accumulator.AddRange( voxel.corners );
-                    return accumulator;
-                }
-            ).Distinct( );
-        }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Edge> edges {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != VoxelType.Internal
-            ).Aggregate(
-                new List<SurfaceExtractor.Edge>( ),
-                ( accumulator, voxel ) => {
-                    accumulator.AddRange( voxel.edges );
-                    return accumulator;
-                }
-            ).Distinct( );
-        }
-    }
-
-    public override IEnumerable<SurfaceExtractor.Voxel> voxels {
-        get {
-            return Octree<Voxel>.flatten( this.octree ).Where(
-                ( node ) => node.type != VoxelType.Internal
-            );
-        }
-    }
-
-    private Octree<Voxel> octree;
-
-    [Space( )]
-
     public bool simplification = false;
 
     [Min( 0.0f )]
     public float errorThreshold = 0.01f;
 
-    public override void voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+    private Octree<Voxel> octree;
+
+    public override (
+        Mesh                                 mesh,
+        IEnumerable<SurfaceExtractor.Corner> corners,
+        IEnumerable<SurfaceExtractor.Edge>   edges,
+        IEnumerable<SurfaceExtractor.Voxel>  voxels
+    ) voxelize( IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
 
@@ -318,7 +259,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityAndMaterial( corner, densityFunction );
+                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityWithMaterial( corner, densityFunction );
                     }
                 }
             }
@@ -339,7 +280,7 @@ public class AdaptiveDualContouring : Voxelizer {
                     return;
                 }
 
-                voxel.qef = this.qefSolver switch {
+                voxel.qef = this.qefSolverType switch {
                     QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
                     QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
                     _                    => throw new Exception( "Unknown solver type specified" )
@@ -378,18 +319,41 @@ public class AdaptiveDualContouring : Voxelizer {
         this.contourCell( this.octree, Position.Root, vertices, normals, indices );
 
         // build mesh
-        this._mesh = new Mesh {
+        var mesh = new Mesh {
             vertices = vertices.ToArray( ),
             normals  = normals.ToArray( )
         };
 
-        this._mesh.subMeshCount = indices.Keys.Count;
+        mesh.subMeshCount = indices.Keys.Count;
 
         var subMeshCount = 0;
         foreach( var triangles in indices ) {
-            this._mesh.SetTriangles( triangles.Value, subMeshCount );
+            mesh.SetTriangles( triangles.Value, subMeshCount );
             ++subMeshCount;
         }
+
+        // build debug information
+        var voxels = Octree<Voxel>.flatten( this.octree ).Where(
+            ( node ) => node.type != VoxelType.Internal
+        );
+
+        var edges = voxels.Aggregate(
+            new List<SurfaceExtractor.Edge>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.edges );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        var corners = voxels.Aggregate(
+            new List<SurfaceExtractor.Corner>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.corners );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        return ( mesh, corners, edges, voxels );
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
@@ -541,7 +505,7 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        voxel.qef = this.qefSolver switch {
+        voxel.qef = this.qefSolverType switch {
             QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
             QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
             _                    => throw new Exception( "Unknown solver type specified" )
