@@ -136,17 +136,17 @@ public interface SurfaceExtractor {
                 DensityFunction.Combination.Union        => Mathf.Min( density,  densityFunction.sample( point ) ),
                 DensityFunction.Combination.Intersection => Mathf.Max( density,  densityFunction.sample( point ) ),
                 DensityFunction.Combination.Subtraction  => Mathf.Max( density, -densityFunction.sample( point ) ),
-                _                                            => throw new Exception( "Unknown combination mode specified" ),
+                _                                        => throw new Exception( "Unknown combination mode specified" ),
             }
         );
     }
 
-    public static Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions, IntersectionApproximation intersectionApproximationMode, int binarySearchIterations ) {
+    public static Vector3 approximateIntersection( Edge edge, IEnumerable<DensityFunction> densityFunctions, IntersectionApproximation intersectionApproximation, int binarySearchIterations ) {
         if( edge.corners[0].density == 0.0f || edge.corners[1].density == 0.0f ) {
             // one of the corners is at the exact intersection
             return edge.corners[0].density == 0.0f ? edge.corners[0].position : edge.corners[1].position;
         }
-        if( intersectionApproximationMode == IntersectionApproximation.BinarySearch ) {
+        if( intersectionApproximation == IntersectionApproximation.BinarySearch ) {
             var ( start, end ) = edge.corners[0].density < edge.corners[1].density
                 ? ( edge.corners[0].position, edge.corners[1].position )
                 : ( edge.corners[1].position, edge.corners[0].position );
@@ -170,7 +170,7 @@ public interface SurfaceExtractor {
 
             return intersection;
         }
-        else if( intersectionApproximationMode == IntersectionApproximation.LinearInterpolation ) {
+        else if( intersectionApproximation == IntersectionApproximation.LinearInterpolation ) {
             return edge.corners[0].position + ( ( -edge.corners[0].density ) * ( edge.corners[1].position - edge.corners[0].position ) / ( edge.corners[1].density - edge.corners[0].density ) );
         }
         throw new Exception( "Unknown intersection approximation mode specified" );

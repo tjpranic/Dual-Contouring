@@ -43,6 +43,14 @@ public class SVDQEF : QEFSolver {
         this.surfaceCorrectionIterations = surfaceCorrectionIterations;
     }
 
+    public SVDQEF( Data qefData ) {
+        this.ATA               = new( qefData.ATA );
+        this.ATB               = qefData.ATB;
+        this.BTB               = qefData.BTB;
+        this.massPoint         = qefData.massPoint;
+        this.intersectionCount = qefData.intersectionCount;
+    }
+
     public void add( Vector3 intersection, Vector3 normal ) {
         this.ATA[0, 0] += normal.x * normal.x;
         this.ATA[0, 1] += normal.x * normal.y;
@@ -282,6 +290,15 @@ public class SVDQEF : QEFSolver {
             this[2, 2] = m22;
         }
 
+        public SymmetricMatrix3x3( Data matrixData ) {
+            this[0, 0] = matrixData.m00;
+            this[0, 1] = matrixData.m01;
+            this[0, 2] = matrixData.m02;
+            this[1, 1] = matrixData.m11;
+            this[1, 2] = matrixData.m12;
+            this[2, 2] = matrixData.m22;
+        }
+
         public float this[int row, int column] {
             get {
                 return row switch {
@@ -460,11 +477,11 @@ public class SVDQEF : QEFSolver {
             return ( VTAV, V );
         }
 
-        public static ( SymmetricMatrix3x3, Matrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, float tolerance, int sweeps ) {
+        public static ( SymmetricMatrix3x3, Matrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, float SVDTolerance, int sweeps ) {
             var VTAV = ATA;
             var V    = Matrix3x3.identity;
 
-            var delta = tolerance * VTAV.frobeniusNorm( );
+            var delta = SVDTolerance * VTAV.frobeniusNorm( );
 
             for( var sweep = 0; sweep < sweeps && VTAV.off( ) > delta; ++sweep ) {
                 ( VTAV, V ) = rotate01( VTAV, V );
@@ -483,14 +500,14 @@ public class SVDQEF : QEFSolver {
             return Vector3.Dot( V, V );
         }
 
-        public static float pseudoInverse( float x, float tolerance ) {
-            return ( Mathf.Abs( x ) < tolerance || Mathf.Abs( 1.0f / x ) < tolerance ) ? 0.0f : ( 1.0f / x );
+        public static float pseudoInverse( float x, float pseudoInverseTolerance ) {
+            return ( Mathf.Abs( x ) < pseudoInverseTolerance || Mathf.Abs( 1.0f / x ) < pseudoInverseTolerance ) ? 0.0f : ( 1.0f / x );
         }
 
-        public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V, float tolerance ) {
-            var d0 = pseudoInverse( VTAV[0, 0], tolerance );
-            var d1 = pseudoInverse( VTAV[1, 1], tolerance );
-            var d2 = pseudoInverse( VTAV[2, 2], tolerance );
+        public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V, float pseudoInverseTolerance ) {
+            var d0 = pseudoInverse( VTAV[0, 0], pseudoInverseTolerance );
+            var d1 = pseudoInverse( VTAV[1, 1], pseudoInverseTolerance );
+            var d2 = pseudoInverse( VTAV[2, 2], pseudoInverseTolerance );
 
             return new Matrix3x3(
                 ( V[0, 0] * d0 * V[0, 0] ) + ( V[0, 1] * d1 * V[0, 1] ) + ( V[0, 2] * d2 * V[0, 2] ),
@@ -505,8 +522,8 @@ public class SVDQEF : QEFSolver {
             );
         }
 
-        public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, float tolerance, int sweeps, float pseudoInverseTolerance ) {
-            var ( VTAV, V ) = getSymmetricSVD( ATA, tolerance, sweeps );
+        public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, float SVDTolerance, int sweeps, float pseudoInverseTolerance ) {
+            var ( VTAV, V ) = getSymmetricSVD( ATA, SVDTolerance, sweeps );
 
             var x = pseudoInverse( VTAV, V, pseudoInverseTolerance ).multiplyVector( ATB );
 

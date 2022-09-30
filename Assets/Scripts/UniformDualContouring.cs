@@ -250,10 +250,15 @@ public class UniformDualContouring : Voxelizer {
                 new( edgeData[10], new Corner.Data[] { cornerData[5], cornerData[4] } ),
                 new( edgeData[11], new Corner.Data[] { cornerData[6], cornerData[7] } ),
             };
+
+            this.qef    = new SVDQEF( voxelData.qef );
+            this.vertex = voxelData.vertex;
+            this.normal = voxelData.normal;
+            this.index  = voxelData.index;
         }
 
         public bool hasFeaturePoint( ) {
-            return this.index > -1;
+            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
         }
 
         public bool Equals( SurfaceExtractor.Voxel other ) {
@@ -311,7 +316,6 @@ public class UniformDualContouring : Voxelizer {
 
             // find contour intersections and calculate minimizing vertices
 
-            var index = 0;
             foreach( var voxel in this.grid ) {
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
@@ -340,7 +344,6 @@ public class UniformDualContouring : Voxelizer {
 
                 ( voxel.vertex, voxel.normal, _ ) = voxel.qef.solve( voxel, densityFunctions );
 
-                voxel.index = index++;
             }
 
             // generate vertices and indices
@@ -358,9 +361,6 @@ public class UniformDualContouring : Voxelizer {
                             continue;
                         }
 
-                        vertices.Add ( voxel.vertex );
-                        normals.Add  ( voxel.normal );
-
                         // on every positive axis, generate indices using 4 voxel surrounding a common edge
 
                         // x axis
@@ -373,7 +373,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
 
-                            this.generateIndices( voxels, edge, indices );
+                            this.generateIndices( voxels, edge, vertices, normals, indices );
                         }
 
                         // y axis
@@ -386,7 +386,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[7];
 
-                            this.generateIndices( voxels, edge, indices );
+                            this.generateIndices( voxels, edge, vertices, normals, indices );
                         }
 
                         // z axis
@@ -399,7 +399,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[11];
 
-                            this.generateIndices( voxels, edge, indices );
+                            this.generateIndices( voxels, edge, vertices, normals, indices );
                         }
                     }
                 }
@@ -441,7 +441,7 @@ public class UniformDualContouring : Voxelizer {
             return ( mesh, debugCorners, debugEdges, debugVoxels );
         }
 
-        private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, Dictionary<int, List<int>> indices ) {
+        private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
             if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
                 // indices should only be generated from void - solid intersections
@@ -449,6 +449,16 @@ public class UniformDualContouring : Voxelizer {
                     ( edge.corners[0].materialIndex == MaterialIndex.Void && edge.corners[1].materialIndex >= MaterialIndex.Material1 ) ||
                     ( edge.corners[1].materialIndex == MaterialIndex.Void && edge.corners[0].materialIndex >= MaterialIndex.Material1 )
                 );
+
+                // generate vertex and normal
+                foreach( var voxel in voxels ) {
+                    if( voxel.index == -1 ) {
+                        voxel.index = vertices.Count;
+
+                        vertices.Add ( voxel.vertex );
+                        normals.Add  ( voxel.normal );
+                    }
+                }
 
                 int[] triangles;
 
@@ -626,6 +636,13 @@ public class UniformDualContouring : Voxelizer {
                 }
             );
 
+            if( UnityEngine.Debug.isDebugBuild ) {
+                foreach( var voxel in voxels ) {
+                    UnityEngine.Debug.Assert( !voxel.vertex.isNaN( ) );
+                    UnityEngine.Debug.Assert( !voxel.normal.isNaN( ) );
+                }
+            }
+
             var edges = voxels.Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
@@ -634,6 +651,13 @@ public class UniformDualContouring : Voxelizer {
                 }
             ).Distinct( );
 
+            if( UnityEngine.Debug.isDebugBuild ) {
+                foreach( var edge in edges ) {
+                    UnityEngine.Debug.Assert( !edge.intersection.isNaN( ) );
+                    UnityEngine.Debug.Assert( !edge.normal.isNaN( ) );
+                }
+            }
+
             var corners = voxels.Aggregate(
                 new List<SurfaceExtractor.Corner>( ),
                 ( accumulator, voxel ) => {
@@ -641,6 +665,12 @@ public class UniformDualContouring : Voxelizer {
                     return accumulator;
                 }
             ).Distinct( );
+
+            if( UnityEngine.Debug.isDebugBuild ) {
+                foreach( var corner in corners ) {
+                    UnityEngine.Debug.Assert( !float.IsNaN( corner.density ) );
+                }
+            }
 
             return ( mesh, corners, edges, voxels );
         }

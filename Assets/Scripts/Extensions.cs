@@ -18,6 +18,10 @@ public static class Vector3Extensions {
         return new Vector3( Mathf.Abs( vector.x ), Mathf.Abs( vector.y ), Mathf.Abs( vector.z ) );
     }
 
+    public static bool isNaN( this Vector3 vector ) {
+        return float.IsNaN( vector.x ) || float.IsNaN( vector.y ) || float.IsNaN( vector.y );
+    }
+
 }
 
 public static class Vector4Extensions {
