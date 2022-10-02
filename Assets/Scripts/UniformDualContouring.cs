@@ -109,15 +109,14 @@ public class UniformDualContouring : Voxelizer {
 
         public struct Data {
 
-            public Vector3     center;
-            public Vector3     size;
-            public Vector3     extents;
-            public Vector3     minimum;
-            public Vector3     maximum;
-            public SVDQEF.Data qef;
-            public Vector3     vertex;
-            public Vector3     normal;
-            public int         index;
+            public Vector3 center;
+            public Vector3 size;
+            public Vector3 extents;
+            public Vector3 minimum;
+            public Vector3 maximum;
+            public Vector3 vertex;
+            public Vector3 normal;
+            public int     index;
 
             public Data( Voxel voxel ) {
                 if( voxel.qef is SVDQEF solver ) {
@@ -126,7 +125,6 @@ public class UniformDualContouring : Voxelizer {
                     this.extents = voxel.extents;
                     this.minimum = voxel.minimum;
                     this.maximum = voxel.maximum;
-                    this.qef     = new SVDQEF.Data( solver );
                     this.vertex  = voxel.vertex;
                     this.normal  = voxel.normal;
                     this.index   = voxel.index;
@@ -251,7 +249,6 @@ public class UniformDualContouring : Voxelizer {
                 new( edgeData[11], new Corner.Data[] { cornerData[6], cornerData[7] } ),
             };
 
-            this.qef    = new SVDQEF( voxelData.qef );
             this.vertex = voxelData.vertex;
             this.normal = voxelData.normal;
             this.index  = voxelData.index;
@@ -267,6 +264,43 @@ public class UniformDualContouring : Voxelizer {
 
         public override int GetHashCode( ) {
             return this.center.GetHashCode( ) ^ this.size.GetHashCode( );
+        }
+
+    }
+
+    public class Quad {
+
+        public unsafe struct Data {
+
+            public fixed int indices[6];
+            public       int subMeshIndex;
+
+            public Data( int[] indices, int subMeshIndex ) {
+                unsafe {
+                    for( var indexIndex = 0; indexIndex < indices.Length; ++indexIndex ) {
+                        this.indices[indexIndex] = indices[indexIndex];
+                    }
+                }
+                this.subMeshIndex = subMeshIndex;
+            }
+
+        }
+
+        public int[] indices      = new int[6];
+        public int   subMeshIndex = -1;
+
+        public Quad( int[] indices, int subMeshIndex ) {
+            this.indices      = indices;
+            this.subMeshIndex = subMeshIndex;
+        }
+
+        public Quad( Data quadData ) {
+            unsafe {
+                for( var indexIndex = 0; indexIndex < this.indices.Length; ++indexIndex ) {
+                    this.indices[indexIndex] = quadData.indices[indexIndex];
+                }
+            }
+            this.subMeshIndex = quadData.subMeshIndex;
         }
 
     }
@@ -309,7 +343,8 @@ public class UniformDualContouring : Voxelizer {
             foreach( var voxel in this.grid ) {
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityWithMaterial( corner, densityFunction );
+                        corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
+                        corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
                     }
                 }
             }
@@ -350,7 +385,7 @@ public class UniformDualContouring : Voxelizer {
 
             var vertices = new List<Vector3>( );
             var normals  = new List<Vector3>( );
-            var indices  = new Dictionary<int, List<int>>( );
+            var quads    = new List<Quad>( );
 
             for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
                 for( var y = 0; y < this.grid.GetLength( 1 ); ++y ) {
@@ -373,7 +408,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
 
-                            this.generateIndices( voxels, edge, vertices, normals, indices );
+                            this.contour( voxels, edge, vertices, normals, quads );
                         }
 
                         // y axis
@@ -386,7 +421,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[7];
 
-                            this.generateIndices( voxels, edge, vertices, normals, indices );
+                            this.contour( voxels, edge, vertices, normals, quads );
                         }
 
                         // z axis
@@ -399,7 +434,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[11];
 
-                            this.generateIndices( voxels, edge, vertices, normals, indices );
+                            this.contour( voxels, edge, vertices, normals, quads );
                         }
                     }
                 }
@@ -411,11 +446,21 @@ public class UniformDualContouring : Voxelizer {
                 normals  = normals.ToArray( )
             };
 
-            mesh.subMeshCount = indices.Keys.Count;
+            var subMeshIndices = new Dictionary<int, List<int>>( );
+
+            foreach( var quad in quads ) {
+                var subMeshIndex = quad.subMeshIndex;
+                if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
+                    subMeshIndices.Add( subMeshIndex, new( ) );
+                }
+                subMeshIndices[subMeshIndex].AddRange( quad.indices );
+            }
+
+            mesh.subMeshCount = subMeshIndices.Keys.Count;
 
             var subMeshCount = 0;
-            foreach( var triangles in indices ) {
-                mesh.SetTriangles( triangles.Value, subMeshCount );
+            foreach( var indices in subMeshIndices ) {
+                mesh.SetTriangles( indices.Value, subMeshCount );
                 ++subMeshCount;
             }
 
@@ -441,7 +486,7 @@ public class UniformDualContouring : Voxelizer {
             return ( mesh, debugCorners, debugEdges, debugVoxels );
         }
 
-        private void generateIndices( Voxel[] voxels, SurfaceExtractor.Edge edge, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+        private void contour( Voxel[] voxels, SurfaceExtractor.Edge edge, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
             if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
 
                 // indices should only be generated from void - solid intersections
@@ -449,6 +494,10 @@ public class UniformDualContouring : Voxelizer {
                     ( edge.corners[0].materialIndex == MaterialIndex.Void && edge.corners[1].materialIndex >= MaterialIndex.Material1 ) ||
                     ( edge.corners[1].materialIndex == MaterialIndex.Void && edge.corners[0].materialIndex >= MaterialIndex.Material1 )
                 );
+
+                var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
+                    ? edge.corners[1].materialIndex
+                    : edge.corners[0].materialIndex;
 
                 // generate vertex and normal
                 foreach( var voxel in voxels ) {
@@ -460,11 +509,11 @@ public class UniformDualContouring : Voxelizer {
                     }
                 }
 
-                int[] triangles;
+                int[] indices;
 
                 // ensure quad is indexed facing outward
                 if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
-                    triangles = new int[] {
+                    indices = new int[] {
                         voxels[0].index,
                         voxels[1].index,
                         voxels[2].index,
@@ -474,7 +523,7 @@ public class UniformDualContouring : Voxelizer {
                     };
                 }
                 else {
-                    triangles = new int[] {
+                    indices = new int[] {
                         voxels[1].index,
                         voxels[2].index,
                         voxels[3].index,
@@ -484,11 +533,10 @@ public class UniformDualContouring : Voxelizer {
                     };
                 }
 
-                var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
-                if( !indices.ContainsKey( subMeshIndex ) ) {
-                    indices.Add( subMeshIndex, new( ) );
-                }
-                indices[subMeshIndex].AddRange( triangles );
+                var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
+
+                quads.Add( new( indices, subMeshIndex ) );
+
             }
         }
 
@@ -531,12 +579,16 @@ public class UniformDualContouring : Voxelizer {
         private ComputeBuffer edgesBuffer;
         private ComputeBuffer cornersBuffer;
         private ComputeBuffer densityFunctionsBuffer;
-        //...
+        private ComputeBuffer verticesBuffer;
+        private ComputeBuffer normalsBuffer;
+        private ComputeBuffer indexCounterBuffer;
+        private ComputeBuffer quadsBuffer;
 
         private readonly int buildVoxelGridKernel;
         private readonly int sampleCornerDensitiesKernel;
         private readonly int calculateMinimizingVerticesKernel;
-        //...
+        private readonly int generateVerticesKernel;
+        private readonly int generateIndicesKernel;
 
         public GPUImplementation( ) {
             this.uniformDualContouring = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
@@ -544,7 +596,8 @@ public class UniformDualContouring : Voxelizer {
             this.buildVoxelGridKernel              = this.uniformDualContouring.FindKernel( "buildVoxelGrid" );
             this.sampleCornerDensitiesKernel       = this.uniformDualContouring.FindKernel( "sampleCornerDensities" );
             this.calculateMinimizingVerticesKernel = this.uniformDualContouring.FindKernel( "calculateMinimizingVertices" );
-            //...
+            this.generateVerticesKernel            = this.uniformDualContouring.FindKernel( "generateVertices" );
+            this.generateIndicesKernel             = this.uniformDualContouring.FindKernel( "generateIndices" );
         }
 
         public (
@@ -579,26 +632,69 @@ public class UniformDualContouring : Voxelizer {
             var edgeData            = new Edge.Data[edgeCount];
             var cornerData          = new Corner.Data[cornerCount];
             var densityFunctionData = new DensityFunction.Data[densityFunctionCount];
+            var verticesData        = new Vector3[voxelCount];
+            var normalsData         = new Vector3[voxelCount];
+            var indexCounterData    = new int[1];
+            var quadsData           = new Quad.Data[voxelCount];
 
             for( var densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
                 densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
             }
 
-            this.createBuffers( configuration, voxelData, edgeData, cornerData, densityFunctionData );
+            this.createBuffers(
+                configuration,
+                voxelData,
+                edgeData,
+                cornerData,
+                densityFunctionData,
+                verticesData,
+                normalsData,
+                indexCounterData,
+                quadsData
+            );
 
             this.buildVoxelGrid              ( resolution );
             this.sampleCornerDensities       ( resolution );
             this.calculateMinimizingVertices ( resolution );
-            //...
+            this.generateVertices            ( resolution );
+            this.generateIndices             ( resolution );
 
-            this.voxelsBuffer.GetData  ( voxelData );
-            this.edgesBuffer.GetData   ( edgeData );
-            this.cornersBuffer.GetData ( cornerData );
+            this.verticesBuffer.GetData ( verticesData );
+            this.normalsBuffer.GetData  ( normalsData );
+            this.quadsBuffer.GetData    ( quadsData );
+            this.voxelsBuffer.GetData   ( voxelData );
+            this.edgesBuffer.GetData    ( edgeData );
+            this.cornersBuffer.GetData  ( cornerData );
 
             this.releaseBuffers( );
 
-            var mesh = new Mesh( );
+            // build mesh
+            var mesh = new Mesh {
+                vertices = verticesData,
+                normals  = normalsData
+            };
 
+            var quads = quadsData.Select( ( quadData ) => new Quad( quadData ) );
+
+            var subMeshIndices = new Dictionary<int, List<int>>( );
+
+            foreach( var quad in quads ) {
+                var subMeshIndex = quad.subMeshIndex;
+                if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
+                    subMeshIndices.Add( subMeshIndex, new( ) );
+                }
+                subMeshIndices[subMeshIndex].AddRange( quad.indices );
+            }
+
+            mesh.subMeshCount = subMeshIndices.Keys.Count;
+
+            var subMeshCount = 0;
+            foreach( var indices in subMeshIndices ) {
+                mesh.SetTriangles( indices.Value, subMeshCount );
+                ++subMeshCount;
+            }
+
+            // build debug information
             var voxels = voxelData.Aggregate(
                 new List<Voxel>( ),
                 ( accumulator, data ) => {
@@ -632,6 +728,7 @@ public class UniformDualContouring : Voxelizer {
                     };
 
                     accumulator.Add( new( voxelData[voxelIndex], voxelCorners, voxelEdges ) );
+
                     return accumulator;
                 }
             );
@@ -689,6 +786,9 @@ public class UniformDualContouring : Voxelizer {
         }
 
         private void calculateMinimizingVertices( int resolution ) {
+            // TODO: split this up into smaller workloads to avoid GPU timeout
+            // https://gamedev.stackexchange.com/questions/179341/unity-running-gpu-intensive-operations-in-editor-mode
+
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "voxels",           this.voxelsBuffer );
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "edges",            this.edgesBuffer );
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "corners",          this.cornersBuffer );
@@ -696,14 +796,37 @@ public class UniformDualContouring : Voxelizer {
             this.uniformDualContouring.Dispatch  ( this.calculateMinimizingVerticesKernel, resolution, resolution, resolution );
         }
 
-        //...
+        private void generateVertices( int resolution ) {
+            this.verticesBuffer.SetCounterValue ( 0 );
+            this.normalsBuffer.SetCounterValue  ( 0 );
+
+            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "voxels",       this.voxelsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "vertices",     this.verticesBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "normals",      this.normalsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "indexCounter", this.indexCounterBuffer );
+            this.uniformDualContouring.Dispatch  ( this.generateVerticesKernel, resolution, resolution, resolution );
+        }
+
+        private void generateIndices( int resolution ) {
+            this.quadsBuffer.SetCounterValue( 0 );
+
+            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "voxels",  this.voxelsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "edges",   this.edgesBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "corners", this.cornersBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "quads",   this.quadsBuffer );
+            this.uniformDualContouring.Dispatch  ( this.generateIndicesKernel, resolution, resolution, resolution );
+        }
 
         private void createBuffers(
             Configuration          configuration,
             Voxel.Data[]           voxelData,
             Edge.Data[]            edgeData,
             Corner.Data[]          cornerData,
-            DensityFunction.Data[] densityFunctionData
+            DensityFunction.Data[] densityFunctionData,
+            Vector3[]              verticesData,
+            Vector3[]              normalsData,
+            int[]                  indexCounterBuffer,
+            Quad.Data[]            quadsData
         ) {
             this.releaseBuffers( );
 
@@ -712,7 +835,10 @@ public class UniformDualContouring : Voxelizer {
             this.edgesBuffer            = new ComputeBuffer( edgeData.Length,            Marshal.SizeOf( typeof( Edge.Data ) ) );
             this.cornersBuffer          = new ComputeBuffer( cornerData.Length,          Marshal.SizeOf( typeof( Corner.Data ) ) );
             this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionData.Length, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
-            //...
+            this.verticesBuffer         = new ComputeBuffer( verticesData.Length,        Marshal.SizeOf( typeof( Vector3 ) ) );
+            this.normalsBuffer          = new ComputeBuffer( normalsData.Length,         Marshal.SizeOf( typeof( Vector3 ) ) );
+            this.indexCounterBuffer     = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( int ) ));
+            this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ), ComputeBufferType.Append );
 
             var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
             this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
@@ -722,7 +848,10 @@ public class UniformDualContouring : Voxelizer {
             this.edgesBuffer.SetData            ( edgeData );
             this.cornersBuffer.SetData          ( cornerData );
             this.densityFunctionsBuffer.SetData ( densityFunctionData );
-            //...
+            this.verticesBuffer.SetData         ( verticesData );
+            this.normalsBuffer.SetData          ( normalsData );
+            this.indexCounterBuffer.SetData     ( indexCounterBuffer );
+            this.quadsBuffer.SetData            ( quadsData );
         }
 
         private void releaseBuffers( ) {
@@ -731,6 +860,10 @@ public class UniformDualContouring : Voxelizer {
             this.edgesBuffer?.Release( );
             this.cornersBuffer?.Release( );
             this.densityFunctionsBuffer?.Release( );
+            this.verticesBuffer?.Release( );
+            this.normalsBuffer?.Release( );
+            this.indexCounterBuffer?.Release( );
+            this.quadsBuffer?.Release( );
         }
 
     }

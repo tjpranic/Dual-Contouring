@@ -1,0 +1,61 @@
+#include "../QEF.hlsl"
+
+#pragma kernel multiplyVectorTest
+#pragma kernel frobeniusNormTest
+#pragma kernel offTest
+#pragma kernel rotate01Test
+#pragma kernel rotate02Test
+#pragma kernel rotate12Test
+
+
+StructuredBuffer<SymmetricMatrix3x3> multiplyVectorTestParameter0;
+StructuredBuffer<float3>             multiplyVectorTestParameter1;
+RWStructuredBuffer<float3>           multiplyVectorTestResult;
+
+[numthreads( 1, 1, 1 )]
+void multiplyVectorTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    multiplyVectorTestResult[0] = multiplyVector( multiplyVectorTestParameter0[0], multiplyVectorTestParameter1[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> frobeniusNormTestParameter0;
+RWStructuredBuffer<float>            frobeniusNormTestResult;
+
+[numthreads( 1, 1, 1 )]
+void frobeniusNormTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    frobeniusNormTestResult[0] = frobeniusNorm( frobeniusNormTestParameter0[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> offTestParameter0;
+RWStructuredBuffer<float>            offTestResult;
+
+[numthreads( 1, 1, 1 )]
+void offTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    offTestResult[0] = off( offTestParameter0[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3>   rotate01TestParameter0;
+StructuredBuffer<float2>               rotate01TestParameter1;
+RWStructuredBuffer<SymmetricMatrix3x3> rotate01TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate01Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate01TestResult[0] = rotate01( rotate01TestParameter0[0], rotate01TestParameter1[0].x, rotate01TestParameter1[0].y );
+}
+
+StructuredBuffer<SymmetricMatrix3x3>   rotate02TestParameter0;
+StructuredBuffer<float2>               rotate02TestParameter1;
+RWStructuredBuffer<SymmetricMatrix3x3> rotate02TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate02Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate02TestResult[0] = rotate02( rotate02TestParameter0[0], rotate02TestParameter1[0].x, rotate02TestParameter1[0].y );
+}
+
+StructuredBuffer<SymmetricMatrix3x3>   rotate12TestParameter0;
+StructuredBuffer<float2>               rotate12TestParameter1;
+RWStructuredBuffer<SymmetricMatrix3x3> rotate12TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate12Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate12TestResult[0] = rotate12( rotate12TestParameter0[0], rotate12TestParameter1[0].x, rotate12TestParameter1[0].y );
+}

@@ -1,0 +1,114 @@
+#include "../QEF.hlsl"
+
+#pragma kernel calculateSymmetricGivensCoefficientsTest
+#pragma kernel rotate01Test
+#pragma kernel rotate02Test
+#pragma kernel rotate12Test
+#pragma kernel getSymmetricSVDTest
+#pragma kernel pseudoInverseScalarTest
+#pragma kernel pseudoInverseMatrixTest
+#pragma kernel calculateErrorTest
+#pragma kernel solveSVDTest
+
+StructuredBuffer<float3>   calculateSymmetricGivensCoefficientsTestParameter0;
+RWStructuredBuffer<float2> calculateSymmetricGivensCoefficientsTestResult;
+
+[numthreads( 1, 1, 1 )]
+void calculateSymmetricGivensCoefficientsTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    calculateSymmetricGivensCoefficients(
+        calculateSymmetricGivensCoefficientsTestParameter0[0].x,
+        calculateSymmetricGivensCoefficientsTestParameter0[0].y,
+        calculateSymmetricGivensCoefficientsTestParameter0[0].z,
+        calculateSymmetricGivensCoefficientsTestResult[0].x,
+        calculateSymmetricGivensCoefficientsTestResult[0].y
+    );
+}
+
+struct SVDTestResult {
+    SymmetricMatrix3x3 symmetricMatrix3x3;
+    Matrix3x3          matrix3x3;
+};
+
+StructuredBuffer<SymmetricMatrix3x3> rotate01TestParameter0;
+StructuredBuffer<Matrix3x3>          rotate01TestParameter1;
+RWStructuredBuffer<SVDTestResult>    rotate01TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate01Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate01TestResult[0].symmetricMatrix3x3 = rotate01TestParameter0[0];
+    rotate01TestResult[0].matrix3x3          = rotate01TestParameter1[0];
+    rotate01( rotate01TestResult[0].symmetricMatrix3x3, rotate01TestResult[0].matrix3x3 );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> rotate02TestParameter0;
+StructuredBuffer<Matrix3x3>          rotate02TestParameter1;
+RWStructuredBuffer<SVDTestResult>    rotate02TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate02Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate02TestResult[0].symmetricMatrix3x3 = rotate02TestParameter0[0];
+    rotate02TestResult[0].matrix3x3          = rotate02TestParameter1[0];
+    rotate02( rotate02TestResult[0].symmetricMatrix3x3, rotate02TestResult[0].matrix3x3 );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> rotate12TestParameter0;
+StructuredBuffer<Matrix3x3>          rotate12TestParameter1;
+RWStructuredBuffer<SVDTestResult>    rotate12TestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate12Test( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate12TestResult[0].symmetricMatrix3x3 = rotate12TestParameter0[0];
+    rotate12TestResult[0].matrix3x3          = rotate12TestParameter1[0];
+    rotate12( rotate12TestResult[0].symmetricMatrix3x3, rotate12TestResult[0].matrix3x3 );
+}
+
+
+StructuredBuffer<SymmetricMatrix3x3> getSymmetricSVDTestParameter0;
+StructuredBuffer<SymmetricMatrix3x3> getSymmetricSVDTestParameter1;
+StructuredBuffer<Matrix3x3>          getSymmetricSVDTestParameter2;
+RWStructuredBuffer<SVDTestResult>    getSymmetricSVDTestResult;
+
+#define SVD_SWEEPS 6
+
+[numthreads( 1, 1, 1 )]
+void getSymmetricSVDTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    getSymmetricSVDTestResult[0].symmetricMatrix3x3 = getSymmetricSVDTestParameter1[0];
+    getSymmetricSVDTestResult[0].matrix3x3          = getSymmetricSVDTestParameter2[0];
+    getSymmetricSVD( getSymmetricSVDTestParameter0[0], getSymmetricSVDTestResult[0].symmetricMatrix3x3, getSymmetricSVDTestResult[0].matrix3x3, SVD_SWEEPS );
+}
+
+StructuredBuffer<float>   pseudoInverseScalarTestParameter0;
+RWStructuredBuffer<float> pseudoInverseScalarTestResult;
+
+[numthreads( 1, 1, 1 )]
+void pseudoInverseScalarTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    pseudoInverseScalarTestResult[0] = pseudoInverse( pseudoInverseScalarTestParameter0[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> pseudoInverseMatrixTestParameter0;
+StructuredBuffer<Matrix3x3>          pseudoInverseMatrixTestParameter1;
+RWStructuredBuffer<Matrix3x3>        pseudoInverseMatrixTestResult;
+
+[numthreads( 1, 1, 1 )]
+void pseudoInverseMatrixTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    pseudoInverseMatrixTestResult[0] = pseudoInverse( pseudoInverseMatrixTestParameter0[0], pseudoInverseMatrixTestParameter1[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> calculateErrorTestParameter0;
+StructuredBuffer<float3>             calculateErrorTestParameter1;
+StructuredBuffer<float3>             calculateErrorTestParameter2;
+RWStructuredBuffer<float>            calculateErrorTestResult;
+
+[numthreads( 1, 1, 1 )]
+void calculateErrorTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    calculateErrorTestResult[0] = calculateError( calculateErrorTestParameter0[0], calculateErrorTestParameter1[0], calculateErrorTestParameter2[0] );
+}
+
+StructuredBuffer<SymmetricMatrix3x3> solveSVDTestParameter0;
+StructuredBuffer<float3>             solveSVDTestParameter1;
+RWStructuredBuffer<float4>           solveSVDTestResult;
+
+[numthreads( 1, 1, 1 )]
+void solveSVDTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    solveSVD( solveSVDTestParameter0[0], solveSVDTestParameter1[0], solveSVDTestResult[0].xyz, solveSVDTestResult[0].w, SVD_SWEEPS );
+}

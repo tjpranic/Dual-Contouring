@@ -259,7 +259,8 @@ public class AdaptiveDualContouring : Voxelizer {
 
                 foreach( var corner in voxel.corners ) {
                     foreach( var densityFunction in densityFunctions ) {
-                        ( corner.density, corner.materialIndex ) = SurfaceExtractor.calculateDensityWithMaterial( corner, densityFunction );
+                        corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
+                        corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
                     }
                 }
             }
@@ -489,7 +490,11 @@ public class AdaptiveDualContouring : Voxelizer {
                 };
             }
 
-            var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( edge );
+            var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
+                ? edge.corners[1].materialIndex
+                : edge.corners[0].materialIndex;
+
+            var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
             if( !indices.ContainsKey( subMeshIndex ) ) {
                 indices.Add( subMeshIndex, new( ) );
             }

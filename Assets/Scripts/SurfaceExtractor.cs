@@ -102,31 +102,28 @@ public interface SurfaceExtractor {
         IEnumerable<Voxel>  voxels
     ) voxelize( IEnumerable<DensityFunction> densityFunctions );
 
-    public static ( float density, MaterialIndex material ) calculateDensityWithMaterial( Corner corner, DensityFunction densityFunction ) {
-        var density       = densityFunction.sample( corner.position );
-        var materialIndex = corner.materialIndex;
+    public static MaterialIndex calculateMaterial( Vector3 position, IEnumerable<DensityFunction> densityFunctions ) {
+        return densityFunctions.Aggregate(
+            MaterialIndex.Void,
+            ( materialIndex, densityFunction ) => {
+                var density = densityFunction.sample( position );
 
-        // set material bit if the corner is inside of the shape
-        if( densityFunction.combination == DensityFunction.Combination.Union && density < 0.0f ) {
-            materialIndex |= densityFunction.materialIndex;
-        }
-        // unset material bit if the corner is outside of the shape
-        if( densityFunction.combination == DensityFunction.Combination.Intersection && density > 0.0f ) {
-            materialIndex &= ~densityFunction.materialIndex;
-        }
-        // unset material bit if the corner is inside of the shape
-        if( densityFunction.combination == DensityFunction.Combination.Subtraction && density < 0.0f ) {
-            materialIndex &= ~densityFunction.materialIndex;
-        }
+                // set material bit if the corner is inside of the shape
+                if( densityFunction.combination == DensityFunction.Combination.Union && density < 0.0f ) {
+                    materialIndex |= densityFunction.materialIndex;
+                }
+                // unset material bit if the corner is outside of the shape
+                if( densityFunction.combination == DensityFunction.Combination.Intersection && density > 0.0f ) {
+                    materialIndex &= ~densityFunction.materialIndex;
+                }
+                // unset material bit if the corner is inside of the shape
+                if( densityFunction.combination == DensityFunction.Combination.Subtraction && density < 0.0f ) {
+                    materialIndex &= ~densityFunction.materialIndex;
+                }
 
-        density = densityFunction.combination switch {
-            DensityFunction.Combination.Union        => Mathf.Min( corner.density,  density ),
-            DensityFunction.Combination.Intersection => Mathf.Max( corner.density,  density ),
-            DensityFunction.Combination.Subtraction  => Mathf.Max( corner.density, -density ),
-            _                                            => throw new Exception( "Unknown combination mode specified" ),
-        };
-
-        return ( density, materialIndex );
+                return materialIndex;
+            }
+        );
     }
 
     public static float calculateDensity( Vector3 point, IEnumerable<DensityFunction> densityFunctions ) {
@@ -196,11 +193,7 @@ public interface SurfaceExtractor {
         return Vector3.Normalize( positive - negative );
     }
 
-    public static int findHighestMaterialBit( Edge edge ) {
-        var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
-            ? edge.corners[1].materialIndex
-            : edge.corners[0].materialIndex;
-
+    public static int findHighestMaterialBit( MaterialIndex materialIndex ) {
         // return index of highest set bit in material index
         for( var bitIndex = ( sizeof( int ) * 8 ) - 1; bitIndex >= 0; --bitIndex ) {
             if( ( ( int )materialIndex >> bitIndex ) > 0 ) {
@@ -208,7 +201,9 @@ public interface SurfaceExtractor {
             }
         }
 
-        throw new Exception( "Unable to calculate sub mesh index, no material set" );
+        Debug.Log( "Unable to find highest bit, no material set." );
+
+        return 0;
     }
 
 }

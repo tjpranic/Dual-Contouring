@@ -108,7 +108,7 @@ public class SVDQEF : QEFSolver {
 
         ATB -= ATA.multiplyVector( massPoint );
 
-        var ( minimizingVertex, error ) = SVD.solve( ATA, ATB, SVDTolerance, this.minimizerIterations, PseudoInverseTolerance );
+        var ( minimizingVertex, error ) = SVD.solve( ATA, ATB, this.minimizerIterations );
 
         minimizingVertex += massPoint;
 
@@ -118,6 +118,24 @@ public class SVDQEF : QEFSolver {
     }
 
     public class Matrix3x3 {
+
+        public struct Data {
+
+            public float m00, m01, m02, m10, m11, m12, m20, m21, m22;
+
+            public Data( Matrix3x3 matrix ) {
+                this.m00 = matrix[0, 0];
+                this.m01 = matrix[0, 1];
+                this.m02 = matrix[0, 2];
+                this.m10 = matrix[1, 0];
+                this.m11 = matrix[1, 1];
+                this.m12 = matrix[1, 2];
+                this.m20 = matrix[2, 0];
+                this.m21 = matrix[2, 1];
+                this.m22 = matrix[2, 2];
+            }
+
+        }
 
         public static Matrix3x3 identity = new( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
@@ -273,6 +291,15 @@ public class SVDQEF : QEFSolver {
                 this.m11 = matrix[1, 1];
                 this.m12 = matrix[1, 2];
                 this.m22 = matrix[2, 2];
+            }
+
+            public Data( float m00, float m01, float m02, float m11, float m12, float m22 ) {
+                this.m00 = m00;
+                this.m01 = m01;
+                this.m02 = m02;
+                this.m11 = m11;
+                this.m12 = m12;
+                this.m22 = m22;
             }
 
         }
@@ -477,7 +504,7 @@ public class SVDQEF : QEFSolver {
             return ( VTAV, V );
         }
 
-        public static ( SymmetricMatrix3x3, Matrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, float SVDTolerance, int sweeps ) {
+        public static ( SymmetricMatrix3x3, Matrix3x3 ) getSymmetricSVD( SymmetricMatrix3x3 ATA, int sweeps ) {
             var VTAV = ATA;
             var V    = Matrix3x3.identity;
 
@@ -492,22 +519,14 @@ public class SVDQEF : QEFSolver {
             return ( VTAV, V );
         }
 
-        public static float calculateError( SymmetricMatrix3x3 ATA, Vector3 x, Vector3 ATB ) {
-            var A = new Matrix3x3( ATA );
-
-            var V = ATB - A.multiplyVector( x );
-
-            return Vector3.Dot( V, V );
+        public static float pseudoInverse( float x ) {
+            return ( Mathf.Abs( x ) < PseudoInverseTolerance || Mathf.Abs( 1.0f / x ) < PseudoInverseTolerance ) ? 0.0f : ( 1.0f / x );
         }
 
-        public static float pseudoInverse( float x, float pseudoInverseTolerance ) {
-            return ( Mathf.Abs( x ) < pseudoInverseTolerance || Mathf.Abs( 1.0f / x ) < pseudoInverseTolerance ) ? 0.0f : ( 1.0f / x );
-        }
-
-        public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V, float pseudoInverseTolerance ) {
-            var d0 = pseudoInverse( VTAV[0, 0], pseudoInverseTolerance );
-            var d1 = pseudoInverse( VTAV[1, 1], pseudoInverseTolerance );
-            var d2 = pseudoInverse( VTAV[2, 2], pseudoInverseTolerance );
+        public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {
+            var d0 = pseudoInverse( VTAV[0, 0] );
+            var d1 = pseudoInverse( VTAV[1, 1] );
+            var d2 = pseudoInverse( VTAV[2, 2] );
 
             return new Matrix3x3(
                 ( V[0, 0] * d0 * V[0, 0] ) + ( V[0, 1] * d1 * V[0, 1] ) + ( V[0, 2] * d2 * V[0, 2] ),
@@ -522,10 +541,18 @@ public class SVDQEF : QEFSolver {
             );
         }
 
-        public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, float SVDTolerance, int sweeps, float pseudoInverseTolerance ) {
-            var ( VTAV, V ) = getSymmetricSVD( ATA, SVDTolerance, sweeps );
+        public static float calculateError( SymmetricMatrix3x3 ATA, Vector3 x, Vector3 ATB ) {
+            var A = new Matrix3x3( ATA );
 
-            var x = pseudoInverse( VTAV, V, pseudoInverseTolerance ).multiplyVector( ATB );
+            var V = ATB - A.multiplyVector( x );
+
+            return Vector3.Dot( V, V );
+        }
+
+        public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, int sweeps ) {
+            var ( VTAV, V ) = getSymmetricSVD( ATA, sweeps );
+
+            var x = pseudoInverse( VTAV, V ).multiplyVector( ATB );
 
             var error = calculateError( ATA, x, ATB );
 

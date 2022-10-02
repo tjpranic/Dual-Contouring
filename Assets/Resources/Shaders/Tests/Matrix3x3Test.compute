@@ -1,0 +1,42 @@
+#include "../QEF.hlsl"
+
+#pragma kernel multiplyVectorTest
+#pragma kernel rotate01PostTest
+#pragma kernel rotate02PostTest
+#pragma kernel rotate12PostTest
+
+StructuredBuffer<Matrix3x3> multiplyVectorTestParameter0;
+StructuredBuffer<float3>    multiplyVectorTestParameter1;
+RWStructuredBuffer<float3>  multiplyVectorTestResult;
+
+[numthreads( 1, 1, 1 )]
+void multiplyVectorTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    multiplyVectorTestResult[0] = multiplyVector( multiplyVectorTestParameter0[0], multiplyVectorTestParameter1[0] );
+}
+
+StructuredBuffer<Matrix3x3>   rotate01PostTestParameter0;
+StructuredBuffer<float2>      rotate01PostTestParameter1;
+RWStructuredBuffer<Matrix3x3> rotate01PostTestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate01PostTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate01PostTestResult[0] = rotate01Post( rotate01PostTestParameter0[0], rotate01PostTestParameter1[0].x, rotate01PostTestParameter1[0].y );
+}
+
+StructuredBuffer<Matrix3x3>   rotate02PostTestParameter0;
+StructuredBuffer<float2>      rotate02PostTestParameter1;
+RWStructuredBuffer<Matrix3x3> rotate02PostTestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate02PostTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate02PostTestResult[0] = rotate02Post( rotate02PostTestParameter0[0], rotate02PostTestParameter1[0].x, rotate02PostTestParameter1[0].y );
+}
+
+StructuredBuffer<Matrix3x3>   rotate12PostTestParameter0;
+StructuredBuffer<float2>      rotate12PostTestParameter1;
+RWStructuredBuffer<Matrix3x3> rotate12PostTestResult;
+
+[numthreads( 1, 1, 1 )]
+void rotate12PostTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    rotate12PostTestResult[0] = rotate12Post( rotate12PostTestParameter0[0], rotate12PostTestParameter1[0].x, rotate12PostTestParameter1[0].y );
+}
