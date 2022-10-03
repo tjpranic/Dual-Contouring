@@ -13,6 +13,7 @@ using Position = OctreeContouringTables<ManifoldDualContouring.Voxel>.Position;
 using MaterialIndex             = SurfaceExtractor.MaterialIndex;
 using VoxelType                 = SurfaceExtractor.Voxel.Type;
 using Implementation            = SurfaceExtractor.Implementation;
+using ImplementationType        = SurfaceExtractor.Implementation.Type;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
 
@@ -173,6 +174,11 @@ public class ManifoldDualContouring : Voxelizer {
     public float errorThreshold = 6e-12f;
 
     private Octree<Voxel> octree;
+
+    protected override Implementation implementation {
+        get { throw new NotImplementedException( ); }
+        set { throw new NotImplementedException( ); }
+    }
 
     public override (
         Mesh                                 mesh,

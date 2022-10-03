@@ -113,7 +113,7 @@ float sampleCuboid( float3 position, in DensityFunction densityFunction ) {
     return length( max( q, float3( 0.0f, 0.0f, 0.0f ) ) ) + min( max( q.x, max( q.y, q.z ) ), 0.0f );
 }
 
-float sampleEllipsoid( float3 position, DensityFunction densityFunction ) {
+float sampleEllipsoid( float3 position, in DensityFunction densityFunction ) {
     // avoid division by zero
     if( length( position - densityFunction.origin ) == 0.0f ) {
         return -1.0f;
@@ -125,7 +125,7 @@ float sampleEllipsoid( float3 position, DensityFunction densityFunction ) {
     return k0 * ( k0 - 1.0f ) / k1;
 }
 
-float sampleDensityFunction( float3 position, DensityFunction densityFunction ) {
+float sampleDensityFunction( float3 position, in DensityFunction densityFunction ) {
     switch( densityFunction.type ) {
         case DENSITY_FUNCTION_TYPE_CUBOID:
             return sampleCuboid( position, densityFunction );
@@ -194,6 +194,7 @@ RWStructuredBuffer<DensityFunction> densityFunctions;
 void sampleCornerDensities( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
+    [unroll]
     for( uint voxelCornerIndex = 0; voxelCornerIndex < VOXEL_CORNER_COUNT; ++voxelCornerIndex ) {
 
         uint cornerIndex = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndex;
@@ -234,24 +235,6 @@ void sampleCornerDensities( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     }
 }
 
-uint2 lookupCornersInEdge( uint voxelEdgeIndex ) {
-    switch( voxelEdgeIndex ) {
-        case  0: return uint2( 0, 1 );
-        case  1: return uint2( 3, 2 );
-        case  2: return uint2( 5, 6 );
-        case  3: return uint2( 4, 7 );
-        case  4: return uint2( 0, 5 );
-        case  5: return uint2( 1, 6 );
-        case  6: return uint2( 3, 4 );
-        case  7: return uint2( 2, 7 );
-        case  8: return uint2( 0, 3 );
-        case  9: return uint2( 1, 2 );
-        case 10: return uint2( 5, 4 );
-        case 11: return uint2( 6, 7 );
-        default: return uint2( 0, 0 );
-    }
-}
-
 #define NEGATIVE_INFINITY 3.402823466e-38F
 #define POSITIVE_INFINITY 3.402823466e+38F
 
@@ -285,8 +268,7 @@ float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
         // one of the corners is at the exact intersection
         return corner0.density == 0.0f ? corner0.position : corner1.position;
     }
-
-    if( intersectionApproximation == INTERSECTION_APPROXIMATION_BINARY_SEARCH ) {
+    else if( intersectionApproximation == INTERSECTION_APPROXIMATION_BINARY_SEARCH ) {
 
         float3 start = float3( 0.0f, 0.0f, 0.0f );
         float3 end   = float3( 0.0f, 0.0f, 0.0f );
@@ -315,11 +297,12 @@ float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
                 break;
             }
         }
+
+        return intersection;
     }
     else if( intersectionApproximation == INTERSECTION_APPROXIMATION_LINEAR_INTERPOLATION ) {
         return corner0.position + ( ( -corner0.density ) * ( corner1.position - corner0.position ) / ( corner1.density - corner0.density ) );
     }
-
     return float3( 0.0f, 0.0f, 0.0f );
 }
 
@@ -358,32 +341,36 @@ float3 surfaceCorrection( float3 vertex, float3 normal ) {
     return vertex;
 }
 
-[numthreads( 1, 1 ,1 )]
+static uint EDGE_LOOKUP[VOXEL_EDGE_COUNT][2] = {
+    { 0, 1 },
+    { 3, 2 },
+    { 5, 6 },
+    { 4, 7 },
+    { 0, 5 },
+    { 1, 6 },
+    { 3, 4 },
+    { 2, 7 },
+    { 0, 3 },
+    { 1, 2 },
+    { 5, 4 },
+    { 6, 7 }
+};
+
+[numthreads( 1, 1, 1 )]
 void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
-    bool allEmpty = true;
-    bool allSolid = true;
+    uint cornerBits = 0;
 
     [unroll]
     for( uint voxelCornerIndex = 0; voxelCornerIndex < VOXEL_CORNER_COUNT; ++voxelCornerIndex ) {
         uint cornerIndex = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndex;
 
-        if( corners[cornerIndex].materialIndex >= MATERIAL_INDEX_VOID ) {
-            allEmpty = false;
-            break;
-        }
+        cornerBits |= corners[cornerIndex].materialIndex;
     }
 
-    [unroll]
-    for( voxelCornerIndex = 0; voxelCornerIndex < VOXEL_CORNER_COUNT; ++voxelCornerIndex ) {
-        uint cornerIndex = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndex;
-
-        if( corners[cornerIndex].materialIndex == MATERIAL_INDEX_VOID ) {
-            allSolid = false;
-            break;
-        }
-    }
+    bool allEmpty = cornerBits == 0;   // no bits set
+    bool allSolid = cornerBits == 255; // all bits set
 
     if( !( allEmpty && allSolid ) ) {
 
@@ -391,15 +378,13 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
         float3 averageNormal = float3( 0.0f, 0.0f, 0.0f );
 
         for( uint voxelEdgeIndex = 0; voxelEdgeIndex < VOXEL_EDGE_COUNT; ++voxelEdgeIndex ) {
-            uint2 voxelCornerIndices = lookupCornersInEdge( voxelEdgeIndex );
-
-            uint cornerIndex0 = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndices[0];
-            uint cornerIndex1 = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndices[1];
+            uint cornerIndex0 = ( voxelIndex * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][0];
+            uint cornerIndex1 = ( voxelIndex * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][1];
 
             bool edgeIntersectsContour = (
-                corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_VOID
+                corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL1
             ) || (
-                corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_VOID
+                corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL1
             );
 
             if( edgeIntersectsContour ) {
@@ -455,7 +440,7 @@ RWStructuredBuffer<float3> vertices;
 RWStructuredBuffer<float3> normals;
 RWStructuredBuffer<uint>   indexCounter;
 
-[numthreads( 1, 1 ,1 )]
+[numthreads( 1, 1, 1 )]
 void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
@@ -492,6 +477,8 @@ uint findHighestMaterialBit( uint materialIndex ) {
 void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
 
     bool allHaveFeatures = true;
+
+    [unroll]
     for( uint voxelIndexIndex = 0; voxelIndexIndex < 4; ++voxelIndexIndex ) {
         uint voxelIndex = voxelIndices[voxelIndexIndex];
 
@@ -501,18 +488,16 @@ void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
         }
     }
 
-    uint2 voxelCornerIndices = lookupCornersInEdge( voxelEdgeIndex );
-
-    uint cornerIndex0 = ( voxelIndices[0] * VOXEL_CORNER_COUNT ) + voxelCornerIndices[0];
-    uint cornerIndex1 = ( voxelIndices[0] * VOXEL_CORNER_COUNT ) + voxelCornerIndices[1];
+    uint cornerIndex0 = ( voxelIndices[0] * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][0];
+    uint cornerIndex1 = ( voxelIndices[0] * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][1];
 
     bool edgeIntersectsContour = (
-        corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_VOID
+        corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL1
     ) || (
-        corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_VOID
+        corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL1
     );
 
-    if( allHaveFeatures && edgeIntersectsContour  ) {
+    if( allHaveFeatures && edgeIntersectsContour ) {
 
         uint materialIndex = corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID
             ? corners[cornerIndex1].materialIndex
@@ -549,7 +534,7 @@ uint index( uint x, uint y, uint z ) {
     return ( z * resolution * resolution ) + ( y * resolution ) + x;
 }
 
-[numthreads( 1, 1 ,1 )]
+[numthreads( 1, 1, 1 )]
 void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
@@ -560,9 +545,9 @@ void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     // x axis
     if( y + 1 < resolution && z + 1 < resolution ) {
         uint voxelIndices[4] = {
-            index( x, y,     z ),
+            index( x, y,     z     ),
             index( x, y,     z + 1 ),
-            index( x, y + 1, z ),
+            index( x, y + 1, z     ),
             index( x, y + 1, z + 1 )
         };
         contour( voxelIndices, 3 );

@@ -4,6 +4,7 @@ using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
 
+using Implementation            = SurfaceExtractor.Implementation;
 using ImplementationType        = SurfaceExtractor.Implementation.Type;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
@@ -59,6 +60,8 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
         get { return this._intersectionApproximation;  }
         set { this._intersectionApproximation = value; }
     }
+
+    protected abstract Implementation implementation { get; set; }
 
     public enum VertexMode {
         Shared,

@@ -119,17 +119,14 @@ public class UniformDualContouring : Voxelizer {
             public int     index;
 
             public Data( Voxel voxel ) {
-                if( voxel.qef is SVDQEF solver ) {
-                    this.center  = voxel.center;
-                    this.size    = voxel.size;
-                    this.extents = voxel.extents;
-                    this.minimum = voxel.minimum;
-                    this.maximum = voxel.maximum;
-                    this.vertex  = voxel.vertex;
-                    this.normal  = voxel.normal;
-                    this.index   = voxel.index;
-                }
-                throw new Exception( "Cannot create voxel data, incompatible QEF type" );
+                this.center  = voxel.center;
+                this.size    = voxel.size;
+                this.extents = voxel.extents;
+                this.minimum = voxel.minimum;
+                this.maximum = voxel.maximum;
+                this.vertex  = voxel.vertex;
+                this.normal  = voxel.normal;
+                this.index   = voxel.index;
             }
 
         }
@@ -142,7 +139,6 @@ public class UniformDualContouring : Voxelizer {
         public Vector3                   maximum { get; }
         public SurfaceExtractor.Corner[] corners { get; }
         public SurfaceExtractor.Edge[]   edges   { get; }
-        public QEFSolver                 qef     { get; set; }
         public Vector3                   vertex  { get; set; } = Vector3.zero;
         public Vector3                   normal  { get; set; } = Vector3.zero;
         public int                       index   { get; set; } = -1;
@@ -352,6 +348,13 @@ public class UniformDualContouring : Voxelizer {
             // find contour intersections and calculate minimizing vertices
 
             foreach( var voxel in this.grid ) {
+
+                QEFSolver qef = qefSolverType switch {
+                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations, surfaceCorrectionIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations, surfaceCorrectionIterations ),
+                    _                    => throw new Exception( "Unknown solver type specified" )
+                };
+
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
                     voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material1 )
@@ -359,12 +362,6 @@ public class UniformDualContouring : Voxelizer {
                     // cell is either fully inside or outside the volume, skip
                     continue;
                 }
-
-                voxel.qef = qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations, surfaceCorrectionIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations, surfaceCorrectionIterations ),
-                    _                    => throw new Exception( "Unknown solver type specified" )
-                };
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -374,10 +371,10 @@ public class UniformDualContouring : Voxelizer {
                     edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, intersectionApproximation, binarySearchIterations );
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
-                    voxel.qef.add( edge.intersection, edge.normal );
+                    qef.add( edge.intersection, edge.normal );
                 }
 
-                ( voxel.vertex, voxel.normal, _ ) = voxel.qef.solve( voxel, densityFunctions );
+                ( voxel.vertex, voxel.normal, _ ) = qef.solve( voxel, densityFunctions );
 
             }
 
@@ -659,22 +656,23 @@ public class UniformDualContouring : Voxelizer {
             this.generateVertices            ( resolution );
             this.generateIndices             ( resolution );
 
-            this.verticesBuffer.GetData ( verticesData );
-            this.normalsBuffer.GetData  ( normalsData );
-            this.quadsBuffer.GetData    ( quadsData );
-            this.voxelsBuffer.GetData   ( voxelData );
-            this.edgesBuffer.GetData    ( edgeData );
-            this.cornersBuffer.GetData  ( cornerData );
+            this.verticesBuffer.GetData     ( verticesData );
+            this.indexCounterBuffer.GetData ( indexCounterData );
+            this.normalsBuffer.GetData      ( normalsData );
+            this.quadsBuffer.GetData        ( quadsData );
+            this.voxelsBuffer.GetData       ( voxelData );
+            this.edgesBuffer.GetData        ( edgeData );
+            this.cornersBuffer.GetData      ( cornerData );
 
             this.releaseBuffers( );
 
             // build mesh
             var mesh = new Mesh {
-                vertices = verticesData,
-                normals  = normalsData
+                vertices = verticesData.Take( indexCounterData[0] ).ToArray( ),
+                normals  = normalsData.Take( indexCounterData[0] ).ToArray( ),
             };
 
-            var quads = quadsData.Select( ( quadData ) => new Quad( quadData ) );
+            var quads = quadsData.Take( indexCounterData[0] ).Select( ( quadData ) => new Quad( quadData ) );
 
             var subMeshIndices = new Dictionary<int, List<int>>( );
 
@@ -870,20 +868,36 @@ public class UniformDualContouring : Voxelizer {
 
     private CPUImplementation cpuImplementation;
     private GPUImplementation gpuImplementation;
-    private Implementation    implementation;
+
+    private Implementation _implementation;
+    protected override Implementation implementation {
+        get {
+            return this.implementationType switch {
+                ImplementationType.CPU => this.cpuImplementation,
+                ImplementationType.GPU => this.gpuImplementation,
+                _ => throw new Exception( "Unknown implementation type specified" )
+            };
+        }
+        set {
+            this._implementation = this.implementationType switch {
+                ImplementationType.CPU => value,
+                ImplementationType.GPU => value,
+                _ => throw new Exception( "Unknown implementation type specified" ),
+            };
+        }
+    }
+
+    // allows skipping the auto-voxelize code for testing purposes
+    [HideInInspector( )]
+    public bool testing = false;
 
     public override void Start( ) {
         this.cpuImplementation = new CPUImplementation( );
         this.gpuImplementation = new GPUImplementation( );
 
-        if( this.implementationType == ImplementationType.CPU ) {
-            this.implementation = cpuImplementation;
+        if( !testing ) {
+            base.Start( );
         }
-        if( this.implementationType == ImplementationType.GPU ) {
-            this.implementation = gpuImplementation;
-        }
-
-        base.Start( );
     }
 
     public override (
