@@ -2,6 +2,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -61,6 +62,7 @@ public class UniformDualContouringTest {
 
         var densityFunctions = new List<DensityFunction> { volume };
 
+        // wait for lifecycle methods
         yield return new WaitForSeconds( 1.0f / 60.0f );
 
         var expectedResult = new ContourResult( uniformDualContouring.voxelize( densityFunctions ) );
@@ -69,11 +71,17 @@ public class UniformDualContouringTest {
 
         var actualResult = new ContourResult( uniformDualContouring.voxelize( densityFunctions ) );
 
-        this.compareOutput( expectedResult.mesh.vertices,  actualResult.mesh.vertices );
-        this.compareOutput( expectedResult.mesh.normals,   actualResult.mesh.normals );
-        this.compareOutput( expectedResult.mesh.triangles, actualResult.mesh.triangles );
+        this.compareOutput( expectedResult.mesh.vertices, actualResult.mesh.vertices );
+        this.compareOutput( expectedResult.mesh.normals,  actualResult.mesh.normals );
 
-        // TODO: compare debug info
+        // GPU indexes voxels out of order, meaning this comparison isn't possible:
+        // this.compareOutput( expectedResult.mesh.triangles, actualResult.mesh.triangles );
+        // so just compare triangle count instead
+        Assert.AreEqual( expectedResult.mesh.triangles.Length, actualResult.mesh.triangles.Length );
+
+        this.compareOutput( expectedResult.edges.ToArray( ),   actualResult.edges.ToArray( ) );
+        this.compareOutput( expectedResult.corners.ToArray( ), actualResult.corners.ToArray( ) );
+        this.compareOutput( expectedResult.voxels.ToArray( ),  actualResult.voxels.ToArray( ) );
     }
 
     protected void compareOutput<T>( T[] expected, T[] actual ) where T : IEquatable<T> {
@@ -99,20 +107,6 @@ public class UniformDualContouringTest {
 
             Assert.AreEqual( expected[index], actual[otherIndex] );
         }
-    }
-
-    [Test]
-    public void buildVoxelGridTest( ) {
-
-        // TODO
-
-    }
-
-    [Test]
-    public void sampleCornerDensitiesTest( ) {
-
-        // TODO
-
     }
 
 }

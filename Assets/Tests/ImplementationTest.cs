@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 public abstract class ImplementationTest {
@@ -6,6 +7,45 @@ public abstract class ImplementationTest {
     protected const float epsilon = 6e-6f;
 
     protected abstract string shader { get; }
+
+    protected System.Random randomNumberGenerator = new( Guid.NewGuid( ).GetHashCode( ) );
+
+    protected float generateRandomFloat(  ) {
+        return UnityEngine.Random.Range( -1.0f, 1.0f );
+    }
+
+    protected SVDQEF.SymmetricMatrix3x3 generateRandomSymmetricMatrix3x3( ) {
+        return new(
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( )
+        );
+    }
+
+    protected SVDQEF.Matrix3x3 generateRandomMatrix3x3( ) {
+        return new(
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( )
+        );
+    }
+
+    protected Vector3 generateRandomVector3( ) {
+        return new(
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( )
+        );
+    }
 
     public T2 testKernel<T1, T2>( string kernelName, T1 paramater1, T2 resultZero ) {
         var solver = Resources.Load<ComputeShader>( $"Shaders/{this.shader}" );

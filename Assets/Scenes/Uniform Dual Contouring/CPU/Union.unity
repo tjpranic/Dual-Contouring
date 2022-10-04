@@ -170,10 +170,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c69b06bc781819c44ab723a90165b8e5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _resolution: 12
+  _resolution: 4
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
+  _implementation: 0
+  _qefSolver: 0
+  _intersectionApproximation: 0
   vertexMode: 1
   debugFlags: 24
   debugCornerSize: 0.0125
@@ -188,9 +191,7 @@ MonoBehaviour:
   debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
-  _implementation: 0
-  _intersectionApproximation: 0
-  _qefSolver: 0
+  testing: 0
 --- !u!23 &206262053
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -277,7 +278,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b10319ba60dcf5842a339820487d648d, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &471828215
 GameObject:
@@ -417,7 +418,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &1530754219
 GameObject:

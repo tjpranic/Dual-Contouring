@@ -7,12 +7,12 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void calculateSymmetricGivensCoefficientsTest( ) {
-        var vector = new Vector3( 0.7640296f, 0.6270213f, 1.117985f );
+        var parameter0 = new Vector3( 0.7640296f, 0.6270213f, 1.117985f );
 
-        var expectedResult = SVDQEF.SVD.calculateSymmetricGivensCoefficients( vector.x, vector.y, vector.z );
+        var expectedResult = SVDQEF.SVD.calculateSymmetricGivensCoefficients( parameter0.x, parameter0.y, parameter0.z );
         var actualResult   = this.testKernel(
             "calculateSymmetricGivensCoefficientsTest",
-            vector,
+            parameter0,
             Vector2.zero
         );
 
@@ -34,14 +34,14 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void rotate01Test( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
-        var matrix3x3          = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
+        var parameter1 = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
-        var expectedResult = SVDQEF.SVD.rotate01( symmetricMatrix3x3, matrix3x3 );
+        var expectedResult = SVDQEF.SVD.rotate01( parameter0, parameter1 );
         var actualResult   = this.testKernel(
             "rotate01Test",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            new SVDQEF.Matrix3x3.Data( parameter1 ),
             new SVDTestResult( )
         );
 
@@ -65,14 +65,14 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void rotate02Test( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
-        var matrix3x3          = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
+        var parameter1 = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
-        var expectedResult = SVDQEF.SVD.rotate02( symmetricMatrix3x3, matrix3x3 );
+        var expectedResult = SVDQEF.SVD.rotate02( parameter0, parameter1 );
         var actualResult   = this.testKernel(
             "rotate02Test",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            new SVDQEF.Matrix3x3.Data( parameter1 ),
             new SVDTestResult( )
         );
 
@@ -96,14 +96,14 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void rotate12Test( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
-        var matrix3x3          = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.2894885f, 0.0f, -0.06483984f, 1.592526f, 1.124694f, 1.117985f );
+        var parameter1 = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
-        var expectedResult = SVDQEF.SVD.rotate12( symmetricMatrix3x3, matrix3x3 );
+        var expectedResult = SVDQEF.SVD.rotate12( parameter0, parameter1 );
         var actualResult   = this.testKernel(
             "rotate12Test",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            new SVDQEF.Matrix3x3.Data( parameter1 ),
             new SVDTestResult( )
         );
 
@@ -129,16 +129,16 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void getSymmetricSVDTest( ) {
-        var symmetricMatrix3x30 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
-        var symmetricMatrix3x31 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
-        var matrix3x3           = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
+        var parameter1 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
+        var parameter3 = new SVDQEF.Matrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
-        var expectedResult = SVDQEF.SVD.getSymmetricSVD( symmetricMatrix3x30, SVDSweeps );
+        var expectedResult = SVDQEF.SVD.getSymmetricSVD( parameter0, SVDSweeps );
         var actualResult   = this.testKernel(
             "getSymmetricSVDTest",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x30 ),
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x31 ),
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter1 ),
+            new SVDQEF.Matrix3x3.Data( parameter3 ),
             new SVDTestResult( )
         );
 
@@ -162,12 +162,12 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void pseudoInverseScalarTest( ) {
-        var scalar = 0.3124973f;
+        var parameter0 = 0.3124973f;
 
-        var expectedResult = SVDQEF.SVD.pseudoInverse( scalar );
+        var expectedResult = SVDQEF.SVD.pseudoInverse( parameter0 );
         var actualResult   = this.testKernel(
             "pseudoInverseScalarTest",
-            scalar,
+            parameter0,
             0.0f
         );
 
@@ -176,14 +176,14 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void pseudoInverseMatrixTest( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.3124973f, 7.298034e-16f, -5.872501e-26f, 2.505459f, 0.0f, 0.1820442f );
-        var matrix3x3          = new SVDQEF.Matrix3x3( 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.3124973f, 7.298034e-16f, -5.872501e-26f, 2.505459f, 0.0f, 0.1820442f );
+        var parameter1 = new SVDQEF.Matrix3x3( 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f );
 
-        var expectedResult = SVDQEF.SVD.pseudoInverse( symmetricMatrix3x3, matrix3x3 );
+        var expectedResult = SVDQEF.SVD.pseudoInverse( parameter0, parameter1 );
         var actualResult   = this.testKernel(
             "pseudoInverseMatrixTest",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            new SVDQEF.Matrix3x3.Data( parameter1 ),
             new SVDQEF.SymmetricMatrix3x3.Data( )
         );
 
@@ -197,16 +197,21 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void calculateErrorTest( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
-        var vector0            = new Vector3( 0.0f, 0.0f, 0.0f );
-        var vector1            = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
+        var parameter1 = new Vector3( 0.0f, 0.0f, 0.0f );
+        var parameter2 = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
 
-        var expectedResult = SVDQEF.SVD.calculateError( symmetricMatrix3x3, vector0, vector1 );
+        // fails with these parameters, no idea why
+        // parameter0 = new SVDQEF.SymmetricMatrix3x3( -0.5651875f, 0.8850253f, -0.2808784f, 0.3854723f, 0.2691586f, 0.5050807f );
+        // parameter1 = new Vector3( 0.2325951f, 0.5514052f, -0.6665196f );
+        // parameter2 = new Vector3( 0.563621f, 0.7674949f, 0.1588005f );
+
+        var expectedResult = SVDQEF.SVD.calculateError( parameter0, parameter1, parameter2 );
         var actualResult   = this.testKernel(
             "calculateErrorTest",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            vector0,
-            vector1,
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            parameter1,
+            parameter2,
             0.0f
         );
 
@@ -215,14 +220,14 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void solveSVDTest( ) {
-        var symmetricMatrix3x3 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
-        var vector0            = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
+        var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
+        var parameter1 = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
 
-        var expectedResult = SVDQEF.SVD.solve( symmetricMatrix3x3, vector0, SVDSweeps );
+        var expectedResult = SVDQEF.SVD.solve( parameter0, parameter1, SVDSweeps );
         var actualResult   = this.testKernel(
             "solveSVDTest",
-            new SVDQEF.SymmetricMatrix3x3.Data( symmetricMatrix3x3 ),
-            vector0,
+            new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
+            parameter1,
             new Vector4( )
         );
 

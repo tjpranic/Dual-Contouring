@@ -397,7 +397,7 @@ MonoBehaviour:
   _resolution: 4
   _minimizerIterations: 6
   _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 0
+  _surfaceCorrectionIterations: 6
   _implementation: 1
   _qefSolver: 1
   _intersectionApproximation: 0

@@ -7,14 +7,14 @@ public class Matrix3x3Test : ImplementationTest {
 
     [Test]
     public void multiplyVectorTest( ) {
-        var matrix3x3 = new SVDQEF.Matrix3x3( 0.7640296f, 0.0f, 0.0f, 0.0f, 1.117985f, 0.0f, 0.0f, 0.0f, 1.117985f );
-        var vector    = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
+        var parameter0 = new SVDQEF.Matrix3x3( 0.7640296f, 0.0f, 0.0f, 0.0f, 1.117985f, 0.0f, 0.0f, 0.0f, 1.117985f );
+        var parameter1 = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
 
-        var expectedResult = matrix3x3.multiplyVector( vector );
+        var expectedResult = parameter0.multiplyVector( parameter1 );
         var actualResult   = this.testKernel(
             "multiplyVectorTest",
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
-            vector,
+            new SVDQEF.Matrix3x3.Data( parameter0 ),
+            parameter1,
             Vector3.zero
         );
 
@@ -25,14 +25,14 @@ public class Matrix3x3Test : ImplementationTest {
 
     [Test]
     public void rotate01PostTest( ) {
-        var matrix3x3 = SVDQEF.Matrix3x3.identity;
-        var cs        = Vector2.zero;
+        var parameter0 = SVDQEF.Matrix3x3.identity;
+        var parameter1 = Vector2.zero;
 
-        var expectedResult = matrix3x3.rotate01Post( cs.x, cs.y );
+        var expectedResult = parameter0.rotate01Post( parameter1.x, parameter1.y );
         var actualResult   = this.testKernel(
             "rotate01PostTest",
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
-            cs,
+            new SVDQEF.Matrix3x3.Data( parameter0 ),
+            parameter1,
             new SVDQEF.Matrix3x3.Data( )
         );
 
@@ -49,14 +49,14 @@ public class Matrix3x3Test : ImplementationTest {
 
     [Test]
     public void rotate02PostTest( ) {
-        var matrix3x3 = SVDQEF.Matrix3x3.identity;
-        var cs        = Vector2.zero;
+        var parameter0 = SVDQEF.Matrix3x3.identity;
+        var parameter1 = Vector2.zero;
 
-        var expectedResult = matrix3x3.rotate02Post( cs.x, cs.y );
+        var expectedResult = parameter0.rotate02Post( parameter1.x, parameter1.y );
         var actualResult   = this.testKernel(
             "rotate02PostTest",
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
-            cs,
+            new SVDQEF.Matrix3x3.Data( parameter0 ),
+            parameter1,
             new SVDQEF.Matrix3x3.Data( )
         );
 
@@ -73,14 +73,14 @@ public class Matrix3x3Test : ImplementationTest {
 
     [Test]
     public void rotate12PostTest( ) {
-        var matrix3x3 = SVDQEF.Matrix3x3.identity;
-        var cs        = Vector2.zero;
+        var parameter0 = SVDQEF.Matrix3x3.identity;
+        var parameter1 = Vector2.zero;
 
-        var expectedResult = matrix3x3.rotate12Post( cs.x, cs.y );
+        var expectedResult = parameter0.rotate12Post( parameter1.x, parameter1.y );
         var actualResult   = this.testKernel(
             "rotate12PostTest",
-            new SVDQEF.Matrix3x3.Data( matrix3x3 ),
-            cs,
+            new SVDQEF.Matrix3x3.Data( parameter0 ),
+            parameter1,
             new SVDQEF.Matrix3x3.Data( )
         );
 

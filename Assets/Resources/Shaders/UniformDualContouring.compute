@@ -405,7 +405,7 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
 
             solveQEF( qef, vertex, error, minimizerIterations );
 
-            float3 normal = normalize( averageNormal / qef.intersectionCount );
+            float3 normal = averageNormal / qef.intersectionCount;
 
             vertex = surfaceCorrection( vertex, normal );
 
@@ -438,7 +438,7 @@ Quad createQuad(
 
 RWStructuredBuffer<float3> vertices;
 RWStructuredBuffer<float3> normals;
-RWStructuredBuffer<uint>   indexCounter;
+RWStructuredBuffer<uint>   vertexCount;
 
 [numthreads( 1, 1, 1 )]
 void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
@@ -448,18 +448,19 @@ void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
         voxels[voxelIndex].index == -1 &&
         ( length( voxels[voxelIndex].vertex ) > 0.0f && length( voxels[voxelIndex].normal ) > 0.0f )
     ) {
-        uint index;
-        InterlockedAdd( indexCounter[0], 1, index );
+        uint vertexIndex;
+        InterlockedAdd( vertexCount[0], 1, vertexIndex );
 
-        voxels[voxelIndex].index = index;
+        voxels[voxelIndex].index = vertexIndex;
 
         // generate vertex and normal
-        vertices[index] = voxels[voxelIndex].vertex;
-        normals[index]  = voxels[voxelIndex].normal;
+        vertices[vertexIndex] = voxels[voxelIndex].vertex;
+        normals[vertexIndex]  = voxels[voxelIndex].normal;
     }
 }
 
-AppendStructuredBuffer<Quad> quads;
+RWStructuredBuffer<Quad> quads;
+RWStructuredBuffer<uint> quadsCount;
 
 #define INT_BITS 32
 
@@ -525,7 +526,10 @@ void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
 
         uint subMeshIndex = findHighestMaterialBit( materialIndex );
 
-        quads.Append( createQuad( indices, subMeshIndex ) );
+        uint quadIndex;
+        InterlockedAdd( quadsCount[0], 1, quadIndex );
+
+        quads[quadIndex] = createQuad( indices, subMeshIndex );
     }
 
 }

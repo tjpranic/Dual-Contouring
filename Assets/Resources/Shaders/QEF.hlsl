@@ -295,8 +295,8 @@ void rotate12( in out SymmetricMatrix3x3 VTAV, in out Matrix3x3 V ) {
 }
 
 void getSymmetricSVD( in SymmetricMatrix3x3 ATA, out SymmetricMatrix3x3 VTAV, out Matrix3x3 V, uint minimizerIterations ) {
-    VTAV = ATA;
-    V    = createMatrix3x3( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
+    VTAV = createSymmetricMatrix3x3 ( ATA.m00, ATA.m01, ATA.m02, ATA.m11, ATA.m12, ATA.m22 );
+    V    = createMatrix3x3          ( 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f );
 
     float delta = SVD_TOLERANCE * frobeniusNorm( VTAV );
 
