@@ -236,7 +236,11 @@ SymmetricMatrix3x3 rotate12( in SymmetricMatrix3x3 VTAV, float c, float s ) {
 }
 
 void calculateSymmetricGivensCoefficients( float app, float apq, float aqq, out float c, out float s ) {
-    if( apq != 0.0f ) {
+    if( apq == 0.0f ) {
+        c = 1.0f;
+        s = 0.0f;
+    }
+    else {
         float tau = ( aqq - app ) / ( 2.0f * apq );
         float stt = sqrt( 1.0f + ( tau * tau ) );
         float tan = 1.0f / ( tau >= 0.0f ? tau + stt : tau - stt );

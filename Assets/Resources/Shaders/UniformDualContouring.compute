@@ -4,6 +4,9 @@
 #pragma kernel generateVertices
 #pragma kernel generateIndices
 
+#define NEGATIVE_INFINITY 3.402823466e-38F
+#define POSITIVE_INFINITY 3.402823466e+38F
+
 #define MATERIAL_INDEX_VOID 0
 #define MATERIAL_INDEX_MATERIAL1 1
 #define MATERIAL_INDEX_MATERIAL2 2
@@ -25,7 +28,7 @@ Corner createCorner( float3 position ) {
     Corner corner;
 
     corner.position      = position;
-    corner.density       = 0.0f;
+    corner.density       = POSITIVE_INFINITY;
     corner.materialIndex = 0;
 
     return corner;
@@ -102,10 +105,6 @@ float3 divide( float3 v1, float3 v2 ) {
 // element-wise absolute value
 float3 absolute( float3 v ) {
     return float3( abs( v.x ), abs( v.y ), abs( v.z ) );
-}
-
-float3 maximum( float3 v1, float3 v2 ) {
-    return float3( max( v1.x, v2.x ), max( v1.y, v2.x ), max( v1.z, v2.x ) );
 }
 
 float sampleCuboid( float3 position, in DensityFunction densityFunction ) {
@@ -234,9 +233,6 @@ void sampleCornerDensities( uint3 dispatchThreadID : SV_DispatchThreadID ) {
         }
     }
 }
-
-#define NEGATIVE_INFINITY 3.402823466e-38F
-#define POSITIVE_INFINITY 3.402823466e+38F
 
 float calculateDensity( float3 position ) {
 
@@ -405,7 +401,15 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
 
             solveQEF( qef, vertex, error, minimizerIterations );
 
-            float3 normal = averageNormal / qef.intersectionCount;
+            if(
+                vertex.x < voxels[voxelIndex].minimum.x || vertex.x > voxels[voxelIndex].maximum.x ||
+                vertex.y < voxels[voxelIndex].minimum.y || vertex.y > voxels[voxelIndex].maximum.y ||
+                vertex.z < voxels[voxelIndex].minimum.z || vertex.z > voxels[voxelIndex].maximum.z
+            ) {
+                vertex = qef.massPoint;
+            }
+
+            float3 normal = normalize( averageNormal / qef.intersectionCount );
 
             vertex = surfaceCorrection( vertex, normal );
 

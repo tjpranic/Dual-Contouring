@@ -4,14 +4,27 @@ using UnityEngine;
 
 public abstract class ImplementationTest {
 
-    protected const float epsilon = 6e-6f;
+    protected const float epsilon = 3e-3f;
 
     protected abstract string shader { get; }
 
-    protected System.Random randomNumberGenerator = new( Guid.NewGuid( ).GetHashCode( ) );
-
-    protected float generateRandomFloat(  ) {
+    protected float generateRandomFloat( ) {
         return UnityEngine.Random.Range( -1.0f, 1.0f );
+    }
+
+    protected Vector3 generateRandomVector2( ) {
+        return new(
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( )
+        );
+    }
+
+    protected Vector3 generateRandomVector3( ) {
+        return new(
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( ),
+            this.generateRandomFloat( )
+        );
     }
 
     protected SVDQEF.SymmetricMatrix3x3 generateRandomSymmetricMatrix3x3( ) {
@@ -39,12 +52,10 @@ public abstract class ImplementationTest {
         );
     }
 
-    protected Vector3 generateRandomVector3( ) {
-        return new(
-            this.generateRandomFloat( ),
-            this.generateRandomFloat( ),
-            this.generateRandomFloat( )
-        );
+    protected void repeat( int times, Action test ) {
+        for( var i = 0; i < times; ++i ) {
+            test( );
+        }
     }
 
     public T2 testKernel<T1, T2>( string kernelName, T1 paramater1, T2 resultZero ) {

@@ -8,7 +8,7 @@ using UnityEngine.TestTools;
 
 public class UniformDualContouringTest {
 
-    protected const float epsilon = 6e-6f;
+    protected const float epsilon = 3e-3f;
 
     private struct ContourResult {
 
@@ -106,6 +106,33 @@ public class UniformDualContouringTest {
             var otherIndex = indices[index];
 
             Assert.AreEqual( expected[index], actual[otherIndex] );
+        }
+    }
+
+    protected void compareOutput( Vector3[] expected, Vector3[] actual ) {
+        Assert.AreEqual( expected.Length, actual.Length );
+
+        var indices = new Dictionary<int, int>( );
+        for( var i = 0; i < expected.Length; ++i ) {
+            for( var j = 0; j < actual.Length; ++j ) {
+                if(
+                    !indices.ContainsKey   ( i ) &&
+                    !indices.ContainsValue ( j ) &&
+                    Vector3.Distance( expected[i], actual[j] ) <= epsilon
+                ) {
+                    indices[i] = j;
+                }
+            }
+        }
+
+        Assert.AreEqual( expected.Length, indices.Count );
+
+        foreach( var index in indices.Keys ) {
+            var otherIndex = indices[index];
+
+            Assert.AreEqual( expected[index].x, actual[otherIndex].x, epsilon );
+            Assert.AreEqual( expected[index].y, actual[otherIndex].y, epsilon );
+            Assert.AreEqual( expected[index].z, actual[otherIndex].z, epsilon );
         }
     }
 

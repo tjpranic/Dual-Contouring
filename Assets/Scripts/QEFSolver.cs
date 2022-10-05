@@ -8,15 +8,14 @@ public interface QEFSolver {
         SVD
     }
 
-    public int  minimizerIterations         { get; set; }
-    public int  surfaceCorrectionIterations { get; set; }
-    public bool empty                       { get; }
+    public int  minimizerIterations { get; set; }
+    public int  intersectionCount   { get; }
 
     public void add( Vector3 intersection, Vector3 normal );
 
     public void combine( QEFSolver other );
 
-    public ( Vector3 vertex, Vector3 normal, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions );
+    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions );
 
     public static Vector3 surfaceCorrection( Vector3 vertex, Vector3 normal, IEnumerable<DensityFunction> densityFunctions, int surfaceCorrectionIterations ) {
         // correct surface by forcing the minimizing vertex towards the zero crossing

@@ -5,17 +5,15 @@ using UnityEngine;
 
 public class SimpleQEF : QEFSolver {
 
-    public int  minimizerIterations         { get; set; }
-    public int  surfaceCorrectionIterations { get; set; }
-    public bool empty {
-        get { return intersectionPlanes.Count == 0; }
+    public int minimizerIterations { get; set; }
+    public int intersectionCount {
+        get { return this.intersectionPlanes.Count; }
     }
 
     private readonly List<Plane> intersectionPlanes = new( );
 
-    public SimpleQEF( int minimizerIterations, int surfaceCorrectionIterations ) {
-        this.minimizerIterations         = minimizerIterations;
-        this.surfaceCorrectionIterations = surfaceCorrectionIterations;
+    public SimpleQEF( int minimizerIterations ) {
+        this.minimizerIterations = minimizerIterations;
     }
 
     public void add( Vector3 intersection, Vector3 normal ) {
@@ -31,8 +29,8 @@ public class SimpleQEF : QEFSolver {
         }
     }
 
-    public ( Vector3 vertex, Vector3 normal, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
-        if( this.empty ) {
+    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+        if( this.intersectionCount == 0 ) {
             throw new Exception( "Unable to solve QEF, no intersections accumulated" );
         }
 
@@ -51,23 +49,10 @@ public class SimpleQEF : QEFSolver {
             ) / this.intersectionPlanes.Count;
         }
 
-        // calculate surface normal
-        var surfaceNormal = Vector3.Normalize(
-            this.intersectionPlanes.Aggregate(
-                Vector3.zero,
-                ( accumulator, plane ) => {
-                    accumulator += plane.normal;
-                    return accumulator;
-                }
-            ) / this.intersectionPlanes.Count
-        );
-
         // error value is simply how far the minimizing vertex is from the surface before correction
         var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
 
-        minimizingVertex = QEFSolver.surfaceCorrection( minimizingVertex, surfaceNormal, densityFunctions, this.surfaceCorrectionIterations );
-
-        return ( minimizingVertex, surfaceNormal, error );
+        return ( minimizingVertex, error );
     }
 
 }

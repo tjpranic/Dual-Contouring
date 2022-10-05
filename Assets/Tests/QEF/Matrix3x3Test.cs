@@ -21,6 +21,26 @@ public class Matrix3x3Test : ImplementationTest {
         Assert.AreEqual( expectedResult.x, actualResult.x, epsilon );
         Assert.AreEqual( expectedResult.y, actualResult.y, epsilon );
         Assert.AreEqual( expectedResult.z, actualResult.z, epsilon );
+
+        this.repeat(
+            100,
+            ( ) => {
+                var parameter0 = this.generateRandomMatrix3x3( );
+                var parameter1 = this.generateRandomVector3( );
+
+                var expectedResult = parameter0.multiplyVector( parameter1 );
+                var actualResult   = this.testKernel(
+                    "multiplyVectorTest",
+                    new SVDQEF.Matrix3x3.Data( parameter0 ),
+                    parameter1,
+                    Vector3.zero
+                );
+
+                Assert.AreEqual( expectedResult.x, actualResult.x, epsilon );
+                Assert.AreEqual( expectedResult.y, actualResult.y, epsilon );
+                Assert.AreEqual( expectedResult.z, actualResult.z, epsilon );
+            }
+        );
     }
 
     [Test]
@@ -45,6 +65,32 @@ public class Matrix3x3Test : ImplementationTest {
         Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
         Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
         Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+
+        this.repeat(
+            100,
+            ( ) => {
+                var parameter0 = this.generateRandomMatrix3x3( );
+                var parameter1 = this.generateRandomVector2( );
+
+                var expectedResult = parameter0.rotate01Post( parameter1.x, parameter1.y );
+                var actualResult   = this.testKernel(
+                    "rotate01PostTest",
+                    new SVDQEF.Matrix3x3.Data( parameter0 ),
+                    parameter1,
+                    new SVDQEF.Matrix3x3.Data( )
+                );
+
+                Assert.AreEqual( expectedResult.m00, actualResult.m00, epsilon );
+                Assert.AreEqual( expectedResult.m01, actualResult.m01, epsilon );
+                Assert.AreEqual( expectedResult.m02, actualResult.m02, epsilon );
+                Assert.AreEqual( expectedResult.m10, actualResult.m10, epsilon );
+                Assert.AreEqual( expectedResult.m11, actualResult.m11, epsilon );
+                Assert.AreEqual( expectedResult.m12, actualResult.m12, epsilon );
+                Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
+                Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
+                Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+            }
+        );
     }
 
     [Test]
@@ -69,6 +115,32 @@ public class Matrix3x3Test : ImplementationTest {
         Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
         Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
         Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+
+        this.repeat(
+            100,
+            ( ) => {
+                var parameter0 = this.generateRandomMatrix3x3( );
+                var parameter1 = this.generateRandomVector2( );
+
+                var expectedResult = parameter0.rotate02Post( parameter1.x, parameter1.y );
+                var actualResult   = this.testKernel(
+                    "rotate02PostTest",
+                    new SVDQEF.Matrix3x3.Data( parameter0 ),
+                    parameter1,
+                    new SVDQEF.Matrix3x3.Data( )
+                );
+
+                Assert.AreEqual( expectedResult.m00, actualResult.m00, epsilon );
+                Assert.AreEqual( expectedResult.m01, actualResult.m01, epsilon );
+                Assert.AreEqual( expectedResult.m02, actualResult.m02, epsilon );
+                Assert.AreEqual( expectedResult.m10, actualResult.m10, epsilon );
+                Assert.AreEqual( expectedResult.m11, actualResult.m11, epsilon );
+                Assert.AreEqual( expectedResult.m12, actualResult.m12, epsilon );
+                Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
+                Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
+                Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+            }
+        );
     }
 
     [Test]
@@ -93,6 +165,32 @@ public class Matrix3x3Test : ImplementationTest {
         Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
         Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
         Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+
+        this.repeat(
+            100,
+            ( ) => {
+                var parameter0 = this.generateRandomMatrix3x3( );
+                var parameter1 = this.generateRandomVector2( );
+
+                var expectedResult = parameter0.rotate12Post( parameter1.x, parameter1.y );
+                var actualResult   = this.testKernel(
+                    "rotate12PostTest",
+                    new SVDQEF.Matrix3x3.Data( parameter0 ),
+                    parameter1,
+                    new SVDQEF.Matrix3x3.Data( )
+                );
+
+                Assert.AreEqual( expectedResult.m00, actualResult.m00, epsilon );
+                Assert.AreEqual( expectedResult.m01, actualResult.m01, epsilon );
+                Assert.AreEqual( expectedResult.m02, actualResult.m02, epsilon );
+                Assert.AreEqual( expectedResult.m10, actualResult.m10, epsilon );
+                Assert.AreEqual( expectedResult.m11, actualResult.m11, epsilon );
+                Assert.AreEqual( expectedResult.m12, actualResult.m12, epsilon );
+                Assert.AreEqual( expectedResult.m20, actualResult.m20, epsilon );
+                Assert.AreEqual( expectedResult.m21, actualResult.m21, epsilon );
+                Assert.AreEqual( expectedResult.m22, actualResult.m22, epsilon );
+            }
+        );
     }
 
 }

@@ -22,6 +22,14 @@ public static class Vector3Extensions {
         return float.IsNaN( vector.x ) || float.IsNaN( vector.y ) || float.IsNaN( vector.y );
     }
 
+    public static Vector3 clamp( this Vector3 vector, Vector3 minimum, Vector3 maximum ) {
+        return new Vector3(
+            Mathf.Clamp( vector.x, minimum.x, maximum.x ),
+            Mathf.Clamp( vector.y, minimum.y, maximum.y ),
+            Mathf.Clamp( vector.z, minimum.z, maximum.z )
+        );
+    }
+
 }
 
 public static class Vector4Extensions {

@@ -288,10 +288,12 @@ public class AdaptiveDualContouring : Voxelizer {
                 }
 
                 voxel.qef = this.qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
                     _                    => throw new Exception( "Unknown solver type specified" )
                 };
+
+                var averageNormal = Vector3.zero;
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -302,9 +304,17 @@ public class AdaptiveDualContouring : Voxelizer {
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                     voxel.qef.add( edge.intersection, edge.normal );
+
+                    averageNormal += edge.normal;
                 }
 
-                ( voxel.vertex, voxel.normal, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+                if( voxel.qef.intersectionCount > 0 ) {
+                    ( voxel.vertex, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+
+                    voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
+
+                    voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
+                }
             }
         );
 
@@ -517,10 +527,12 @@ public class AdaptiveDualContouring : Voxelizer {
         }
 
         voxel.qef = this.qefSolverType switch {
-            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
             _                    => throw new Exception( "Unknown solver type specified" )
         };
+
+        var averageNormal = Vector3.zero;
 
         var collapsible = true;
         for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
@@ -532,6 +544,8 @@ public class AdaptiveDualContouring : Voxelizer {
             }
             else if( child.qef != null ) {
                 voxel.qef.combine( child.qef );
+
+                averageNormal += child.normal;
             }
         }
 
@@ -539,11 +553,11 @@ public class AdaptiveDualContouring : Voxelizer {
             return node;
         }
 
-        if( voxel.qef.empty ) {
+        if( voxel.qef.intersectionCount == 0 ) {
             return node;
         }
 
-        var ( minimizingVertex, surfaceNormal, error ) = voxel.qef.solve( voxel, densityFunctions );
+        var ( minimizingVertex, error ) = voxel.qef.solve( voxel, densityFunctions );
 
         if( error > errorThreshold ) {
             return node;
@@ -551,7 +565,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
         voxel.type   = VoxelType.Pseudo;
         voxel.vertex = minimizingVertex;
-        voxel.normal = surfaceNormal;
+        voxel.normal = Vector3.Normalize( averageNormal );
 
         node.children = null;
 

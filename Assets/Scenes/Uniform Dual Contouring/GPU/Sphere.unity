@@ -394,14 +394,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c69b06bc781819c44ab723a90165b8e5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _resolution: 4
+  _resolution: 3
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
   _implementation: 1
   _qefSolver: 1
   _intersectionApproximation: 0
-  vertexMode: 1
+  vertexMode: 0
   debugFlags: 24
   debugCornerSize: 0.0125
   debugEdgeSize: 0.025

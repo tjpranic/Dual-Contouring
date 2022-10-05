@@ -78,6 +78,9 @@ public interface SurfaceExtractor {
         public Type     type    { get; set; }
         public Vector3  center  { get; }
         public Vector3  size    { get; }
+        public Vector3  extents { get; }
+        public Vector3  minimum { get; }
+        public Vector3  maximum { get; }
         public Vector3  vertex  { get; }
         public Vector3  normal  { get; }
         public Corner[] corners { get; }

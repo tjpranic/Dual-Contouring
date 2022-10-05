@@ -248,10 +248,12 @@ public class ManifoldDualContouring : Voxelizer {
                 }
 
                 voxel.qef = this.qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
                     _                    => throw new Exception( "Unknown solver type specified" )
                 };
+
+                var averageNormal = Vector3.zero;
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -262,9 +264,17 @@ public class ManifoldDualContouring : Voxelizer {
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                     voxel.qef.add( edge.intersection, edge.normal );
+
+                    averageNormal += edge.normal;
                 }
 
-                ( voxel.vertex, voxel.normal, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+                if( voxel.qef.intersectionCount > 0 ) {
+                    ( voxel.vertex, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+
+                    voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
+
+                    voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
+                }
             }
         );
 
@@ -415,17 +425,19 @@ public class ManifoldDualContouring : Voxelizer {
     }
 
     private void clusterCell( Octree<Voxel> node, Position position, IEnumerable<DensityFunction> densityFunctions ) {
+        var voxel = node.data;
+
         var cluster = new List<Voxel>( );
 
-        if( node.data.type == VoxelType.Internal ) {
+        if( voxel.type == VoxelType.Internal ) {
 
-            // contour cells in children
+            // cluster cells in children
 
             for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
                 this.clusterCell( node.children[childIndex], position /*( Position )childIndex*/, densityFunctions );
             }
 
-            // contour common face pairs in children
+            // cluster common face pairs in children
 
             // x axis faces
 
@@ -445,7 +457,7 @@ public class ManifoldDualContouring : Voxelizer {
                 this.clusterFace( facePair, Axis.Z, position, cluster );
             }
 
-            // contour common edges of children
+            // cluster common edges of children
 
             // x axis edges
 
@@ -477,26 +489,32 @@ public class ManifoldDualContouring : Voxelizer {
 
         // solve QEF for vertex cluster
 
-        node.data.qef = this.qefSolverType switch {
-            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations, this.surfaceCorrectionIterations ),
-            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations, this.surfaceCorrectionIterations ),
+        voxel.qef = this.qefSolverType switch {
+            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
             _                    => throw new Exception( "Unknown solver type specified" )
         };
 
+        var averageNormal = Vector3.zero;
+
         foreach( var child in cluster ) {
             if( child.qef != null ) {
-                node.data.qef.combine( child.qef );
+                voxel.qef.combine( child.qef );
+
+                averageNormal += child.normal;
             }
         }
 
-        if( node.data.qef.empty ) {
+        if( voxel.qef.intersectionCount == 0 ) {
             return;
         }
 
-        ( node.data.vertex, node.data.normal, node.data.error ) = node.data.qef.solve( node.data, densityFunctions );
+        ( voxel.vertex, voxel.error ) = voxel.qef.solve( node.data, densityFunctions );
+
+        voxel.normal = Vector3.Normalize( averageNormal );
 
         foreach( var child in cluster ) {
-            child.parent = node.data;
+            child.parent = voxel;
         }
     }
 

@@ -5,8 +5,6 @@ using System.Runtime.InteropServices;
 using UnityEditor;
 using UnityEngine;
 
-// TODO: implement GPU uniform dual contouring
-
 using MaterialIndex             = SurfaceExtractor.MaterialIndex;
 using VoxelType                 = SurfaceExtractor.Voxel.Type;
 using Implementation            = SurfaceExtractor.Implementation;
@@ -350,10 +348,12 @@ public class UniformDualContouring : Voxelizer {
             foreach( var voxel in this.grid ) {
 
                 QEFSolver qef = qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations, surfaceCorrectionIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations, surfaceCorrectionIterations ),
+                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations ),
+                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations ),
                     _                    => throw new Exception( "Unknown solver type specified" )
                 };
+
+                var averageNormal = Vector3.zero;
 
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
@@ -372,10 +372,17 @@ public class UniformDualContouring : Voxelizer {
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
 
                     qef.add( edge.intersection, edge.normal );
+
+                    averageNormal += edge.normal;
                 }
 
-                ( voxel.vertex, voxel.normal, _ ) = qef.solve( voxel, densityFunctions );
+                if( qef.intersectionCount > 0 ) {
+                    ( voxel.vertex, _ ) = qef.solve( voxel, densityFunctions );
 
+                    voxel.normal = Vector3.Normalize( averageNormal / qef.intersectionCount );
+
+                    voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, surfaceCorrectionIterations );
+                }
             }
 
             // generate vertices and indices
