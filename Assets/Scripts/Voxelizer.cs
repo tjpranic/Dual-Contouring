@@ -6,6 +6,8 @@ using UnityEngine.Rendering;
 
 using Implementation            = SurfaceExtractor.Implementation;
 using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
 
@@ -100,7 +102,15 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
         var volumes = this.GetComponentsInChildren<Volume>( );
 
-        var ( mesh, corners, edges, voxels ) = this.voxelize( volumes );
+        var voxelization = this.voxelize( volumes );
+
+        var ( mesh, corners, edges, voxels ) = voxelization.visit(
+            ( voxelization ) => ( voxelization.mesh, voxelization.corners, voxelization.edges, voxelization.voxels ),
+            ( voxelization ) => {
+                var converted = this.convert( voxelization );
+                return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
+            }
+        );
 
         var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
@@ -136,7 +146,15 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
         meshFilter.mesh.OptimizeReorderVertexBuffer( );
 
-        // debug rendering
+        this.renderDebugInformation( corners, edges, voxels );
+
+    }
+
+    private void renderDebugInformation(
+        IEnumerable<SurfaceExtractor.Corner> corners,
+        IEnumerable<SurfaceExtractor.Edge>   edges,
+        IEnumerable<SurfaceExtractor.Voxel>  voxels
+    ) {
         if( this.debugFlags != Debug.Off ) {
             var debugObject                  = new GameObject( "Debug" );
                 debugObject.transform.parent = this.gameObject.transform;
@@ -264,15 +282,11 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
             debugObject.transform.localScale = Vector3.one;
 
         }
-
     }
 
-    public abstract (
-        Mesh                                 mesh,
-        IEnumerable<SurfaceExtractor.Corner> corners,
-        IEnumerable<SurfaceExtractor.Edge>   edges,
-        IEnumerable<SurfaceExtractor.Voxel>  voxels
-    ) voxelize( IEnumerable<DensityFunction> densityFunctions );
+    public abstract Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
+
+    public abstract CPUVoxelization convert( GPUVoxelization voxelization );
 
 }
 

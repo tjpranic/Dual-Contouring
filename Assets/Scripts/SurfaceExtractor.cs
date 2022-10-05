@@ -7,17 +7,38 @@ public interface SurfaceExtractor {
 
     public interface Implementation {
 
+        public class CPU {
+
+            public record Voxelization {
+                public Mesh                mesh;
+                public IEnumerable<Corner> corners;
+                public IEnumerable<Edge>   edges;
+                public IEnumerable<Voxel>  voxels;
+            }
+
+        }
+
+        public class GPU {
+
+            public record Voxelization {
+                public ComputeBuffer vertices;
+                public ComputeBuffer normals;
+                public ComputeBuffer quads;
+                public ComputeBuffer corners;
+                public ComputeBuffer edges;
+                public ComputeBuffer voxels;
+                public ComputeBuffer vertexCount;
+                public ComputeBuffer quadsCount;
+            }
+
+        }
+
         public enum Type {
             CPU,
             GPU
         }
 
-        public (
-            Mesh                mesh,
-            IEnumerable<Corner> corners,
-            IEnumerable<Edge>   edges,
-            IEnumerable<Voxel>  voxels
-        ) voxelize(
+        public Either<CPU.Voxelization, GPU.Voxelization> voxelize(
             IEnumerable<DensityFunction> densityFunctions,
             int                          resolution,
             int                          minimizerIterations,
@@ -98,12 +119,7 @@ public interface SurfaceExtractor {
     public QEFSolver.Type            qefSolverType               { get; set; }
     public IntersectionApproximation intersectionApproximation   { get; set; }
 
-    public (
-        Mesh                mesh,
-        IEnumerable<Corner> corners,
-        IEnumerable<Edge>   edges,
-        IEnumerable<Voxel>  voxels
-    ) voxelize( IEnumerable<DensityFunction> densityFunctions );
+    public Either<Implementation.CPU.Voxelization, Implementation.GPU.Voxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
 
     public static MaterialIndex calculateMaterial( Vector3 position, IEnumerable<DensityFunction> densityFunctions ) {
         return densityFunctions.Aggregate(

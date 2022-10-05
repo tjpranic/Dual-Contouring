@@ -14,6 +14,8 @@ using MaterialIndex             = SurfaceExtractor.MaterialIndex;
 using VoxelType                 = SurfaceExtractor.Voxel.Type;
 using Implementation            = SurfaceExtractor.Implementation;
 using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
 
@@ -180,12 +182,7 @@ public class ManifoldDualContouring : Voxelizer {
         set { throw new NotImplementedException( ); }
     }
 
-    public override (
-        Mesh                                 mesh,
-        IEnumerable<SurfaceExtractor.Corner> corners,
-        IEnumerable<SurfaceExtractor.Edge>   edges,
-        IEnumerable<SurfaceExtractor.Voxel>  voxels
-    ) voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+    public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
 
@@ -421,7 +418,12 @@ public class ManifoldDualContouring : Voxelizer {
             }
         ).Distinct( );
 
-        return ( mesh, corners, edges, voxels );
+        return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
+            mesh    = mesh,
+            corners = corners,
+            edges   = edges,
+            voxels  = voxels
+        } );
     }
 
     private void clusterCell( Octree<Voxel> node, Position position, IEnumerable<DensityFunction> densityFunctions ) {
@@ -744,6 +746,10 @@ public class ManifoldDualContouring : Voxelizer {
                 var _ = indices[subMeshIndex].Add( triangles[1] );
             }
         }
+    }
+
+    public override CPUVoxelization convert( GPUVoxelization voxelization ) {
+        throw new NotImplementedException( );
     }
 
 }

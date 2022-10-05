@@ -11,6 +11,8 @@ using MaterialIndex             = SurfaceExtractor.MaterialIndex;
 using VoxelType                 = SurfaceExtractor.Voxel.Type;
 using Implementation            = SurfaceExtractor.Implementation;
 using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
 
@@ -179,12 +181,7 @@ public class AdaptiveDualContouring : Voxelizer {
         set { throw new NotImplementedException( ); }
     }
 
-    public override (
-        Mesh                                 mesh,
-        IEnumerable<SurfaceExtractor.Corner> corners,
-        IEnumerable<SurfaceExtractor.Edge>   edges,
-        IEnumerable<SurfaceExtractor.Voxel>  voxels
-    ) voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+    public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
 
         // build octree with depth equal to resolution
 
@@ -370,7 +367,12 @@ public class AdaptiveDualContouring : Voxelizer {
             }
         ).Distinct( );
 
-        return ( mesh, corners, edges, voxels );
+        return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
+            mesh    = mesh,
+            corners = corners,
+            edges   = edges,
+            voxels  = voxels
+        } );
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
@@ -570,6 +572,10 @@ public class AdaptiveDualContouring : Voxelizer {
         node.children = null;
 
         return node;
+    }
+
+    public override CPUVoxelization convert( GPUVoxelization voxelization ) {
+        throw new NotImplementedException( );
     }
 
 }

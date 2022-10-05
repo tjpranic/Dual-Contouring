@@ -6,36 +6,28 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.TestTools;
 
+using Corner                    = SurfaceExtractor.Corner;
+using Edge                      = SurfaceExtractor.Edge;
+using Voxel                     = SurfaceExtractor.Voxel;
+using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
+using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using QEFSolverType             = QEFSolver.Type;
+
 public class UniformDualContouringTest {
 
     protected const float epsilon = 3e-3f;
 
-    private struct ContourResult {
-
-        public Mesh                                 mesh;
-        public IEnumerable<SurfaceExtractor.Corner> corners;
-        public IEnumerable<SurfaceExtractor.Edge>   edges;
-        public IEnumerable<SurfaceExtractor.Voxel>  voxels;
-
-        public ContourResult(
-            (
-                Mesh                                 mesh,
-                IEnumerable<SurfaceExtractor.Corner> corners,
-                IEnumerable<SurfaceExtractor.Edge>   edges,
-                IEnumerable<SurfaceExtractor.Voxel>  voxels
-            ) contour
-        ) {
-            this.mesh    = contour.mesh;
-            this.corners = contour.corners;
-            this.edges   = contour.edges;
-            this.voxels  = contour.voxels;
-        }
-
+    private record ContourResult {
+        public Mesh                mesh;
+        public IEnumerable<Corner> corners;
+        public IEnumerable<Edge>   edges;
+        public IEnumerable<Voxel>  voxels;
     }
 
     [UnityTest]
     public IEnumerator uniformDualContouringTest( ) {
-
         var voxelizer = new GameObject( "Uniform Dual Contouring" );
 
         voxelizer.transform.localScale = new Vector3( 5.0f, 5.0f, 5.0f );
@@ -46,9 +38,9 @@ public class UniformDualContouringTest {
         uniformDualContouring.minimizerIterations         = 6;
         uniformDualContouring.binarySearchIterations      = 6;
         uniformDualContouring.surfaceCorrectionIterations = 0;
-        uniformDualContouring.qefSolverType               = QEFSolver.Type.SVD;
-        uniformDualContouring.intersectionApproximation   = SurfaceExtractor.IntersectionApproximation.BinarySearch;
-        uniformDualContouring.implementationType          = SurfaceExtractor.Implementation.Type.CPU;
+        uniformDualContouring.qefSolverType               = QEFSolverType.SVD;
+        uniformDualContouring.intersectionApproximation   = IntersectionApproximation.BinarySearch;
+        uniformDualContouring.implementationType          = ImplementationType.CPU;
         uniformDualContouring.testing                     = true;
 
         var sphere = new GameObject( "Sphere" );
@@ -65,11 +57,27 @@ public class UniformDualContouringTest {
         // wait for lifecycle methods
         yield return new WaitForSeconds( 1.0f / 60.0f );
 
-        var expectedResult = new ContourResult( uniformDualContouring.voxelize( densityFunctions ) );
+        ContourResult getCPUVoxelization( CPUVoxelization voxelization ) => new( ) {
+            mesh    = voxelization.mesh,
+            corners = voxelization.corners,
+            edges   = voxelization.edges,
+            voxels  = voxelization.voxels
+        };
+        ContourResult getGPUVoxelization( GPUVoxelization voxelization ) {
+            var converted = uniformDualContouring.convert( voxelization );
+            return new( ) {
+                mesh    = converted.mesh,
+                corners = converted.corners,
+                edges   = converted.edges,
+                voxels  = converted.voxels
+            };
+        }
 
-        uniformDualContouring.implementationType = SurfaceExtractor.Implementation.Type.GPU;
+        var expectedResult = uniformDualContouring.voxelize( densityFunctions ).visit( getCPUVoxelization, getGPUVoxelization );
 
-        var actualResult = new ContourResult( uniformDualContouring.voxelize( densityFunctions ) );
+        uniformDualContouring.implementationType = ImplementationType.GPU;
+
+        var actualResult = uniformDualContouring.voxelize( densityFunctions ).visit( getCPUVoxelization, getGPUVoxelization );
 
         this.compareOutput( expectedResult.mesh.vertices, actualResult.mesh.vertices );
         this.compareOutput( expectedResult.mesh.normals,  actualResult.mesh.normals );

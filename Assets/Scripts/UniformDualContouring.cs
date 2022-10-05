@@ -9,6 +9,8 @@ using MaterialIndex             = SurfaceExtractor.MaterialIndex;
 using VoxelType                 = SurfaceExtractor.Voxel.Type;
 using Implementation            = SurfaceExtractor.Implementation;
 using ImplementationType        = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using QEFSolverType             = QEFSolver.Type;
 
@@ -303,12 +305,7 @@ public class UniformDualContouring : Voxelizer {
 
         private Voxel[,,] grid;
 
-        public (
-            Mesh                                 mesh,
-            IEnumerable<SurfaceExtractor.Corner> corners,
-            IEnumerable<SurfaceExtractor.Edge>   edges,
-            IEnumerable<SurfaceExtractor.Voxel>  voxels
-        ) voxelize(
+        public Either<CPUVoxelization, GPUVoxelization> voxelize(
             IEnumerable<DensityFunction> densityFunctions,
             int                          resolution,
             int                          minimizerIterations,
@@ -487,7 +484,12 @@ public class UniformDualContouring : Voxelizer {
                 }
             ).Distinct( );
 
-            return ( mesh, debugCorners, debugEdges, debugVoxels );
+            return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
+                mesh    = mesh,
+                corners = debugCorners,
+                edges   = debugEdges,
+                voxels  = debugVoxels
+            } );
         }
 
         private void contour( Voxel[] voxels, SurfaceExtractor.Edge edge, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
@@ -605,12 +607,7 @@ public class UniformDualContouring : Voxelizer {
             this.generateIndicesKernel             = this.uniformDualContouring.FindKernel( "generateIndices" );
         }
 
-        public (
-            Mesh                                 mesh,
-            IEnumerable<SurfaceExtractor.Corner> corners,
-            IEnumerable<SurfaceExtractor.Edge>   edges,
-            IEnumerable<SurfaceExtractor.Voxel>  voxels
-        ) voxelize(
+        public Either<CPUVoxelization, GPUVoxelization> voxelize(
             IEnumerable<DensityFunction> densityFunctions,
             int                          resolution,
             int                          minimizerIterations,
@@ -619,45 +616,13 @@ public class UniformDualContouring : Voxelizer {
             QEFSolverType                qefSolverType,
             IntersectionApproximation    intersectionApproximation
         ) {
-            var voxelCount           = resolution * resolution * resolution;
-            var edgeCount            = voxelCount * Voxel.EdgeCount;
-            var cornerCount          = voxelCount * Voxel.CornerCount;
-            var densityFunctionCount = densityFunctions.Count( );
-
-            var configuration = new Configuration(
+            this.createBuffers(
+                densityFunctions,
                 resolution,
                 minimizerIterations,
                 binarySearchIterations,
                 surfaceCorrectionIterations,
-                intersectionApproximation,
-                densityFunctionCount
-            );
-
-            var voxelData           = new Voxel.Data[voxelCount];
-            var edgeData            = new Edge.Data[edgeCount];
-            var cornerData          = new Corner.Data[cornerCount];
-            var densityFunctionData = new DensityFunction.Data[densityFunctionCount];
-            var verticesData        = new Vector3[voxelCount];
-            var normalsData         = new Vector3[voxelCount];
-            var vertexCountData     = new int[1];
-            var quadsData           = new Quad.Data[voxelCount];
-            var quadsCountData      = new int[1];
-
-            for( var densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
-                densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
-            }
-
-            this.createBuffers(
-                configuration,
-                voxelData,
-                edgeData,
-                cornerData,
-                densityFunctionData,
-                verticesData,
-                normalsData,
-                vertexCountData,
-                quadsData,
-                quadsCountData
+                intersectionApproximation
             );
 
             this.buildVoxelGrid              ( resolution );
@@ -666,119 +631,16 @@ public class UniformDualContouring : Voxelizer {
             this.generateVertices            ( resolution );
             this.generateIndices             ( resolution );
 
-            this.voxelsBuffer.GetData      ( voxelData );
-            this.edgesBuffer.GetData       ( edgeData );
-            this.cornersBuffer.GetData     ( cornerData );
-            this.verticesBuffer.GetData    ( verticesData );
-            this.vertexCountBuffer.GetData ( vertexCountData );
-            this.normalsBuffer.GetData     ( normalsData );
-            this.quadsBuffer.GetData       ( quadsData );
-            this.quadsCountBuffer.GetData  ( quadsCountData );
-
-            this.releaseBuffers( );
-
-            // build mesh
-            var mesh = new Mesh {
-                vertices = verticesData.Take( vertexCountData[0] ).ToArray( ),
-                normals  = normalsData.Take( vertexCountData[0] ).ToArray( ),
-            };
-
-            var quads = quadsData.Take( quadsCountData[0] ).Select( ( quadData ) => new Quad( quadData ) );
-
-            var subMeshIndices = new Dictionary<int, List<int>>( );
-
-            foreach( var quad in quads ) {
-                var subMeshIndex = quad.subMeshIndex;
-                if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
-                    subMeshIndices.Add( subMeshIndex, new( ) );
-                }
-                subMeshIndices[subMeshIndex].AddRange( quad.indices );
-            }
-
-            mesh.subMeshCount = subMeshIndices.Keys.Count;
-
-            var subMeshCount = 0;
-            foreach( var indices in subMeshIndices ) {
-                mesh.SetTriangles( indices.Value, subMeshCount );
-                ++subMeshCount;
-            }
-
-            // build debug information
-            var voxels = voxelData.Aggregate(
-                new List<Voxel>( ),
-                ( accumulator, data ) => {
-                    var voxelIndex       = accumulator.Count;
-                    var voxelCornerIndex = voxelIndex * Voxel.CornerCount;
-                    var voxelEdgeIndex   = voxelIndex * Voxel.EdgeCount;
-
-                    var voxelCorners = new Corner.Data[] {
-                        cornerData[voxelCornerIndex + 0],
-                        cornerData[voxelCornerIndex + 1],
-                        cornerData[voxelCornerIndex + 2],
-                        cornerData[voxelCornerIndex + 3],
-                        cornerData[voxelCornerIndex + 4],
-                        cornerData[voxelCornerIndex + 5],
-                        cornerData[voxelCornerIndex + 6],
-                        cornerData[voxelCornerIndex + 7]
-                    };
-                    var voxelEdges = new Edge.Data[] {
-                        edgeData[voxelEdgeIndex + 0],
-                        edgeData[voxelEdgeIndex + 1],
-                        edgeData[voxelEdgeIndex + 2],
-                        edgeData[voxelEdgeIndex + 3],
-                        edgeData[voxelEdgeIndex + 4],
-                        edgeData[voxelEdgeIndex + 5],
-                        edgeData[voxelEdgeIndex + 6],
-                        edgeData[voxelEdgeIndex + 7],
-                        edgeData[voxelEdgeIndex + 8],
-                        edgeData[voxelEdgeIndex + 9],
-                        edgeData[voxelEdgeIndex + 10],
-                        edgeData[voxelEdgeIndex + 11]
-                    };
-
-                    accumulator.Add( new( voxelData[voxelIndex], voxelCorners, voxelEdges ) );
-
-                    return accumulator;
-                }
-            );
-
-            if( UnityEngine.Debug.isDebugBuild ) {
-                foreach( var voxel in voxels ) {
-                    UnityEngine.Debug.Assert( !voxel.vertex.isNaN( ) );
-                    UnityEngine.Debug.Assert( !voxel.normal.isNaN( ) );
-                }
-            }
-
-            var edges = voxels.Aggregate(
-                new List<SurfaceExtractor.Edge>( ),
-                ( accumulator, voxel ) => {
-                    accumulator.AddRange( voxel.edges );
-                    return accumulator;
-                }
-            ).Distinct( );
-
-            if( UnityEngine.Debug.isDebugBuild ) {
-                foreach( var edge in edges ) {
-                    UnityEngine.Debug.Assert( !edge.intersection.isNaN( ) );
-                    UnityEngine.Debug.Assert( !edge.normal.isNaN( ) );
-                }
-            }
-
-            var corners = voxels.Aggregate(
-                new List<SurfaceExtractor.Corner>( ),
-                ( accumulator, voxel ) => {
-                    accumulator.AddRange( voxel.corners );
-                    return accumulator;
-                }
-            ).Distinct( );
-
-            if( UnityEngine.Debug.isDebugBuild ) {
-                foreach( var corner in corners ) {
-                    UnityEngine.Debug.Assert( !float.IsNaN( corner.density ) );
-                }
-            }
-
-            return ( mesh, corners, edges, voxels );
+            return new Either<CPUVoxelization, GPUVoxelization>.Type1( new( ) {
+                vertices    = this.verticesBuffer,
+                normals     = this.normalsBuffer,
+                quads       = this.quadsBuffer,
+                corners     = this.cornersBuffer,
+                edges       = this.edgesBuffer,
+                voxels      = this.voxelsBuffer,
+                vertexCount = this.vertexCountBuffer,
+                quadsCount  = this.quadsCountBuffer
+            } );
         }
 
         private void buildVoxelGrid( int resolution ) {
@@ -820,18 +682,42 @@ public class UniformDualContouring : Voxelizer {
         }
 
         private void createBuffers(
-            Configuration          configuration,
-            Voxel.Data[]           voxelData,
-            Edge.Data[]            edgeData,
-            Corner.Data[]          cornerData,
-            DensityFunction.Data[] densityFunctionData,
-            Vector3[]              verticesData,
-            Vector3[]              normalsData,
-            int[]                  vertexCountData,
-            Quad.Data[]            quadsData,
-            int[]                  quadsCountBuffer
+            IEnumerable<DensityFunction> densityFunctions,
+            int                          resolution,
+            int                          minimizerIterations,
+            int                          binarySearchIterations,
+            int                          surfaceCorrectionIterations,
+            IntersectionApproximation    intersectionApproximation
         ) {
             this.releaseBuffers( );
+
+            var voxelCount           = resolution * resolution * resolution;
+            var edgeCount            = voxelCount * Voxel.EdgeCount;
+            var cornerCount          = voxelCount * Voxel.CornerCount;
+            var densityFunctionCount = densityFunctions.Count( );
+
+            var configuration = new Configuration(
+                resolution,
+                minimizerIterations,
+                binarySearchIterations,
+                surfaceCorrectionIterations,
+                intersectionApproximation,
+                densityFunctionCount
+            );
+
+            var voxelData           = new Voxel.Data[voxelCount];
+            var edgeData            = new Edge.Data[edgeCount];
+            var cornerData          = new Corner.Data[cornerCount];
+            var densityFunctionData = new DensityFunction.Data[densityFunctionCount];
+            var verticesData        = new Vector3[voxelCount];
+            var normalsData         = new Vector3[voxelCount];
+            var vertexCountData     = new int[1];
+            var quadsData           = new Quad.Data[voxelCount];
+            var quadsCountData      = new int[1];
+
+            for( var densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
+                densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
+            }
 
             this.configurationBuffer    = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
             this.voxelsBuffer           = new ComputeBuffer( voxelData.Length,           Marshal.SizeOf( typeof( Voxel.Data ) ) );
@@ -840,9 +726,9 @@ public class UniformDualContouring : Voxelizer {
             this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionData.Length, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
             this.verticesBuffer         = new ComputeBuffer( verticesData.Length,        Marshal.SizeOf( typeof( Vector3 ) ) );
             this.normalsBuffer          = new ComputeBuffer( normalsData.Length,         Marshal.SizeOf( typeof( Vector3 ) ) );
-            this.vertexCountBuffer      = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( int ) ));
+            this.vertexCountBuffer      = new ComputeBuffer( vertexCountData.Length,     Marshal.SizeOf( typeof( int ) ));
             this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ) );
-            this.quadsCountBuffer       = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( int ) ) );
+            this.quadsCountBuffer       = new ComputeBuffer( quadsCountData.Length,      Marshal.SizeOf( typeof( int ) ) );
 
             var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
             this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
@@ -856,10 +742,10 @@ public class UniformDualContouring : Voxelizer {
             this.normalsBuffer.SetData          ( normalsData );
             this.vertexCountBuffer.SetData      ( vertexCountData );
             this.quadsBuffer.SetData            ( quadsData );
-            this.quadsCountBuffer.SetData       ( quadsCountBuffer );
+            this.quadsCountBuffer.SetData       ( quadsCountData );
         }
 
-        private void releaseBuffers( ) {
+        public void releaseBuffers( ) {
             this.configurationBuffer?.Release( );
             this.voxelsBuffer?.Release( );
             this.edgesBuffer?.Release( );
@@ -908,12 +794,11 @@ public class UniformDualContouring : Voxelizer {
         }
     }
 
-    public override (
-        Mesh                                 mesh,
-        IEnumerable<SurfaceExtractor.Corner> corners,
-        IEnumerable<SurfaceExtractor.Edge>   edges,
-        IEnumerable<SurfaceExtractor.Voxel>  voxels
-    ) voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+    public void OnDestroy( ) {
+        this.gpuImplementation.releaseBuffers( );
+    }
+
+    public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
         // non-power-of-2 values don't voxelize well
         var resolution = ( int )Mathf.Pow( 2, this.resolution );
 
@@ -926,6 +811,140 @@ public class UniformDualContouring : Voxelizer {
             this.qefSolverType,
             this.intersectionApproximation
         );
+    }
+
+    public override CPUVoxelization convert( GPUVoxelization voxelization ) {
+        var resolution = ( int )Mathf.Pow( 2, this.resolution );
+
+        var voxelCount  = resolution * resolution * resolution;
+        var edgeCount   = voxelCount * Voxel.EdgeCount;
+        var cornerCount = voxelCount * Voxel.CornerCount;
+
+        var voxelData       = new Voxel.Data[voxelCount];
+        var edgeData        = new Edge.Data[edgeCount];
+        var cornerData      = new Corner.Data[cornerCount];
+        var verticesData    = new Vector3[voxelCount];
+        var normalsData     = new Vector3[voxelCount];
+        var vertexCountData = new int[1];
+        var quadsData       = new Quad.Data[voxelCount];
+        var quadsCountData  = new int[1];
+
+        voxelization.voxels.GetData      ( voxelData );
+        voxelization.edges.GetData       ( edgeData );
+        voxelization.corners.GetData     ( cornerData );
+        voxelization.vertices.GetData    ( verticesData );
+        voxelization.vertexCount.GetData ( vertexCountData );
+        voxelization.normals.GetData     ( normalsData );
+        voxelization.quads.GetData       ( quadsData );
+        voxelization.quadsCount.GetData  ( quadsCountData );
+
+        // build mesh
+        var mesh = new Mesh {
+            vertices = verticesData.Take ( vertexCountData[0] ).ToArray( ),
+            normals  = normalsData.Take  ( vertexCountData[0] ).ToArray( ),
+        };
+
+        var quads = quadsData.Take( quadsCountData[0] ).Select( ( quadData ) => new Quad( quadData ) );
+
+        var subMeshIndices = new Dictionary<int, List<int>>( );
+
+        foreach( var quad in quads ) {
+            var subMeshIndex = quad.subMeshIndex;
+            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
+                subMeshIndices.Add( subMeshIndex, new( ) );
+            }
+            subMeshIndices[subMeshIndex].AddRange( quad.indices );
+        }
+
+        mesh.subMeshCount = subMeshIndices.Keys.Count;
+
+        var subMeshCount = 0;
+        foreach( var indices in subMeshIndices ) {
+            mesh.SetTriangles( indices.Value, subMeshCount );
+            ++subMeshCount;
+        }
+
+        // build debug information
+        var voxels = voxelData.Aggregate(
+            new List<Voxel>( ),
+            ( accumulator, data ) => {
+                var voxelIndex       = accumulator.Count;
+                var voxelCornerIndex = voxelIndex * Voxel.CornerCount;
+                var voxelEdgeIndex   = voxelIndex * Voxel.EdgeCount;
+
+                var voxelCorners = new Corner.Data[] {
+                    cornerData[voxelCornerIndex + 0],
+                    cornerData[voxelCornerIndex + 1],
+                    cornerData[voxelCornerIndex + 2],
+                    cornerData[voxelCornerIndex + 3],
+                    cornerData[voxelCornerIndex + 4],
+                    cornerData[voxelCornerIndex + 5],
+                    cornerData[voxelCornerIndex + 6],
+                    cornerData[voxelCornerIndex + 7]
+                };
+                var voxelEdges = new Edge.Data[] {
+                    edgeData[voxelEdgeIndex + 0],
+                    edgeData[voxelEdgeIndex + 1],
+                    edgeData[voxelEdgeIndex + 2],
+                    edgeData[voxelEdgeIndex + 3],
+                    edgeData[voxelEdgeIndex + 4],
+                    edgeData[voxelEdgeIndex + 5],
+                    edgeData[voxelEdgeIndex + 6],
+                    edgeData[voxelEdgeIndex + 7],
+                    edgeData[voxelEdgeIndex + 8],
+                    edgeData[voxelEdgeIndex + 9],
+                    edgeData[voxelEdgeIndex + 10],
+                    edgeData[voxelEdgeIndex + 11]
+                };
+
+                accumulator.Add( new( voxelData[voxelIndex], voxelCorners, voxelEdges ) );
+
+                return accumulator;
+            }
+        );
+
+        if( UnityEngine.Debug.isDebugBuild ) {
+            foreach( var voxel in voxels ) {
+                UnityEngine.Debug.Assert( !voxel.vertex.isNaN( ) );
+                UnityEngine.Debug.Assert( !voxel.normal.isNaN( ) );
+            }
+        }
+
+        var edges = voxels.Aggregate(
+            new List<SurfaceExtractor.Edge>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.edges );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        if( UnityEngine.Debug.isDebugBuild ) {
+            foreach( var edge in edges ) {
+                UnityEngine.Debug.Assert( !edge.intersection.isNaN( ) );
+                UnityEngine.Debug.Assert( !edge.normal.isNaN( ) );
+            }
+        }
+
+        var corners = voxels.Aggregate(
+            new List<SurfaceExtractor.Corner>( ),
+            ( accumulator, voxel ) => {
+                accumulator.AddRange( voxel.corners );
+                return accumulator;
+            }
+        ).Distinct( );
+
+        if( UnityEngine.Debug.isDebugBuild ) {
+            foreach( var corner in corners ) {
+                UnityEngine.Debug.Assert( !float.IsNaN( corner.density ) );
+            }
+        }
+
+        return new CPUVoxelization {
+            mesh    = mesh,
+            corners = corners,
+            edges   = edges,
+            voxels  = voxels
+        };
     }
 
 }
