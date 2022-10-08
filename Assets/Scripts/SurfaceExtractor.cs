@@ -27,8 +27,8 @@ public interface SurfaceExtractor {
                 public ComputeBuffer corners;
                 public ComputeBuffer edges;
                 public ComputeBuffer voxels;
-                public ComputeBuffer vertexCount;
-                public ComputeBuffer quadsCount;
+                public ComputeBuffer counts;
+                public ComputeBuffer arguments;
             }
 
         }
@@ -45,7 +45,8 @@ public interface SurfaceExtractor {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolver.Type               qefSolverType,
-            IntersectionApproximation    intersectionApproximation
+            IntersectionApproximation    intersectionApproximation,
+            VertexNormals                vertexNormals
         );
 
     }
@@ -55,18 +56,24 @@ public interface SurfaceExtractor {
         LinearInterpolation
     }
 
+    public enum VertexNormals {
+        Shared,
+        Split
+    }
+
     [Flags]
     public enum MaterialIndex {
         Void      = 0,
-        Material1 = 1,
-        Material2 = 2,
-        Material3 = 4,
-        Material4 = 8,
-        Material5 = 16,
-        Material6 = 32,
-        Material7 = 64,
-        Material8 = 128,
-        Material9 = 256
+        Material0 = 1,
+        Material1 = 2,
+        Material2 = 4,
+        Material3 = 8,
+        Material4 = 16,
+        Material5 = 32,
+        Material6 = 64,
+        Material7 = 128,
+        Material8 = 256,
+        Material9 = 512
     }
 
     public interface Corner : IEquatable<Corner> {
@@ -118,6 +125,7 @@ public interface SurfaceExtractor {
     public Implementation.Type       implementationType          { get; set; }
     public QEFSolver.Type            qefSolverType               { get; set; }
     public IntersectionApproximation intersectionApproximation   { get; set; }
+    public VertexNormals                vertexNormals                  { get; set; }
 
     public Either<Implementation.CPU.Voxelization, Implementation.GPU.Voxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
 

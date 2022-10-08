@@ -50,7 +50,7 @@ public class UniformDualContouringTest {
 
         var volume = sphere.AddComponent<Ellipsoid>( );
 
-        volume.materialIndex = SurfaceExtractor.MaterialIndex.Material1;
+        volume.materialIndex = SurfaceExtractor.MaterialIndex.Material0;
 
         var densityFunctions = new List<DensityFunction> { volume };
 

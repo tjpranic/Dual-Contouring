@@ -17,6 +17,7 @@ using ImplementationType        = SurfaceExtractor.Implementation.Type;
 using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 public class ManifoldDualContouring : Voxelizer {
@@ -52,9 +53,9 @@ public class ManifoldDualContouring : Voxelizer {
 
         public bool intersectsContour( ) {
             return (
-                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material1
+                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material0
             ) || (
-                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material1
+                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material0
             );
         }
 
@@ -238,7 +239,7 @@ public class ManifoldDualContouring : Voxelizer {
 
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
-                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material1 )
+                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material0 )
                 ) {
                     // cell is either fully inside or outside the volume, skip
                     return;

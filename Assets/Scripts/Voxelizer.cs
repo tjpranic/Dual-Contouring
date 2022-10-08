@@ -9,6 +9,7 @@ using ImplementationType        = SurfaceExtractor.Implementation.Type;
 using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 [RequireComponent( typeof( MeshRenderer ) )]
@@ -63,14 +64,14 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
         set { this._intersectionApproximation = value; }
     }
 
-    protected abstract Implementation implementation { get; set; }
-
-    public enum VertexMode {
-        Shared,
-        Split
+    [SerializeField( )]
+    private VertexNormals _vertexNormals = VertexNormals.Shared;
+    public VertexNormals vertexNormals {
+        get { return this._vertexNormals;  }
+        set { this._vertexNormals = value; }
     }
 
-    public VertexMode vertexMode = VertexMode.Shared;
+    protected abstract Implementation implementation { get; set; }
 
     [Flags]
     public enum Debug {
@@ -98,55 +99,90 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
     public Material debugMinimizingVertexMaterial;
     public Material debugSurfaceNormalMaterial;
 
-    public virtual void Start( ) {
+    private bool          directToGPU = false;
+    private Material      material;
+    private ComputeBuffer argumentsBuffer;
 
+    public virtual void Start( ) {
         var volumes = this.GetComponentsInChildren<Volume>( );
 
         var voxelization = this.voxelize( volumes );
 
-        var ( mesh, corners, edges, voxels ) = voxelization.visit(
-            ( voxelization ) => ( voxelization.mesh, voxelization.corners, voxelization.edges, voxelization.voxels ),
-            ( voxelization ) => {
-                var converted = this.convert( voxelization );
-                return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
-            }
-        );
+        if( this.debugFlags == Debug.Off ) {
+            // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
+            this.directToGPU = voxelization.tryVisit(
+                ( GPUVoxelization voxelization ) => {
+                    var meshRenderer = this.GetComponent<MeshRenderer>( );
 
-        var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
+                    UnityEngine.Debug.Assert( meshRenderer != null );
 
-        meshFilter.mesh = mesh;
+                    this.material = new Material( Resources.Load<Shader>( "Shaders/RenderContourDiffuse" ) );
 
-        // convert to flat shading by splitting vertices
-        if( this.vertexMode == VertexMode.Split ) {
+                    this.material.SetBuffer ( "vertices",     voxelization.vertices );
+                    this.material.SetBuffer ( "normals",      voxelization.normals );
+                    this.material.SetBuffer ( "quads",        voxelization.quads );
+                    this.material.SetMatrix ( "localToWorld", this.transform.localToWorldMatrix );
+                    this.material.SetMatrix ( "worldToLocal", this.transform.worldToLocalMatrix );
 
-            var vertices  = new Vector3[mesh.triangles.Length];
-            var triangles = new Dictionary<int, int[]>( );
+                    for( var materialIndex = 0; materialIndex < meshRenderer.materials.Length; ++materialIndex ) {
+                        this.material.SetColor( $"color{materialIndex}", meshRenderer.materials[materialIndex].color );
+                    }
 
-            var subMeshTriangleIndexStart = 0;
-            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
-                var subMeshTriangles = meshFilter.mesh.GetTriangles( subMeshIndex );
-                for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
-                    var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
-
-                    vertices[subMeshTriangleIndex]  = meshFilter.mesh.vertices[subMeshTriangles[triangleIndex]];
-                    subMeshTriangles[triangleIndex] = subMeshTriangleIndex;
+                    this.argumentsBuffer = voxelization.arguments;
                 }
-                triangles.Add( subMeshIndex, subMeshTriangles );
-                subMeshTriangleIndexStart += subMeshTriangles.Length;
-            }
-
-            meshFilter.mesh.vertices = vertices;
-            for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
-                meshFilter.mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
-            }
-
-            meshFilter.mesh.RecalculateBounds( );
-            meshFilter.mesh.RecalculateNormals( );
+            );
         }
 
-        meshFilter.mesh.OptimizeReorderVertexBuffer( );
+        if( !this.directToGPU ) {
 
-        this.renderDebugInformation( corners, edges, voxels );
+            var ( mesh, corners, edges, voxels ) = voxelization.visit(
+                ( voxelization ) => {
+                    var mesh = voxelization.mesh;
+
+                    // convert to flat shading by splitting vertices
+                    if( this.vertexNormals == VertexNormals.Split ) {
+                        var vertices  = new Vector3[mesh.triangles.Length];
+                        var triangles = new Dictionary<int, int[]>( );
+
+                        var subMeshTriangleIndexStart = 0;
+                        for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+                            var subMeshTriangles = mesh.GetTriangles( subMeshIndex );
+                            for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
+                                var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
+
+                                vertices[subMeshTriangleIndex]  = mesh.vertices[subMeshTriangles[triangleIndex]];
+                                subMeshTriangles[triangleIndex] = subMeshTriangleIndex;
+                            }
+                            triangles.Add( subMeshIndex, subMeshTriangles );
+                            subMeshTriangleIndexStart += subMeshTriangles.Length;
+                        }
+
+                        mesh.vertices = vertices;
+                        for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+                            mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
+                        }
+
+                        mesh.RecalculateNormals( );
+                    }
+
+                    return ( mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
+                },
+                ( voxelization ) => {
+                    var converted = this.convert( voxelization );
+                    return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
+                }
+            );
+
+            mesh.RecalculateBounds( );
+            mesh.OptimizeReorderVertexBuffer( );
+
+            var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
+
+            meshFilter.mesh = mesh;
+
+            this.renderDebugInformation( corners, edges, voxels );
+
+        }
 
     }
 
@@ -287,6 +323,17 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
     public abstract Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
 
     public abstract CPUVoxelization convert( GPUVoxelization voxelization );
+
+    public void Update( ) {
+        if( this.directToGPU ) {
+            Graphics.DrawProceduralIndirect(
+                this.material,
+                new Bounds( this.transform.position, this.transform.localScale ),
+                MeshTopology.Triangles,
+                this.argumentsBuffer
+            );
+        }
+    }
 
 }
 

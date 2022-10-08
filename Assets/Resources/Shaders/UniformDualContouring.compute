@@ -1,22 +1,26 @@
 #pragma kernel buildVoxelGrid
 #pragma kernel sampleCornerDensities
 #pragma kernel calculateMinimizingVertices
-#pragma kernel generateVertices
-#pragma kernel generateIndices
+#pragma kernel generateSharedVertices
+#pragma kernel contour
 
 #define NEGATIVE_INFINITY 3.402823466e-38F
 #define POSITIVE_INFINITY 3.402823466e+38F
 
 #define MATERIAL_INDEX_VOID 0
-#define MATERIAL_INDEX_MATERIAL1 1
-#define MATERIAL_INDEX_MATERIAL2 2
-#define MATERIAL_INDEX_MATERIAL3 4
-#define MATERIAL_INDEX_MATERIAL4 8
-#define MATERIAL_INDEX_MATERIAL5 16
-#define MATERIAL_INDEX_MATERIAL6 32
-#define MATERIAL_INDEX_MATERIAL7 64
-#define MATERIAL_INDEX_MATERIAL8 128
-#define MATERIAL_INDEX_MATERIAL9 256
+#define MATERIAL_INDEX_MATERIAL0 1
+#define MATERIAL_INDEX_MATERIAL1 2
+#define MATERIAL_INDEX_MATERIAL2 4
+#define MATERIAL_INDEX_MATERIAL3 8
+#define MATERIAL_INDEX_MATERIAL4 16
+#define MATERIAL_INDEX_MATERIAL5 32
+#define MATERIAL_INDEX_MATERIAL6 64
+#define MATERIAL_INDEX_MATERIAL7 128
+#define MATERIAL_INDEX_MATERIAL8 256
+#define MATERIAL_INDEX_MATERIAL9 512
+
+#define VERTEX_NORMALS_SHARED 0
+#define VERTEX_NORMALS_SPLIT 1
 
 struct Corner {
     float3 position;
@@ -144,6 +148,7 @@ cbuffer Configuration {
     uint binarySearchIterations;
     uint surfaceCorrectionIterations;
     uint intersectionApproximation;
+    uint vertexNormals;
     uint densityFunctionCount;
 }
 
@@ -378,9 +383,9 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
             uint cornerIndex1 = ( voxelIndex * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][1];
 
             bool edgeIntersectsContour = (
-                corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL1
+                corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL0
             ) || (
-                corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL1
+                corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL0
             );
 
             if( edgeIntersectsContour ) {
@@ -442,10 +447,13 @@ Quad createQuad(
 
 RWStructuredBuffer<float3> vertices;
 RWStructuredBuffer<float3> normals;
-RWStructuredBuffer<uint>   vertexCount;
+RWStructuredBuffer<uint>   counts;
+
+#define VERTEX_COUNT_INDEX 0
+#define QUAD_COUNT_INDEX 1
 
 [numthreads( 1, 1, 1 )]
-void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+void generateSharedVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
     if(
@@ -453,7 +461,7 @@ void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
         ( length( voxels[voxelIndex].vertex ) > 0.0f && length( voxels[voxelIndex].normal ) > 0.0f )
     ) {
         uint vertexIndex;
-        InterlockedAdd( vertexCount[0], 1, vertexIndex );
+        InterlockedAdd( counts[VERTEX_COUNT_INDEX], 1, vertexIndex );
 
         voxels[voxelIndex].index = vertexIndex;
 
@@ -464,7 +472,9 @@ void generateVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
 }
 
 RWStructuredBuffer<Quad> quads;
-RWStructuredBuffer<uint> quadsCount;
+RWStructuredBuffer<uint> arguments;
+
+#define INDEX_COUNT_INDEX 0
 
 #define INT_BITS 32
 
@@ -479,7 +489,7 @@ uint findHighestMaterialBit( uint materialIndex ) {
     return 0;
 }
 
-void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
+void generateIndices( uint voxelIndices[4], uint voxelEdgeIndex ) {
 
     bool allHaveFeatures = true;
 
@@ -497,9 +507,9 @@ void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
     uint cornerIndex1 = ( voxelIndices[0] * VOXEL_CORNER_COUNT ) + EDGE_LOOKUP[voxelEdgeIndex][1];
 
     bool edgeIntersectsContour = (
-        corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL1
+        corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex1].materialIndex >= MATERIAL_INDEX_MATERIAL0
     ) || (
-        corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL1
+        corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL0
     );
 
     if( allHaveFeatures && edgeIntersectsContour ) {
@@ -508,34 +518,111 @@ void contour( uint voxelIndices[4], uint voxelEdgeIndex ) {
             ? corners[cornerIndex1].materialIndex
             : corners[cornerIndex0].materialIndex;
 
-        uint indices[6];
+        uint indexLookup[6];
 
         // ensure quad is indexed facing outward
         if( corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID ) {
-            indices[0] = voxels[voxelIndices[0]].index;
-            indices[1] = voxels[voxelIndices[1]].index;
-            indices[2] = voxels[voxelIndices[2]].index;
-            indices[3] = voxels[voxelIndices[3]].index;
-            indices[4] = voxels[voxelIndices[2]].index;
-            indices[5] = voxels[voxelIndices[1]].index;
+            indexLookup[0] = 0;
+            indexLookup[1] = 1;
+            indexLookup[2] = 2;
+            indexLookup[3] = 3;
+            indexLookup[4] = 2;
+            indexLookup[5] = 1;
         }
         else {
-            indices[0] = voxels[voxelIndices[1]].index;
-            indices[1] = voxels[voxelIndices[2]].index;
-            indices[2] = voxels[voxelIndices[3]].index;
-            indices[3] = voxels[voxelIndices[2]].index;
-            indices[4] = voxels[voxelIndices[1]].index;
-            indices[5] = voxels[voxelIndices[0]].index;
+            indexLookup[0] = 1;
+            indexLookup[1] = 2;
+            indexLookup[2] = 3;
+            indexLookup[3] = 2;
+            indexLookup[4] = 1;
+            indexLookup[5] = 0;
+        }
+
+        uint indices[6];
+
+        if( vertexNormals == VERTEX_NORMALS_SHARED ) {
+            // assign vertex according to pre-generated indices
+            indices[0] = voxels[voxelIndices[indexLookup[0]]].index;
+            indices[1] = voxels[voxelIndices[indexLookup[1]]].index;
+            indices[2] = voxels[voxelIndices[indexLookup[2]]].index;
+            indices[3] = voxels[voxelIndices[indexLookup[3]]].index;
+            indices[4] = voxels[voxelIndices[indexLookup[4]]].index;
+            indices[5] = voxels[voxelIndices[indexLookup[5]]].index;
+        }
+        else if( vertexNormals == VERTEX_NORMALS_SPLIT ) {
+            // generate split vertices
+            [unroll]
+            for( uint i = 0; i < 6; ++i ) {
+                uint vertexIndex;
+                InterlockedAdd( counts[VERTEX_COUNT_INDEX], 1, vertexIndex );
+
+                indices[i] = vertexIndex;
+
+                vertices[vertexIndex] = voxels[voxelIndices[indexLookup[i]]].vertex;
+                normals[vertexIndex]  = voxels[voxelIndices[indexLookup[i]]].normal;
+            }
+
+            /*
+            // average the normal across quad
+            float3 normal = float3( 0.0f, 0.0f, 0.0f );
+            
+            [unroll]
+            for( i = 0; i < 6; ++i ) {
+                normal += normals[indices[i]];
+            }
+            
+            normal = normalize( normal / 6 );
+            
+            [unroll]
+            for( i = 0; i < 6; ++i ) {
+                normals[indices[i]] = normal;
+            }
+            */
+
+            // recalculate normal for both triangles
+            [unroll]
+            for( i = 0; i < 2; ++i ) {
+                uint normalIndex0 = indices[( i * 3 ) + 0];
+                uint normalIndex1 = indices[( i * 3 ) + 1];
+                uint normalIndex2 = indices[( i * 3 ) + 2];
+
+                float3 normal = float3( 0.0f, 0.0f, 0.0f );
+
+                /*
+                // average normal across triangle
+                [unroll]
+                for( uint j = i * 3; j < ( i * 3 ) + 3; ++j ) {
+                    normal += normals[indices[j]];
+                }
+
+                normal = normalize( normal / 3 );
+                */
+
+                // set the normals of each vertex in a triangle to the normal of the triangle face
+                normal = normalize(
+                    cross(
+                        normals[normalIndex1] - normals[normalIndex0],
+                        normals[normalIndex2] - normals[normalIndex0]
+                    )
+                );
+
+                [unroll]
+                for( uint j = i * 3; j < ( i * 3 ) + 3; ++j ) {
+                    normals[indices[j]] = normal;
+                }
+            }
         }
 
         uint subMeshIndex = findHighestMaterialBit( materialIndex );
 
         uint quadIndex;
-        InterlockedAdd( quadsCount[0], 1, quadIndex );
+        InterlockedAdd( counts[QUAD_COUNT_INDEX], 1, quadIndex );
 
         quads[quadIndex] = createQuad( indices, subMeshIndex );
-    }
 
+        uint indexCount;
+        InterlockedAdd( arguments[INDEX_COUNT_INDEX], 6, indexCount );
+    }
 }
 
 uint index( uint x, uint y, uint z ) {
@@ -543,7 +630,7 @@ uint index( uint x, uint y, uint z ) {
 }
 
 [numthreads( 1, 1, 1 )]
-void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+void contour( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint x = dispatchThreadID.x;
     uint y = dispatchThreadID.y;
     uint z = dispatchThreadID.z;
@@ -558,7 +645,7 @@ void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
             index( x, y + 1, z     ),
             index( x, y + 1, z + 1 )
         };
-        contour( voxelIndices, 3 );
+        generateIndices( voxelIndices, 3 );
     }
 
     // y axis
@@ -569,7 +656,7 @@ void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
             index( x,     y, z + 1 ),
             index( x + 1, y, z + 1 )
         };
-        contour( voxelIndices, 7 );
+        generateIndices( voxelIndices, 7 );
     }
 
     // z axis
@@ -580,7 +667,7 @@ void generateIndices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
             index( x + 1, y,     z ),
             index( x + 1, y + 1, z )
         };
-        contour( voxelIndices, 11 );
+        generateIndices( voxelIndices, 11 );
     }
 
 }

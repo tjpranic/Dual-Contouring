@@ -53,4 +53,42 @@ public abstract class Either<T0, T1> {
         };
     }
 
+    #nullable enable
+
+    public TResult? tryVisit<TResult>( Func<T0, TResult?> visitor ) where TResult : class {
+        return this switch {
+            Type0 type => visitor( type.data ),
+            _          => null,
+        };
+    }
+
+    public TResult? tryVisit<TResult>( Func<T1, TResult?> visitor ) where TResult : class {
+        return this switch {
+            Type1 type => visitor( type.data ),
+            _          => null,
+        };
+    }
+
+    #nullable disable
+
+    public bool tryVisit( Action<T0> visitor ) {
+        switch( this ) {
+            case Type0 type:
+                visitor( type.data );
+                return true;
+            default:
+                return false;
+        };
+    }
+
+    public bool tryVisit( Action<T1> visitor ) {
+        switch( this ) {
+            case Type1 type:
+                visitor( type.data );
+                return true;
+            default:
+                return false;
+        };
+    }
+
 }

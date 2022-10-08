@@ -401,7 +401,7 @@ MonoBehaviour:
   _implementation: 1
   _qefSolver: 1
   _intersectionApproximation: 0
-  vertexMode: 0
+  _vertexNormals: 0
   debugFlags: 24
   debugCornerSize: 0.0125
   debugEdgeSize: 0.025

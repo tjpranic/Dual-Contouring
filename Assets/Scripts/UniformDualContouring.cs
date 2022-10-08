@@ -12,6 +12,7 @@ using ImplementationType        = SurfaceExtractor.Implementation.Type;
 using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
+using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 public class UniformDualContouring : Voxelizer {
@@ -86,9 +87,9 @@ public class UniformDualContouring : Voxelizer {
 
         public bool intersectsContour( ) {
             return (
-                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material1
+                this.corners[0].materialIndex == MaterialIndex.Void && this.corners[1].materialIndex >= MaterialIndex.Material0
             ) || (
-                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material1
+                this.corners[1].materialIndex == MaterialIndex.Void && this.corners[0].materialIndex >= MaterialIndex.Material0
             );
         }
 
@@ -312,7 +313,8 @@ public class UniformDualContouring : Voxelizer {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
-            IntersectionApproximation    intersectionApproximation
+            IntersectionApproximation    intersectionApproximation,
+            VertexNormals                vertexNormals
         ) {
 
             // create uniformly subdivided voxel grid
@@ -354,7 +356,7 @@ public class UniformDualContouring : Voxelizer {
 
                 if(
                     voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
-                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material1 )
+                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material0 )
                 ) {
                     // cell is either fully inside or outside the volume, skip
                     continue;
@@ -497,8 +499,8 @@ public class UniformDualContouring : Voxelizer {
 
                 // indices should only be generated from void - solid intersections
                 UnityEngine.Debug.Assert(
-                    ( edge.corners[0].materialIndex == MaterialIndex.Void && edge.corners[1].materialIndex >= MaterialIndex.Material1 ) ||
-                    ( edge.corners[1].materialIndex == MaterialIndex.Void && edge.corners[0].materialIndex >= MaterialIndex.Material1 )
+                    ( edge.corners[0].materialIndex == MaterialIndex.Void && edge.corners[1].materialIndex >= MaterialIndex.Material0 ) ||
+                    ( edge.corners[1].materialIndex == MaterialIndex.Void && edge.corners[0].materialIndex >= MaterialIndex.Material0 )
                 );
 
                 var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
@@ -515,28 +517,24 @@ public class UniformDualContouring : Voxelizer {
                     }
                 }
 
-                int[] indices;
+                int[] indices = new int[6];
 
                 // ensure quad is indexed facing outward
                 if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
-                    indices = new int[] {
-                        voxels[0].index,
-                        voxels[1].index,
-                        voxels[2].index,
-                        voxels[3].index,
-                        voxels[2].index,
-                        voxels[1].index
-                    };
+                    indices[0] = voxels[0].index;
+                    indices[1] = voxels[1].index;
+                    indices[2] = voxels[2].index;
+                    indices[3] = voxels[3].index;
+                    indices[4] = voxels[2].index;
+                    indices[5] = voxels[1].index;
                 }
                 else {
-                    indices = new int[] {
-                        voxels[1].index,
-                        voxels[2].index,
-                        voxels[3].index,
-                        voxels[2].index,
-                        voxels[1].index,
-                        voxels[0].index
-                    };
+                    indices[0] = voxels[1].index;
+                    indices[1] = voxels[2].index;
+                    indices[2] = voxels[3].index;
+                    indices[3] = voxels[2].index;
+                    indices[4] = voxels[1].index;
+                    indices[5] = voxels[0].index;
                 }
 
                 var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
@@ -559,7 +557,8 @@ public class UniformDualContouring : Voxelizer {
             [FieldOffset( 2 * 4 )] public int binarySearchIterations;
             [FieldOffset( 3 * 4 )] public int surfaceCorrectionIterations;
             [FieldOffset( 4 * 4 )] public int intersectionApproximation;
-            [FieldOffset( 5 * 4 )] public int densityFunctionCount;
+            [FieldOffset( 5 * 4 )] public int vertexNormals;
+            [FieldOffset( 6 * 4 )] public int densityFunctionCount;
 
             public Configuration(
                 int                       resolution,
@@ -567,6 +566,7 @@ public class UniformDualContouring : Voxelizer {
                 int                       binarySearchIterations,
                 int                       surfaceCorrectionIterations,
                 IntersectionApproximation intersectionApproximation,
+                VertexNormals             vertexNormals,
                 int                       densityFunctionCount
             ) {
                 this.resolution                  = resolution;
@@ -574,6 +574,7 @@ public class UniformDualContouring : Voxelizer {
                 this.binarySearchIterations      = binarySearchIterations;
                 this.surfaceCorrectionIterations = surfaceCorrectionIterations;
                 this.intersectionApproximation   = ( int )intersectionApproximation;
+                this.vertexNormals               = ( int )vertexNormals;
                 this.densityFunctionCount        = densityFunctionCount;
             }
         }
@@ -587,15 +588,15 @@ public class UniformDualContouring : Voxelizer {
         private ComputeBuffer densityFunctionsBuffer;
         private ComputeBuffer verticesBuffer;
         private ComputeBuffer normalsBuffer;
-        private ComputeBuffer vertexCountBuffer;
         private ComputeBuffer quadsBuffer;
-        private ComputeBuffer quadsCountBuffer;
+        private ComputeBuffer countsBuffer;
+        private ComputeBuffer argumentsBuffer;
 
         private readonly int buildVoxelGridKernel;
         private readonly int sampleCornerDensitiesKernel;
         private readonly int calculateMinimizingVerticesKernel;
-        private readonly int generateVerticesKernel;
-        private readonly int generateIndicesKernel;
+        private readonly int generateSharedVerticesKernel;
+        private readonly int contourKernel;
 
         public GPUImplementation( ) {
             this.uniformDualContouring = Resources.Load<ComputeShader>( "Shaders/UniformDualContouring" );
@@ -603,8 +604,8 @@ public class UniformDualContouring : Voxelizer {
             this.buildVoxelGridKernel              = this.uniformDualContouring.FindKernel( "buildVoxelGrid" );
             this.sampleCornerDensitiesKernel       = this.uniformDualContouring.FindKernel( "sampleCornerDensities" );
             this.calculateMinimizingVerticesKernel = this.uniformDualContouring.FindKernel( "calculateMinimizingVertices" );
-            this.generateVerticesKernel            = this.uniformDualContouring.FindKernel( "generateVertices" );
-            this.generateIndicesKernel             = this.uniformDualContouring.FindKernel( "generateIndices" );
+            this.generateSharedVerticesKernel      = this.uniformDualContouring.FindKernel( "generateSharedVertices" );
+            this.contourKernel                     = this.uniformDualContouring.FindKernel( "contour" );
         }
 
         public Either<CPUVoxelization, GPUVoxelization> voxelize(
@@ -614,7 +615,8 @@ public class UniformDualContouring : Voxelizer {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
-            IntersectionApproximation    intersectionApproximation
+            IntersectionApproximation    intersectionApproximation,
+            VertexNormals                vertexNormals
         ) {
             this.createBuffers(
                 densityFunctions,
@@ -622,24 +624,29 @@ public class UniformDualContouring : Voxelizer {
                 minimizerIterations,
                 binarySearchIterations,
                 surfaceCorrectionIterations,
-                intersectionApproximation
+                intersectionApproximation,
+                vertexNormals
             );
 
             this.buildVoxelGrid              ( resolution );
             this.sampleCornerDensities       ( resolution );
             this.calculateMinimizingVertices ( resolution );
-            this.generateVertices            ( resolution );
-            this.generateIndices             ( resolution );
+
+            if( vertexNormals == VertexNormals.Shared ) {
+                this.generateVertices( resolution );
+            }
+
+            this.generateIndices( resolution );
 
             return new Either<CPUVoxelization, GPUVoxelization>.Type1( new( ) {
-                vertices    = this.verticesBuffer,
-                normals     = this.normalsBuffer,
-                quads       = this.quadsBuffer,
-                corners     = this.cornersBuffer,
-                edges       = this.edgesBuffer,
-                voxels      = this.voxelsBuffer,
-                vertexCount = this.vertexCountBuffer,
-                quadsCount  = this.quadsCountBuffer
+                vertices  = this.verticesBuffer,
+                normals   = this.normalsBuffer,
+                quads     = this.quadsBuffer,
+                corners   = this.cornersBuffer,
+                edges     = this.edgesBuffer,
+                voxels    = this.voxelsBuffer,
+                counts    = this.countsBuffer,
+                arguments = this.argumentsBuffer
             } );
         }
 
@@ -665,20 +672,23 @@ public class UniformDualContouring : Voxelizer {
         }
 
         private void generateVertices( int resolution ) {
-            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "voxels",      this.voxelsBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "vertices",    this.verticesBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "normals",     this.normalsBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateVerticesKernel, "vertexCount", this.vertexCountBuffer );
-            this.uniformDualContouring.Dispatch  ( this.generateVerticesKernel, resolution, resolution, resolution );
+            this.uniformDualContouring.SetBuffer ( this.generateSharedVerticesKernel, "voxels",   this.voxelsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateSharedVerticesKernel, "vertices", this.verticesBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateSharedVerticesKernel, "normals",  this.normalsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.generateSharedVerticesKernel, "counts",   this.countsBuffer );
+            this.uniformDualContouring.Dispatch  ( this.generateSharedVerticesKernel, resolution, resolution, resolution );
         }
 
         private void generateIndices( int resolution ) {
-            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "voxels",     this.voxelsBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "edges",      this.edgesBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "corners",    this.cornersBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "quads",      this.quadsBuffer );
-            this.uniformDualContouring.SetBuffer ( this.generateIndicesKernel, "quadsCount", this.quadsCountBuffer );
-            this.uniformDualContouring.Dispatch  ( this.generateIndicesKernel, resolution, resolution, resolution );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "voxels",    this.voxelsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "edges",     this.edgesBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "corners",   this.cornersBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "vertices",  this.verticesBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "normals",   this.normalsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "quads",     this.quadsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "counts",    this.countsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.contourKernel, "arguments", this.argumentsBuffer );
+            this.uniformDualContouring.Dispatch  ( this.contourKernel, resolution, resolution, resolution );
         }
 
         private void createBuffers(
@@ -687,7 +697,8 @@ public class UniformDualContouring : Voxelizer {
             int                          minimizerIterations,
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
-            IntersectionApproximation    intersectionApproximation
+            IntersectionApproximation    intersectionApproximation,
+            VertexNormals                vertexNormals
         ) {
             this.releaseBuffers( );
 
@@ -702,6 +713,7 @@ public class UniformDualContouring : Voxelizer {
                 binarySearchIterations,
                 surfaceCorrectionIterations,
                 intersectionApproximation,
+                vertexNormals,
                 densityFunctionCount
             );
 
@@ -709,11 +721,11 @@ public class UniformDualContouring : Voxelizer {
             var edgeData            = new Edge.Data[edgeCount];
             var cornerData          = new Corner.Data[cornerCount];
             var densityFunctionData = new DensityFunction.Data[densityFunctionCount];
-            var verticesData        = new Vector3[voxelCount];
-            var normalsData         = new Vector3[voxelCount];
-            var vertexCountData     = new int[1];
+            var verticesData        = new Vector3[voxelCount * 6];
+            var normalsData         = new Vector3[voxelCount * 6];
             var quadsData           = new Quad.Data[voxelCount];
-            var quadsCountData      = new int[1];
+            var countsData          = new int[2] { 0, 0 };
+            var argumentsData       = new int[4] { 0, 1, 0, 0 };
 
             for( var densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
                 densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
@@ -726,9 +738,10 @@ public class UniformDualContouring : Voxelizer {
             this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionData.Length, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
             this.verticesBuffer         = new ComputeBuffer( verticesData.Length,        Marshal.SizeOf( typeof( Vector3 ) ) );
             this.normalsBuffer          = new ComputeBuffer( normalsData.Length,         Marshal.SizeOf( typeof( Vector3 ) ) );
-            this.vertexCountBuffer      = new ComputeBuffer( vertexCountData.Length,     Marshal.SizeOf( typeof( int ) ));
             this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ) );
-            this.quadsCountBuffer       = new ComputeBuffer( quadsCountData.Length,      Marshal.SizeOf( typeof( int ) ) );
+            this.countsBuffer           = new ComputeBuffer( countsData.Length,          Marshal.SizeOf( typeof( int ) ) );
+            this.argumentsBuffer        = new ComputeBuffer( argumentsData.Length,       Marshal.SizeOf( typeof( int ) ), ComputeBufferType.IndirectArguments );
+            
 
             var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
             this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
@@ -740,9 +753,9 @@ public class UniformDualContouring : Voxelizer {
             this.densityFunctionsBuffer.SetData ( densityFunctionData );
             this.verticesBuffer.SetData         ( verticesData );
             this.normalsBuffer.SetData          ( normalsData );
-            this.vertexCountBuffer.SetData      ( vertexCountData );
             this.quadsBuffer.SetData            ( quadsData );
-            this.quadsCountBuffer.SetData       ( quadsCountData );
+            this.countsBuffer.SetData           ( countsData );
+            this.argumentsBuffer.SetData        ( argumentsData );
         }
 
         public void releaseBuffers( ) {
@@ -753,9 +766,9 @@ public class UniformDualContouring : Voxelizer {
             this.densityFunctionsBuffer?.Release( );
             this.verticesBuffer?.Release( );
             this.normalsBuffer?.Release( );
-            this.vertexCountBuffer?.Release( );
             this.quadsBuffer?.Release( );
-            this.quadsCountBuffer?.Release( );
+            this.countsBuffer?.Release( );
+            this.argumentsBuffer?.Release( );
         }
 
     }
@@ -809,7 +822,8 @@ public class UniformDualContouring : Voxelizer {
             this.binarySearchIterations,
             this.surfaceCorrectionIterations,
             this.qefSolverType,
-            this.intersectionApproximation
+            this.intersectionApproximation,
+            this.vertexNormals
         );
     }
 
@@ -820,31 +834,29 @@ public class UniformDualContouring : Voxelizer {
         var edgeCount   = voxelCount * Voxel.EdgeCount;
         var cornerCount = voxelCount * Voxel.CornerCount;
 
-        var voxelData       = new Voxel.Data[voxelCount];
-        var edgeData        = new Edge.Data[edgeCount];
-        var cornerData      = new Corner.Data[cornerCount];
-        var verticesData    = new Vector3[voxelCount];
-        var normalsData     = new Vector3[voxelCount];
-        var vertexCountData = new int[1];
-        var quadsData       = new Quad.Data[voxelCount];
-        var quadsCountData  = new int[1];
+        var voxelData    = new Voxel.Data[voxelCount];
+        var edgeData     = new Edge.Data[edgeCount];
+        var cornerData   = new Corner.Data[cornerCount];
+        var verticesData = new Vector3[voxelCount * 6];
+        var normalsData  = new Vector3[voxelCount * 6];
+        var quadsData    = new Quad.Data[voxelCount];
+        var countsData   = new int[2];
 
-        voxelization.voxels.GetData      ( voxelData );
-        voxelization.edges.GetData       ( edgeData );
-        voxelization.corners.GetData     ( cornerData );
-        voxelization.vertices.GetData    ( verticesData );
-        voxelization.vertexCount.GetData ( vertexCountData );
-        voxelization.normals.GetData     ( normalsData );
-        voxelization.quads.GetData       ( quadsData );
-        voxelization.quadsCount.GetData  ( quadsCountData );
+        voxelization.voxels.GetData   ( voxelData );
+        voxelization.edges.GetData    ( edgeData );
+        voxelization.corners.GetData  ( cornerData );
+        voxelization.vertices.GetData ( verticesData );
+        voxelization.normals.GetData  ( normalsData );
+        voxelization.quads.GetData    ( quadsData );
+        voxelization.counts.GetData   ( countsData );
 
         // build mesh
         var mesh = new Mesh {
-            vertices = verticesData.Take ( vertexCountData[0] ).ToArray( ),
-            normals  = normalsData.Take  ( vertexCountData[0] ).ToArray( ),
+            vertices = verticesData.Take ( countsData[0] ).ToArray( ),
+            normals  = normalsData.Take  ( countsData[0] ).ToArray( ),
         };
 
-        var quads = quadsData.Take( quadsCountData[0] ).Select( ( quadData ) => new Quad( quadData ) );
+        var quads = quadsData.Take( countsData[1] ).Select( ( quadData ) => new Quad( quadData ) );
 
         var subMeshIndices = new Dictionary<int, List<int>>( );
 
