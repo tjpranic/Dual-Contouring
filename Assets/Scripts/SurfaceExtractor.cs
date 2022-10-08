@@ -125,7 +125,7 @@ public interface SurfaceExtractor {
     public Implementation.Type       implementationType          { get; set; }
     public QEFSolver.Type            qefSolverType               { get; set; }
     public IntersectionApproximation intersectionApproximation   { get; set; }
-    public VertexNormals                vertexNormals                  { get; set; }
+    public VertexNormals             vertexNormals               { get; set; }
 
     public Either<Implementation.CPU.Voxelization, Implementation.GPU.Voxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
 

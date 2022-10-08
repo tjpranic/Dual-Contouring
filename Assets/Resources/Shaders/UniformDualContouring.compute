@@ -489,6 +489,11 @@ uint findHighestMaterialBit( uint materialIndex ) {
     return 0;
 }
 
+static uint WINDING_ORDERS[2][6] = {
+    { 0, 1, 2, 3, 2, 1 },
+    { 1, 2, 3, 2, 1, 0 }
+};
+
 void generateIndices( uint voxelIndices[4], uint voxelEdgeIndex ) {
 
     bool allHaveFeatures = true;
@@ -518,97 +523,58 @@ void generateIndices( uint voxelIndices[4], uint voxelEdgeIndex ) {
             ? corners[cornerIndex1].materialIndex
             : corners[cornerIndex0].materialIndex;
 
-        uint indexLookup[6];
+        uint windingOrder[6];
 
-        // ensure quad is indexed facing outward
+        // different winding order to ensure quad is indexed facing outward
         if( corners[cornerIndex0].materialIndex == MATERIAL_INDEX_VOID ) {
-            indexLookup[0] = 0;
-            indexLookup[1] = 1;
-            indexLookup[2] = 2;
-            indexLookup[3] = 3;
-            indexLookup[4] = 2;
-            indexLookup[5] = 1;
+            windingOrder = WINDING_ORDERS[0];
         }
         else {
-            indexLookup[0] = 1;
-            indexLookup[1] = 2;
-            indexLookup[2] = 3;
-            indexLookup[3] = 2;
-            indexLookup[4] = 1;
-            indexLookup[5] = 0;
+            windingOrder = WINDING_ORDERS[1];
         }
 
         uint indices[6];
 
         if( vertexNormals == VERTEX_NORMALS_SHARED ) {
             // assign vertex according to pre-generated indices
-            indices[0] = voxels[voxelIndices[indexLookup[0]]].index;
-            indices[1] = voxels[voxelIndices[indexLookup[1]]].index;
-            indices[2] = voxels[voxelIndices[indexLookup[2]]].index;
-            indices[3] = voxels[voxelIndices[indexLookup[3]]].index;
-            indices[4] = voxels[voxelIndices[indexLookup[4]]].index;
-            indices[5] = voxels[voxelIndices[indexLookup[5]]].index;
+            indices[0] = voxels[voxelIndices[windingOrder[0]]].index;
+            indices[1] = voxels[voxelIndices[windingOrder[1]]].index;
+            indices[2] = voxels[voxelIndices[windingOrder[2]]].index;
+            indices[3] = voxels[voxelIndices[windingOrder[3]]].index;
+            indices[4] = voxels[voxelIndices[windingOrder[4]]].index;
+            indices[5] = voxels[voxelIndices[windingOrder[5]]].index;
         }
         else if( vertexNormals == VERTEX_NORMALS_SPLIT ) {
             // generate split vertices
             [unroll]
-            for( uint i = 0; i < 6; ++i ) {
+            for( uint indexIndex = 0; indexIndex < 6; ++indexIndex ) {
                 uint vertexIndex;
                 InterlockedAdd( counts[VERTEX_COUNT_INDEX], 1, vertexIndex );
 
-                indices[i] = vertexIndex;
+                indices[indexIndex] = vertexIndex;
 
-                vertices[vertexIndex] = voxels[voxelIndices[indexLookup[i]]].vertex;
-                normals[vertexIndex]  = voxels[voxelIndices[indexLookup[i]]].normal;
+                vertices[vertexIndex] = voxels[voxelIndices[windingOrder[indexIndex]]].vertex;
+                normals[vertexIndex]  = voxels[voxelIndices[windingOrder[indexIndex]]].normal;
             }
 
-            /*
-            // average the normal across quad
-            float3 normal = float3( 0.0f, 0.0f, 0.0f );
-            
+            // recalculate normals for both triangles
             [unroll]
-            for( i = 0; i < 6; ++i ) {
-                normal += normals[indices[i]];
-            }
-            
-            normal = normalize( normal / 6 );
-            
-            [unroll]
-            for( i = 0; i < 6; ++i ) {
-                normals[indices[i]] = normal;
-            }
-            */
-
-            // recalculate normal for both triangles
-            [unroll]
-            for( i = 0; i < 2; ++i ) {
-                uint normalIndex0 = indices[( i * 3 ) + 0];
-                uint normalIndex1 = indices[( i * 3 ) + 1];
-                uint normalIndex2 = indices[( i * 3 ) + 2];
-
-                float3 normal = float3( 0.0f, 0.0f, 0.0f );
-
-                /*
-                // average normal across triangle
-                [unroll]
-                for( uint j = i * 3; j < ( i * 3 ) + 3; ++j ) {
-                    normal += normals[indices[j]];
-                }
-
-                normal = normalize( normal / 3 );
-                */
+            for( uint triangleIndex = 0; triangleIndex < 2; ++triangleIndex ) {
+                uint vertexIndex0 = indices[( triangleIndex * 3 ) + 0];
+                uint vertexIndex1 = indices[( triangleIndex * 3 ) + 1];
+                uint vertexIndex2 = indices[( triangleIndex * 3 ) + 2];
 
                 // set the normals of each vertex in a triangle to the normal of the triangle face
-                normal = normalize(
+                float3 normal = normalize(
                     cross(
-                        normals[normalIndex1] - normals[normalIndex0],
-                        normals[normalIndex2] - normals[normalIndex0]
+                        vertices[vertexIndex1] - vertices[vertexIndex0],
+                        vertices[vertexIndex2] - vertices[vertexIndex0]
                     )
                 );
 
                 [unroll]
-                for( uint j = i * 3; j < ( i * 3 ) + 3; ++j ) {
-                    normals[indices[j]] = normal;
+                for( uint indexIndex = triangleIndex * 3; indexIndex < ( triangleIndex * 3 ) + 3; ++indexIndex ) {
+                    normals[indices[indexIndex]] = normal;
                 }
             }
         }
@@ -620,6 +586,7 @@ void generateIndices( uint voxelIndices[4], uint voxelEdgeIndex ) {
 
         quads[quadIndex] = createQuad( indices, subMeshIndex );
 
+        // save total index count for usage in surface shader later
         uint indexCount;
         InterlockedAdd( arguments[INDEX_COUNT_INDEX], 6, indexCount );
     }

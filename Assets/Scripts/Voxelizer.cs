@@ -15,28 +15,28 @@ using QEFSolverType             = QEFSolver.Type;
 [RequireComponent( typeof( MeshRenderer ) )]
 public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
-    [SerializeField( )]
+    [SerializeField( ), Range( 2, 8 )]
     private int _resolution = 2;
     public int resolution {
         get { return this._resolution;  }
         set { this._resolution = value; }
     }
 
-    [SerializeField( )]
+    [SerializeField( ), Range( 0, 12 )]
     private int _minimizerIterations = 6;
     public int minimizerIterations {
         get { return this._minimizerIterations;  }
         set { this._minimizerIterations = value; }
     }
 
-    [SerializeField( )]
+    [SerializeField( ), Range( 0, 12 )]
     private int _binarySearchIterations = 6;
     public int binarySearchIterations {
         get { return this._binarySearchIterations;  }
         set { this._binarySearchIterations = value; }
     }
 
-    [SerializeField( )]
+    [SerializeField( ), Range( 0, 12 )]
     private int _surfaceCorrectionIterations = 6;
     public int surfaceCorrectionIterations {
         get { return this._surfaceCorrectionIterations;  }
@@ -104,11 +104,12 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
     private ComputeBuffer argumentsBuffer;
 
     public virtual void Start( ) {
+
         var volumes = this.GetComponentsInChildren<Volume>( );
 
         var voxelization = this.voxelize( volumes );
 
-        if( this.debugFlags == Debug.Off ) {
+        if( this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
             this.directToGPU = voxelization.tryVisit(
                 ( GPUVoxelization voxelization ) => {
@@ -118,11 +119,11 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
                     this.material = new Material( Resources.Load<Shader>( "Shaders/RenderContourDiffuse" ) );
 
-                    this.material.SetBuffer ( "vertices",     voxelization.vertices );
-                    this.material.SetBuffer ( "normals",      voxelization.normals );
-                    this.material.SetBuffer ( "quads",        voxelization.quads );
-                    this.material.SetMatrix ( "localToWorld", this.transform.localToWorldMatrix );
-                    this.material.SetMatrix ( "worldToLocal", this.transform.worldToLocalMatrix );
+                    this.material.SetBuffer( "vertices",     voxelization.vertices );
+                    this.material.SetBuffer( "normals",      voxelization.normals );
+                    this.material.SetBuffer( "quads",        voxelization.quads );
+                    this.material.SetMatrix( "localToWorld", this.transform.localToWorldMatrix );
+                    this.material.SetMatrix( "worldToLocal", this.transform.worldToLocalMatrix );
 
                     for( var materialIndex = 0; materialIndex < meshRenderer.materials.Length; ++materialIndex ) {
                         this.material.SetColor( $"color{materialIndex}", meshRenderer.materials[materialIndex].color );
