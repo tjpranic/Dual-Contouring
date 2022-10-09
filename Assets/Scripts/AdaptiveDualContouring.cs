@@ -168,6 +168,18 @@ public class AdaptiveDualContouring : Voxelizer {
 
     }
 
+    public class Quad {
+
+        public int[] indices      = new int[6];
+        public int   subMeshIndex = -1;
+
+        public Quad( int[] indices, int subMeshIndex ) {
+            this.indices      = indices;
+            this.subMeshIndex = subMeshIndex;
+        }
+
+    }
+
     [Space( )]
 
     public bool simplification = false;
@@ -329,9 +341,10 @@ public class AdaptiveDualContouring : Voxelizer {
 
         var vertices = new List<Vector3>( );
         var normals  = new List<Vector3>( );
-        var indices  = new Dictionary<int, List<int>>( );
+        var quads    = new List<Quad>( );
+        var indices2  = new Dictionary<int, List<int>>( );
 
-        this.contourCell( this.octree, Position.Root, vertices, normals, indices );
+        this.contourCell( this.octree, Position.Root, vertices, normals, quads );
 
         // build mesh
         var mesh = new Mesh {
@@ -339,11 +352,21 @@ public class AdaptiveDualContouring : Voxelizer {
             normals  = normals.ToArray( )
         };
 
-        mesh.subMeshCount = indices.Keys.Count;
+        var subMeshIndices = new Dictionary<int, List<int>>( );
+
+        foreach( var quad in quads ) {
+            var subMeshIndex = quad.subMeshIndex;
+            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
+                subMeshIndices.Add( subMeshIndex, new( ) );
+            }
+            subMeshIndices[subMeshIndex].AddRange( quad.indices );
+        }
+
+        mesh.subMeshCount = subMeshIndices.Keys.Count;
 
         var subMeshCount = 0;
-        foreach( var triangles in indices ) {
-            mesh.SetTriangles( triangles.Value, subMeshCount );
+        foreach( var indices in subMeshIndices ) {
+            mesh.SetTriangles( indices.Value, subMeshCount );
             ++subMeshCount;
         }
 
@@ -376,13 +399,13 @@ public class AdaptiveDualContouring : Voxelizer {
         } );
     }
 
-    private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+    private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
         if( node.data.type == VoxelType.Internal ) {
 
             // contour cells in children
 
             for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-                this.contourCell( node.children[childIndex], position /*( Position )childIndex*/, vertices, normals, indices );
+                this.contourCell( node.children[childIndex], position /*( Position )childIndex*/, vertices, normals, quads );
             }
 
             // contour common face pairs in children
@@ -390,19 +413,19 @@ public class AdaptiveDualContouring : Voxelizer {
             // x axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.X, position ) ) {
-                this.contourFace( facePair, Axis.X, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.X, position, vertices, normals, quads );
             }
 
             // y axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Y, position ) ) {
-                this.contourFace( facePair, Axis.Y, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.Y, position, vertices, normals, quads );
             }
 
             // z axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Z, position ) ) {
-                this.contourFace( facePair, Axis.Z, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.Z, position, vertices, normals, quads );
             }
 
             // contour common edges of children
@@ -410,24 +433,24 @@ public class AdaptiveDualContouring : Voxelizer {
             // x axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.X, position ) ) {
-                this.contourEdge( edgeNodes, Axis.X, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.X, position, vertices, normals, quads );
             }
 
             // y axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Y, position ) ) {
-                this.contourEdge( edgeNodes, Axis.Y, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.Y, position, vertices, normals, quads );
             }
 
             // z axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Z, position ) ) {
-                this.contourEdge( edgeNodes, Axis.Z, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.Z, position, vertices, normals, quads );
             }
         }
     }
 
-    private void contourFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+    private void contourFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
         UnityEngine.Debug.Assert( nodes.Length == 2 );
 
         if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
@@ -435,18 +458,18 @@ public class AdaptiveDualContouring : Voxelizer {
             // contour common face pairs in children of given face pairs
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.contourFace( facePair, axis, position, vertices, normals, indices );
+                this.contourFace( facePair, axis, position, vertices, normals, quads );
             }
 
             // contour common edges in children of given face pairs
 
             foreach( var ( edgeNodes, newAxis ) in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinFacePairs( nodes, axis, position ) ) {
-                this.contourEdge( edgeNodes, newAxis, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, newAxis, position, vertices, normals, quads );
             }
         }
     }
 
-    private void contourEdge( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+    private void contourEdge( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
         UnityEngine.Debug.Assert( nodes.Length == 4 );
 
         if(
@@ -455,23 +478,27 @@ public class AdaptiveDualContouring : Voxelizer {
             nodes[2].data.type != VoxelType.Internal &&
             nodes[3].data.type != VoxelType.Internal
         ) {
-            this.generateIndices( nodes, axis, position, vertices, normals, indices );
+            this.generateIndices( nodes, axis, position, vertices, normals, quads );
         }
         else {
 
             // contour common edges in children of given voxels
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinEdgeNodes( nodes, axis, position ) ) {
-                this.contourEdge( edgeNodes, axis, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, axis, position, vertices, normals, quads );
             }
         }
     }
 
-    private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, List<int>> indices ) {
+    private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
 
         var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
         if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+
+            var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
+                ? edge.corners[1].materialIndex
+                : edge.corners[0].materialIndex;
 
             // generate vertex and normal
             foreach( var node in nodes ) {
@@ -509,15 +536,9 @@ public class AdaptiveDualContouring : Voxelizer {
                 };
             }
 
-            var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
-                ? edge.corners[1].materialIndex
-                : edge.corners[0].materialIndex;
-
             var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
-            if( !indices.ContainsKey( subMeshIndex ) ) {
-                indices.Add( subMeshIndex, new( ) );
-            }
-            indices[subMeshIndex].AddRange( triangles );
+
+            quads.Add( new( triangles, subMeshIndex ) );
         }
     }
 
@@ -586,6 +607,13 @@ public class AdaptiveDualContouringEditor : VoxelizerEditor {
 
     public override void OnInspectorGUI( ) {
         base.OnInspectorGUI( );
+
+        var adaptiveDualContouring = this.target as AdaptiveDualContouring;
+
+        // not going to bother implementing GPU solver for adaptive dual contouring
+        if( adaptiveDualContouring.implementationType == ImplementationType.GPU ) {
+            adaptiveDualContouring.implementationType = ImplementationType.CPU;
+        }
     }
 
 }

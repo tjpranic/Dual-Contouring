@@ -145,16 +145,20 @@ public class ManifoldDualContouring : Voxelizer {
 
     public class Triangle : IEquatable<Triangle> {
 
-        public int[] indices = new int[3];
+        public int[] indices      = new int[3];
+        public int   subMeshIndex = -1;
 
-        public Triangle( int[] indices ) {
-            this.indices = indices;
+        public Triangle( int[] indices, int subMeshIndex ) {
+            this.indices      = indices;
+            this.subMeshIndex = subMeshIndex;
         }
 
-        public Triangle( int a, int b, int c ) {
+        public Triangle( int a, int b, int c, int subMeshIndex ) {
             this.indices[0] = a;
             this.indices[1] = b;
             this.indices[2] = c;
+
+            this.subMeshIndex = subMeshIndex;
         }
 
         public bool Equals( Triangle other ) {
@@ -325,11 +329,11 @@ public class ManifoldDualContouring : Voxelizer {
 
         // generate vertices and indices
 
-        var vertices = new List<Vector3>( );
-        var normals  = new List<Vector3>( );
-        var indices  = new Dictionary<int, HashSet<Triangle>>( );
+        var vertices  = new List<Vector3>( );
+        var normals   = new List<Vector3>( );
+        var triangles = new List<Triangle>( );
 
-        this.contourCell( this.octree, Position.Root, vertices, normals, indices );
+        this.contourCell( this.octree, Position.Root, vertices, normals, triangles );
 
         // build mesh
         var mesh = new Mesh {
@@ -337,20 +341,21 @@ public class ManifoldDualContouring : Voxelizer {
             normals  = normals.ToArray( )
         };
 
-        mesh.subMeshCount = indices.Keys.Count;
+        var subMeshIndices = new Dictionary<int, List<int>>( );
+
+        foreach( var triangle in triangles.Distinct( ) ) {
+            var subMeshIndex = triangle.subMeshIndex;
+            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
+                subMeshIndices.Add( subMeshIndex, new( ) );
+            }
+            subMeshIndices[subMeshIndex].AddRange( triangle.indices );
+        }
+
+        mesh.subMeshCount = subMeshIndices.Keys.Count;
 
         var subMeshCount = 0;
-        foreach( var triangles in indices ) {
-            mesh.SetTriangles(
-                triangles.Value.Aggregate(
-                    new List<int>( triangles.Value.Count * 3 ),
-                    ( accumulator, triangle ) => {
-                        accumulator.AddRange( triangle.indices );
-                        return accumulator;
-                    }
-                ),
-                subMeshCount
-            );
+        foreach( var indices in subMeshIndices ) {
+            mesh.SetTriangles( indices.Value, subMeshCount );
             ++subMeshCount;
         }
 
@@ -560,7 +565,7 @@ public class ManifoldDualContouring : Voxelizer {
         // surface indices would be assigned down here, if I allowed more than 1 vertex per cell :^)
     }
 
-    private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, HashSet<Triangle>> indices ) {
+    private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
         if( node.data.type == VoxelType.Internal ) {
 
             if( node.data.collapsible ) {
@@ -570,7 +575,7 @@ public class ManifoldDualContouring : Voxelizer {
             // contour cells in children
 
             for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-                this.contourCell( node.children[childIndex], position /*( Position )childIndex*/, vertices, normals, indices );
+                this.contourCell( node.children[childIndex], position /*( Position )childIndex*/, vertices, normals, triangles );
             }
 
             // contour common face pairs in children
@@ -578,19 +583,19 @@ public class ManifoldDualContouring : Voxelizer {
             // x axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.X, position ) ) {
-                this.contourFace( facePair, Axis.X, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.X, position, vertices, normals, triangles );
             }
 
             // y axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Y, position ) ) {
-                this.contourFace( facePair, Axis.Y, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.Y, position, vertices, normals, triangles );
             }
 
             // z axis faces
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Z, position ) ) {
-                this.contourFace( facePair, Axis.Z, position, vertices, normals, indices );
+                this.contourFace( facePair, Axis.Z, position, vertices, normals, triangles );
             }
 
             // contour common edges of children
@@ -598,24 +603,24 @@ public class ManifoldDualContouring : Voxelizer {
             // x axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.X, position ) ) {
-                this.contourEdge( edgeNodes, Axis.X, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.X, position, vertices, normals, triangles );
             }
 
             // y axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Y, position ) ) {
-                this.contourEdge( edgeNodes, Axis.Y, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.Y, position, vertices, normals, triangles );
             }
 
             // z axis edges
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Z, position ) ) {
-                this.contourEdge( edgeNodes, Axis.Z, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, Axis.Z, position, vertices, normals, triangles );
             }
         }
     }
 
-    private void contourFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, HashSet<Triangle>> indices ) {
+    private void contourFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
         UnityEngine.Debug.Assert( nodes.Length == 2 );
 
         if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
@@ -627,18 +632,18 @@ public class ManifoldDualContouring : Voxelizer {
             // contour common face pairs in children of given face pairs
 
             foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.contourFace( facePair, axis, position, vertices, normals, indices );
+                this.contourFace( facePair, axis, position, vertices, normals, triangles );
             }
 
             // contour common edges in children of given face pairs
 
             foreach( var ( edgeNodes, newAxis ) in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinFacePairs( nodes, axis, position ) ) {
-                this.contourEdge( edgeNodes, newAxis, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, newAxis, position, vertices, normals, triangles );
             }
         }
     }
 
-    private void contourEdge( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, HashSet<Triangle>> indices ) {
+    private void contourEdge( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
         UnityEngine.Debug.Assert( nodes.Length == 4 );
 
         if(
@@ -647,19 +652,19 @@ public class ManifoldDualContouring : Voxelizer {
             nodes[2].data.type != VoxelType.Internal &&
             nodes[3].data.type != VoxelType.Internal
         ) {
-            this.generateIndices( nodes, axis, position, vertices, normals, indices );
+            this.generateIndices( nodes, axis, position, vertices, normals, triangles );
         }
         else {
 
             // contour common edges in children of given voxels
 
             foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinEdgeNodes( nodes, axis, position ) ) {
-                this.contourEdge( edgeNodes, axis, position, vertices, normals, indices );
+                this.contourEdge( edgeNodes, axis, position, vertices, normals, triangles );
             }
         }
     }
 
-    private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, Dictionary<int, HashSet<Triangle>> indices ) {
+    private void generateIndices( Octree<Voxel>[] nodes, Axis axis, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
 
         var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
@@ -693,58 +698,56 @@ public class ManifoldDualContouring : Voxelizer {
                 }
             }
 
-            // generate indices
-
-            var triangles = new Triangle[2];
-
-            // ensure quad is indexed facing outward and reject polygons that were collapsed to an edge or point
-            if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
-                if( voxels[0].index != voxels[1].index && voxels[1].index != voxels[2].index ) {
-                    triangles[0] = new Triangle(
-                        voxels[0].index,
-                        voxels[1].index,
-                        voxels[2].index
-                    );
-                }
-                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[1].index ) {
-                    triangles[1] = new Triangle(
-                        voxels[3].index,
-                        voxels[2].index,
-                        voxels[1].index
-                    );
-                }
-            }
-            else {
-                if( voxels[1].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
-                    triangles[0] = new Triangle(
-                        voxels[1].index,
-                        voxels[2].index,
-                        voxels[3].index
-                    );
-                }
-                if( voxels[2].index != voxels[1].index && voxels[1].index != voxels[0].index ) {
-                    triangles[1] = new Triangle(
-                        voxels[2].index,
-                        voxels[1].index,
-                        voxels[0].index
-                    );
-                }
-            }
-
             var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
                 ? edge.corners[1].materialIndex
                 : edge.corners[0].materialIndex;
 
             var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
-            if( !indices.ContainsKey( subMeshIndex ) ) {
-                indices.Add( subMeshIndex, new( ) );
-            }
 
-            if( triangles[0] != null ) {
-                var _ = indices[subMeshIndex].Add( triangles[0] );
+            // ensure quad is indexed facing outward and reject polygons that were collapsed to an edge or point
+            if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
+                if( voxels[0].index != voxels[1].index && voxels[1].index != voxels[2].index ) {
+                    triangles.Add(
+                        new(
+                            voxels[0].index,
+                            voxels[1].index,
+                            voxels[2].index,
+                            subMeshIndex
+                        )
+                    );
+                }
+                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[1].index ) {
+                    triangles.Add(
+                        new(
+                            voxels[3].index,
+                            voxels[2].index,
+                            voxels[1].index,
+                            subMeshIndex
+                        )
+                    );
+                }
             }
-            if( triangles[1] != null ) {
-                var _ = indices[subMeshIndex].Add( triangles[1] );
+            else {
+                if( voxels[1].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
+                    triangles.Add(
+                        new(
+                            voxels[1].index,
+                            voxels[2].index,
+                            voxels[3].index,
+                            subMeshIndex
+                        )
+                    );
+                }
+                if( voxels[2].index != voxels[1].index && voxels[1].index != voxels[0].index ) {
+                    triangles.Add(
+                        new(
+                            voxels[2].index,
+                            voxels[1].index,
+                            voxels[0].index,
+                            subMeshIndex
+                        )
+                    );
+                }
             }
         }
     }
