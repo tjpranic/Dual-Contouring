@@ -4,7 +4,6 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-// TODO: implement manifold criterion
 // TODO: implement support for multiple vertices per voxel
 
 using Axis     = OctreeContouringTables<ManifoldDualContouring.Voxel>.Axis;
@@ -79,14 +78,17 @@ public class ManifoldDualContouring : Voxelizer {
         public SurfaceExtractor.Corner[] corners { get; }
         public SurfaceExtractor.Edge[]   edges   { get; }
 
-        public int       depth       { get; set; }
-        public QEFSolver qef         { get; set; }
-        public Vector3   vertex      { get; set; } = Vector3.zero;
-        public Vector3   normal      { get; set; } = Vector3.zero;
-        public float     error       { get; set; } = 0.0f;
-        public Voxel     parent      { get; set; } = null;
-        public bool      collapsible { get; set; } = true;
-        public int       index       { get; set; } = -1;
+        public int       depth         { get; set; }
+        public QEFSolver qef           { get; set; }
+        public Vector3   vertex        { get; set; } = Vector3.zero;
+        public Vector3   normal        { get; set; } = Vector3.zero;
+        public float     error         { get; set; } = 0.0f;
+        public Voxel     parent        { get; set; } = null;
+        public bool      collapsible   { get; set; } = true;
+        public int       index         { get; set; } = -1;
+        public int[]     intersections { get; set; } = new int[SurfaceExtractor.Voxel.EdgeCount]; // number of intersections on each edge
+        public int       euler         { get; set; } = 0;    // euler characteristic, manifold condition 1
+        public bool      face          { get; set; } = true; // whether face edge intersection count == 0 or 2, manifold condition 2
 
         public Voxel( VoxelType type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -179,6 +181,8 @@ public class ManifoldDualContouring : Voxelizer {
 
     [Min( 0.0f )]
     public float errorThreshold = 6e-12f;
+
+    public bool enforceManifold = true;
 
     private Octree<Voxel> octree;
 
@@ -280,22 +284,105 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
-        // generate vertex tree
+        // cluster vertices
 
-        this.clusterCell( this.octree, Position.Root, densityFunctions );
+        Octree<Voxel>.climb(
+            this.octree,
+            ( node ) => {
+                var voxel = node.data;
+
+                if( voxel.type == VoxelType.Leaf ) {
+                    // count the number of contour intersections on each edge of the leaf cell
+                    for( var edgeIndex = 0; edgeIndex < voxel.edges.Length; ++edgeIndex ) {
+                        voxel.intersections[edgeIndex] = Convert.ToInt32( voxel.edges[edgeIndex].intersectsContour( ) );
+                    }
+
+                    // euler characteristic for leaf cells is 1 if the cell contains a vertex, 0 otherwise
+                    voxel.euler = Convert.ToInt32( voxel.hasFeaturePoint( ) );
+                }
+                else {
+                    // calculate intersections for each non-leaf cell by counting intersections of sub-edges in children
+                    for( var edgeIndex = 0; edgeIndex < voxel.edges.Length; ++edgeIndex ) {
+                        var count = 0;
+                        foreach( var childIndex in this.lookupExternalEdgeIndices( edgeIndex ) ) {
+                            count += node.children[childIndex].data.intersections[edgeIndex];
+                        }
+
+                        voxel.intersections[edgeIndex] = count;
+                    }
+
+                    var euler = 0;
+                    foreach( var child in node.children ) {
+                        euler += child.data.euler;
+                    }
+
+                    // calculate euler characteristic of non-leaf cell for manifold condition 1
+                    var intersections = 0;
+                    for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
+                        var child = node.children[childIndex].data;
+
+                        foreach( var edgeIndex in this.lookupInternelEdgeIndices( childIndex ) ) {
+                            intersections += child.intersections[edgeIndex];
+                        }
+                    }
+
+                    voxel.euler = euler - ( intersections / 4 );
+
+                    // calculate face edge intersections for manifold condition 2
+                    for( var faceIndex = 0; faceIndex < SurfaceExtractor.Voxel.FaceCount && voxel.face; ++faceIndex ) {
+                        var count = 0;
+                        foreach( var edgeIndex in this.lookupFaceEdgeIndices( faceIndex ) ) {
+                            count += voxel.intersections[edgeIndex];
+                        }
+
+                        voxel.face = count == 0 || count == 2;
+                    }
+
+                    // solve QEF for vertex cluster
+
+                    voxel.qef = this.qefSolverType switch {
+                        QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+                        QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
+                        _                    => throw new Exception( "Unknown solver type specified" )
+                    };
+
+                    var averageNormal = Vector3.zero;
+
+                    foreach( var child in node.children ) {
+                        if( child.data.qef != null ) {
+                            voxel.qef.combine( child.data.qef );
+
+                            averageNormal += child.data.normal;
+                        }
+                    }
+
+                    if( voxel.qef.intersectionCount > 0 ) {
+                        ( voxel.vertex, voxel.error ) = voxel.qef.solve( node.data, densityFunctions );
+
+                        voxel.normal = Vector3.Normalize( averageNormal );
+
+                        foreach( var child in node.children ) {
+                            child.data.parent = voxel;
+                        }
+                    }
+                }
+            }
+        );
 
         if( UnityEngine.Debug.isDebugBuild ) {
             // verify the validity of the vertex clustering
             Octree<Voxel>.walk(
                 this.octree,
                 ( node ) => {
-                    if( node.data.hasFeaturePoint( ) && node.data.type == VoxelType.Internal ) {
+                    var voxel = node.data;
+
+                    if( voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Internal ) {
                         // every node other than the root should have a parent
-                        UnityEngine.Debug.Assert( node.data.depth == 0 || node.data.parent != null, "Non-root octree cluster node missing a parent" );
+                        UnityEngine.Debug.Assert( voxel.depth == 0 || voxel.parent != null, "Non-root octree cluster node missing a parent" );
 
                         var valid = true;
                         foreach( var child in node.children ) {
-                            if( child.data.parent != node.data ) {
+                            if( child.data.parent != voxel ) {
                                 valid = false;
                                 break;
                             }
@@ -312,8 +399,13 @@ public class ManifoldDualContouring : Voxelizer {
         Octree<Voxel>.climb(
             this.octree,
             ( node ) => {
-                if( node.data.type == VoxelType.Internal ) {
-                    var collapsible = node.data.error < this.errorThreshold;
+                var voxel = node.data;
+
+                if( voxel.type == VoxelType.Internal ) {
+                    var collapsible = voxel.error < this.errorThreshold && (
+                        !this.enforceManifold || ( voxel.euler == 1 && voxel.face )
+                    );
+
                     if( collapsible ) {
                         foreach( var child in node.children ) {
                             if( child.data.type == VoxelType.Internal && !child.data.collapsible ) {
@@ -322,7 +414,7 @@ public class ManifoldDualContouring : Voxelizer {
                             }
                         }
                     }
-                    node.data.collapsible = collapsible;
+                    voxel.collapsible = collapsible;
                 }
             }
         );
@@ -432,137 +524,48 @@ public class ManifoldDualContouring : Voxelizer {
         } );
     }
 
-    private void clusterCell( Octree<Voxel> node, Position position, IEnumerable<DensityFunction> densityFunctions ) {
-        var voxel = node.data;
-
-        var cluster = new List<Voxel>( );
-
-        if( voxel.type == VoxelType.Internal ) {
-
-            // cluster cells in children
-
-            for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-                this.clusterCell( node.children[childIndex], position /*( Position )childIndex*/, densityFunctions );
-            }
-
-            // cluster common face pairs in children
-
-            // x axis faces
-
-            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.X, position ) ) {
-                this.clusterFace( facePair, Axis.X, position, cluster );
-            }
-
-            // y axis faces
-
-            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Y, position ) ) {
-                this.clusterFace( facePair, Axis.Y, position, cluster );
-            }
-
-            // z axis faces
-
-            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, Axis.Z, position ) ) {
-                this.clusterFace( facePair, Axis.Z, position, cluster );
-            }
-
-            // cluster common edges of children
-
-            // x axis edges
-
-            foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.X, position ) ) {
-                this.clusterEdge( edgeNodes, Axis.X, position, cluster );
-            }
-
-            // y axis edges
-
-            foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Y, position ) ) {
-                this.clusterEdge( edgeNodes, Axis.Y, position, cluster );
-            }
-
-            // z axis edges
-
-            foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinNode( node, Axis.Z, position ) ) {
-                this.clusterEdge( edgeNodes, Axis.Z, position, cluster );
-            }
-
-            // grab voxels of direct children
-            foreach( var child in node.children ) {
-                cluster.Add( child.data );
-            }
-        }
-
-        if( cluster.Count == 0 ) {
-            return;
-        }
-
-        // solve QEF for vertex cluster
-
-        voxel.qef = this.qefSolverType switch {
-            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
-            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
-            _                    => throw new Exception( "Unknown solver type specified" )
+    private int[] lookupExternalEdgeIndices( int edgeIndex ) {
+        return edgeIndex switch {
+            0  => new int[] { 0, 1 },
+            1  => new int[] { 2, 3 },
+            2  => new int[] { 5, 6 },
+            3  => new int[] { 4, 7 },
+            4  => new int[] { 0, 5 },
+            5  => new int[] { 1, 6 },
+            6  => new int[] { 3, 4 },
+            7  => new int[] { 2, 7 },
+            8  => new int[] { 0, 3 },
+            9  => new int[] { 1, 2 },
+            10 => new int[] { 5, 4 },
+            11 => new int[] { 6, 7 },
+            _ => throw new Exception( "Unknown edge index specified" )
         };
-
-        var averageNormal = Vector3.zero;
-
-        foreach( var child in cluster ) {
-            if( child.qef != null ) {
-                voxel.qef.combine( child.qef );
-
-                averageNormal += child.normal;
-            }
-        }
-
-        if( voxel.qef.intersectionCount == 0 ) {
-            return;
-        }
-
-        ( voxel.vertex, voxel.error ) = voxel.qef.solve( node.data, densityFunctions );
-
-        voxel.normal = Vector3.Normalize( averageNormal );
-
-        foreach( var child in cluster ) {
-            child.parent = voxel;
-        }
     }
 
-    private void clusterFace( Octree<Voxel>[] nodes, Axis axis, Position position, List<Voxel> cluster ) {
-        UnityEngine.Debug.Assert( nodes.Length == 2 );
-
-        if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
-
-            // contour common face pairs in children of given face pairs
-
-            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
-                this.clusterFace( facePair, axis, position, cluster );
-            }
-
-            // contour common edges in children of given face pairs
-
-            foreach( var ( edgeNodes, newAxis ) in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinFacePairs( nodes, axis, position ) ) {
-                this.clusterEdge( edgeNodes, newAxis, position, cluster );
-            }
-        }
+    private int[] lookupFaceEdgeIndices( int faceIndex ) {
+        return faceIndex switch {
+            0 => new int[] { 0, 1,  8,  9 },
+            1 => new int[] { 0, 2,  4,  5 },
+            2 => new int[] { 1, 3,  6,  7 },
+            3 => new int[] { 4, 6,  8, 10 },
+            4 => new int[] { 5, 7,  9, 11 },
+            5 => new int[] { 2, 3, 10, 11 },
+            _ => throw new Exception( "Unknown face index specified" )
+        };
     }
 
-    private void clusterEdge( Octree<Voxel>[] nodes, Axis axis, Position position, List<Voxel> cluster ) {
-        UnityEngine.Debug.Assert( nodes.Length == 4 );
-
-        if(
-            nodes[0].data.type == VoxelType.Internal ||
-            nodes[1].data.type == VoxelType.Internal ||
-            nodes[2].data.type == VoxelType.Internal ||
-            nodes[3].data.type == VoxelType.Internal
-        ) {
-
-            // contour common edges in children of given voxels
-
-            foreach( var edgeNodes in OctreeContouringTables<Voxel>.lookupEdgeNodesWithinEdgeNodes( nodes, axis, position ) ) {
-                this.clusterEdge( edgeNodes, axis, position, cluster );
-            }
-        }
-
-        // surface indices would be assigned down here, if I allowed more than 1 vertex per cell :^)
+    int[] lookupInternelEdgeIndices( int childIndex ) {
+        return childIndex switch {
+            0 => new int[] { 1, 2, 3, 5, 6, 7, 9, 10, 11 },
+            1 => new int[] { 0, 2, 3, 4, 5, 6, 8, 10, 11 },
+            2 => new int[] { 1, 2, 3, 4, 6, 7, 8, 10, 11 },
+            3 => new int[] { 0, 2, 3, 4, 5, 7, 9, 10, 11 },
+            4 => new int[] { 0, 1, 2, 4, 5, 7, 8,  9, 11 },
+            5 => new int[] { 0, 1, 3, 5, 6, 7, 8,  9, 11 },
+            6 => new int[] { 0, 1, 3, 4, 6, 7, 8,  9, 10 },
+            7 => new int[] { 0, 1, 2, 4, 5, 6, 8,  9, 10 },
+            _ => throw new Exception( "Unknown child index specified" )
+        };
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {

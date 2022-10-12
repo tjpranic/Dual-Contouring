@@ -41,25 +41,25 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
                 _ => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             _ => throw new Exception( "Unknown position specified" ),
         };
@@ -90,25 +90,25 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
                 _ => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             _ => throw new Exception( "Unknown position specified" ),
         };
@@ -175,25 +175,25 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
                 _ => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             _ => throw new Exception( "Unknown position specified" ),
         };
@@ -320,25 +320,25 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
                 _ => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             _ => throw new Exception( "Unknown position specified" ),
         };
@@ -393,25 +393,25 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
                 _ => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXNegativeYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.NegativeXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYNegativeZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             Position.PositiveXPositiveYPositiveZ => axis switch {
-                _ => throw new Exception( "Unknown axis specified" ),
+                _ => throw new NotImplementedException( ),
             },
             _ => throw new Exception( "Unknown position specified" ),
         };

@@ -1,1 +1,4 @@
 // TODO
+
+// TODO: figure out how to remove redundant triangles on GPU
+// TODO: figure out non-recursive method of contouring

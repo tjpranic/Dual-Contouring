@@ -105,9 +105,6 @@ public class UniformDualContouring : Voxelizer {
 
     public class Voxel : SurfaceExtractor.Voxel {
 
-        public const int CornerCount = 8;
-        public const int EdgeCount   = 12;
-
         public struct Data {
 
             public Vector3 center;
@@ -403,7 +400,7 @@ public class UniformDualContouring : Voxelizer {
 
                         // x axis
                         if( y + 1 < this.grid.GetLength( 1 ) && z + 1 < this.grid.GetLength( 2 ) ) {
-                            var voxels = new Voxel[] {
+                            var cluster = new Voxel[] {
                                 voxel,
                                 this.grid[x, y,     z + 1],
                                 this.grid[x, y + 1, z    ],
@@ -411,12 +408,12 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[3]; // common edge surrounded by all 4 voxels, refer to edge layout diagram
 
-                            this.contour( voxels, edge, vertices, normals, quads );
+                            this.contour( cluster, edge, vertices, normals, quads );
                         }
 
                         // y axis
                         if( x + 1 < this.grid.GetLength( 0 ) && z + 1 < this.grid.GetLength( 2 ) ) {
-                            var voxels = new Voxel[] {
+                            var cluster = new Voxel[] {
                                 voxel,
                                 this.grid[x + 1, y, z    ],
                                 this.grid[x,     y, z + 1],
@@ -424,12 +421,12 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[7];
 
-                            this.contour( voxels, edge, vertices, normals, quads );
+                            this.contour( cluster, edge, vertices, normals, quads );
                         }
 
                         // z axis
                         if( x + 1 < this.grid.GetLength( 0 ) && y + 1 < this.grid.GetLength( 1 ) ) {
-                            var voxels = new Voxel[] {
+                            var cluster = new Voxel[] {
                                 voxel,
                                 this.grid[x,     y + 1, z],
                                 this.grid[x + 1, y,     z],
@@ -437,7 +434,7 @@ public class UniformDualContouring : Voxelizer {
                             };
                             var edge = voxel.edges[11];
 
-                            this.contour( voxels, edge, vertices, normals, quads );
+                            this.contour( cluster, edge, vertices, normals, quads );
                         }
                     }
                 }
@@ -468,9 +465,9 @@ public class UniformDualContouring : Voxelizer {
             }
 
             // build debug information
-            var debugVoxels = this.grid.flatten( );
+            var voxels = this.grid.flatten( );
 
-            var debugEdges = debugVoxels.Aggregate(
+            var edges = voxels.Aggregate(
                 new List<SurfaceExtractor.Edge>( ),
                 ( accumulator, voxel ) => {
                     accumulator.AddRange( voxel.edges );
@@ -478,7 +475,7 @@ public class UniformDualContouring : Voxelizer {
                 }
             ).Distinct( );
 
-            var debugCorners = debugVoxels.Aggregate(
+            var corners = voxels.Aggregate(
                 new List<SurfaceExtractor.Corner>( ),
                 ( accumulator, voxel ) => {
                     accumulator.AddRange( voxel.corners );
@@ -488,9 +485,9 @@ public class UniformDualContouring : Voxelizer {
 
             return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
                 mesh    = mesh,
-                corners = debugCorners,
-                edges   = debugEdges,
-                voxels  = debugVoxels
+                corners = corners,
+                edges   = edges,
+                voxels  = voxels
             } );
         }
 
@@ -703,8 +700,8 @@ public class UniformDualContouring : Voxelizer {
             this.releaseBuffers( );
 
             var voxelCount           = resolution * resolution * resolution;
-            var edgeCount            = voxelCount * Voxel.EdgeCount;
-            var cornerCount          = voxelCount * Voxel.CornerCount;
+            var edgeCount            = voxelCount * SurfaceExtractor.Voxel.EdgeCount;
+            var cornerCount          = voxelCount * SurfaceExtractor.Voxel.CornerCount;
             var densityFunctionCount = densityFunctions.Count( );
 
             var configuration = new Configuration(
@@ -831,8 +828,8 @@ public class UniformDualContouring : Voxelizer {
         var resolution = ( int )Mathf.Pow( 2, this.resolution );
 
         var voxelCount  = resolution * resolution * resolution;
-        var edgeCount   = voxelCount * Voxel.EdgeCount;
-        var cornerCount = voxelCount * Voxel.CornerCount;
+        var edgeCount   = voxelCount * SurfaceExtractor.Voxel.EdgeCount;
+        var cornerCount = voxelCount * SurfaceExtractor.Voxel.CornerCount;
 
         var voxelData    = new Voxel.Data[voxelCount];
         var edgeData     = new Edge.Data[edgeCount];
@@ -881,8 +878,8 @@ public class UniformDualContouring : Voxelizer {
             new List<Voxel>( ),
             ( accumulator, data ) => {
                 var voxelIndex       = accumulator.Count;
-                var voxelCornerIndex = voxelIndex * Voxel.CornerCount;
-                var voxelEdgeIndex   = voxelIndex * Voxel.EdgeCount;
+                var voxelCornerIndex = voxelIndex * SurfaceExtractor.Voxel.CornerCount;
+                var voxelEdgeIndex   = voxelIndex * SurfaceExtractor.Voxel.EdgeCount;
 
                 var voxelCorners = new Corner.Data[] {
                     cornerData[voxelCornerIndex + 0],

@@ -96,6 +96,10 @@ public interface SurfaceExtractor {
 
     public interface Voxel : IEquatable<Voxel> {
 
+        public const int FaceCount   = 6;
+        public const int CornerCount = 8;
+        public const int EdgeCount   = 12;
+        
         public enum Type {
             None     = -1,
             Internal =  0,
