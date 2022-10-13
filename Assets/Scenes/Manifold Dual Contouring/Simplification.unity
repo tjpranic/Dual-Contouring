@@ -328,6 +328,7 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   errorThreshold: 0.014
+  enforceManifold: 1
 --- !u!1 &646194171
 GameObject:
   m_ObjectHideFlags: 0

@@ -329,11 +329,62 @@ public class AdaptiveDualContouring : Voxelizer {
         );
 
         // simplify octree
+        // not topologically safe and i'm not gonna bother to fix it
 
         if( this.simplification ) {
             UnityEngine.Debug.Assert( this.errorThreshold != 0.0f );
 
-            this.octree = this.simplify( this.octree, this.errorThreshold, densityFunctions );
+            Octree<Voxel>.climb(
+                this.octree,
+                ( node ) => {
+                    var voxel = node.data;
+
+                    if( voxel.type != VoxelType.Internal ) {
+                        return;
+                    }
+
+                    voxel.qef = this.qefSolverType switch {
+                        QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+                        QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
+                        _                    => throw new Exception( "Unknown solver type specified" )
+                    };
+
+                    var averageNormal = Vector3.zero;
+
+                    var collapsible = true;
+                    foreach( var child in node.children ) {
+                        if( child.data.type == VoxelType.Internal ) {
+                            collapsible = false;
+                        }
+                        else if( child.data.qef != null ) {
+                            voxel.qef.combine( child.data.qef );
+
+                            averageNormal += child.data.normal;
+                        }
+                    }
+
+                    if( !collapsible ) {
+                        return;
+                    }
+
+                    if( voxel.qef.intersectionCount == 0 ) {
+                        return;
+                    }
+
+                    var ( vertex, error ) = voxel.qef.solve( voxel, densityFunctions );
+
+                    if( error > this.errorThreshold ) {
+                        return;
+                    }
+
+                    voxel.type   = VoxelType.Pseudo;
+                    voxel.vertex = vertex;
+                    voxel.normal = Vector3.Normalize( averageNormal );
+
+                    node.children = null;
+
+                }
+            );
 
         }
 
@@ -342,7 +393,6 @@ public class AdaptiveDualContouring : Voxelizer {
         var vertices = new List<Vector3>( );
         var normals  = new List<Vector3>( );
         var quads    = new List<Quad>( );
-        var indices2  = new Dictionary<int, List<int>>( );
 
         this.contourCell( this.octree, Position.Root, vertices, normals, quads );
 
@@ -540,60 +590,6 @@ public class AdaptiveDualContouring : Voxelizer {
 
             quads.Add( new( triangles, subMeshIndex ) );
         }
-    }
-
-    // not topologically safe and i'm not gonna bother to fix it
-    private Octree<Voxel> simplify( Octree<Voxel> node, float errorThreshold, IEnumerable<DensityFunction> densityFunctions ) {
-        var voxel = node.data;
-
-        if( voxel.type != VoxelType.Internal ) {
-            return node;
-        }
-
-        voxel.qef = this.qefSolverType switch {
-            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
-            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
-            _                    => throw new Exception( "Unknown solver type specified" )
-        };
-
-        var averageNormal = Vector3.zero;
-
-        var collapsible = true;
-        for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-            node.children[childIndex] = this.simplify( node.children[childIndex], errorThreshold, densityFunctions );
-
-            var child = node.children[childIndex].data;
-            if( child.type == VoxelType.Internal ) {
-                collapsible = false;
-            }
-            else if( child.qef != null ) {
-                voxel.qef.combine( child.qef );
-
-                averageNormal += child.normal;
-            }
-        }
-
-        if( !collapsible ) {
-            return node;
-        }
-
-        if( voxel.qef.intersectionCount == 0 ) {
-            return node;
-        }
-
-        var ( minimizingVertex, error ) = voxel.qef.solve( voxel, densityFunctions );
-
-        if( error > errorThreshold ) {
-            return node;
-        }
-
-        voxel.type   = VoxelType.Pseudo;
-        voxel.vertex = minimizingVertex;
-        voxel.normal = Vector3.Normalize( averageNormal );
-
-        node.children = null;
-
-        return node;
     }
 
     public override CPUVoxelization convert( GPUVoxelization voxelization ) {

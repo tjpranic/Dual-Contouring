@@ -374,7 +374,7 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
   _implementation: 0
-  _qefSolver: 0
+  _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
   debugFlags: 24
