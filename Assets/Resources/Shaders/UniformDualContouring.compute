@@ -128,12 +128,14 @@ float sampleEllipsoid( float3 position, in DensityFunction densityFunction ) {
     return k0 * ( k0 - 1.0f ) / k1;
 }
 
+// #include "Noise.hlsl"
+
 float sampleDensityFunction( float3 position, in DensityFunction densityFunction ) {
     switch( densityFunction.type ) {
         case DENSITY_FUNCTION_TYPE_CUBOID:
             return sampleCuboid( position, densityFunction );
         case DENSITY_FUNCTION_TYPE_ELLIPSOID:
-            return sampleEllipsoid( position, densityFunction );
+            return sampleEllipsoid( position, densityFunction )/*- ( ( ( perlinNoise( position * 1.0f ) + 1 ) / 2 ) * 0.25f )*/;
         default:
             return 0.0f;
     }
@@ -367,13 +369,13 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
     for( uint voxelCornerIndex = 0; voxelCornerIndex < VOXEL_CORNER_COUNT; ++voxelCornerIndex ) {
         uint cornerIndex = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndex;
 
-        cornerBits |= corners[cornerIndex].materialIndex;
+        cornerBits |= ( corners[cornerIndex].materialIndex << voxelCornerIndex );
     }
 
     bool allEmpty = cornerBits == 0;   // no bits set
     bool allSolid = cornerBits == 255; // all bits set
 
-    if( !( allEmpty && allSolid ) ) {
+    if( !( allEmpty || allSolid ) ) {
 
         SVDQEF qef           = createSVDQEF( );
         float3 averageNormal = float3( 0.0f, 0.0f, 0.0f );
@@ -480,7 +482,7 @@ RWStructuredBuffer<uint> arguments;
 
 uint findHighestMaterialBit( uint materialIndex ) {
     // return index of highest set bit in material index
-    for( uint bitIndex = INT_BITS - 1; bitIndex >= 0; --bitIndex ) {
+    for( uint bitIndex = INT_BITS - 1; bitIndex > 0; --bitIndex ) {
         if( ( materialIndex >> bitIndex ) > 0 ) {
             return bitIndex;
         }

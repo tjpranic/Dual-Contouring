@@ -332,10 +332,8 @@ public class UniformDualContouring : Voxelizer {
 
             foreach( var voxel in this.grid ) {
                 foreach( var corner in voxel.corners ) {
-                    foreach( var densityFunction in densityFunctions ) {
-                        corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
-                        corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
-                    }
+                    corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
+                    corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
                 }
             }
 
@@ -738,7 +736,6 @@ public class UniformDualContouring : Voxelizer {
             this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ) );
             this.countsBuffer           = new ComputeBuffer( countsData.Length,          Marshal.SizeOf( typeof( int ) ) );
             this.argumentsBuffer        = new ComputeBuffer( argumentsData.Length,       Marshal.SizeOf( typeof( int ) ), ComputeBufferType.IndirectArguments );
-            
 
             var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
             this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );

@@ -69,12 +69,12 @@ public class SVDQEF : QEFSolver {
 
     public void combine( QEFSolver other ) {
         if( other is SVDQEF solver ) {
-            this.ATA.m00         += solver.ATA.m00;
-            this.ATA.m01         += solver.ATA.m01;
-            this.ATA.m02         += solver.ATA.m02;
-            this.ATA.m11         += solver.ATA.m11;
-            this.ATA.m12         += solver.ATA.m12;
-            this.ATA.m22         += solver.ATA.m22;
+            this.ATA.m00           += solver.ATA.m00;
+            this.ATA.m01           += solver.ATA.m01;
+            this.ATA.m02           += solver.ATA.m02;
+            this.ATA.m11           += solver.ATA.m11;
+            this.ATA.m12           += solver.ATA.m12;
+            this.ATA.m22           += solver.ATA.m22;
             this.ATB               += solver.ATB;
             this.BTB               += solver.BTB;
             this.massPoint         += solver.massPoint;

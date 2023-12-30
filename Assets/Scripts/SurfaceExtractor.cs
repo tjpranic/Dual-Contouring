@@ -226,7 +226,7 @@ public interface SurfaceExtractor {
 
     public static int findHighestMaterialBit( MaterialIndex materialIndex ) {
         // return index of highest set bit in material index
-        for( var bitIndex = ( sizeof( int ) * 8 ) - 1; bitIndex >= 0; --bitIndex ) {
+        for( var bitIndex = ( sizeof( int ) * 8 ) - 1; bitIndex > 0; --bitIndex ) {
             if( ( ( int )materialIndex >> bitIndex ) > 0 ) {
                 return bitIndex;
             }

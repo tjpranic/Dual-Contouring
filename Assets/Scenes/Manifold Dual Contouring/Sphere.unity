@@ -200,7 +200,7 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
   _implementation: 0
-  _qefSolver: 0
+  _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 0
   debugFlags: 30
@@ -217,6 +217,7 @@ MonoBehaviour:
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   errorThreshold: 6e-12
+  enforceManifold: 1
 --- !u!4 &132396071
 Transform:
   m_ObjectHideFlags: 0

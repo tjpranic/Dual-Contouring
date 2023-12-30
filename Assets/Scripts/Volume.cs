@@ -15,11 +15,15 @@ public abstract class Volume : MonoBehaviour, DensityFunction {
     // these 2 accessors transform to voxelizer object space because volumes are voxelized in voxelizer object space
 
     public Vector3 origin {
-        get { return this.transform.localPosition.divide( this.GetComponentInParent<Voxelizer>( ).transform.localScale ); }
+        get {
+            return this.transform.localPosition.divide( this.GetComponentInParent<Voxelizer>( ).transform.localScale );
+        }
     }
 
     public Vector3 extents {
-        get { return this.transform.localScale.divide( this.GetComponentInParent<Voxelizer>( ).transform.localScale ) / 2; }
+        get {
+            return this.transform.localScale.divide( this.GetComponentInParent<Voxelizer>( ).transform.localScale ) / 2;
+        }
     }
 
     [SerializeField( )]

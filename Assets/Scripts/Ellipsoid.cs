@@ -8,7 +8,7 @@ public class Ellipsoid : Volume {
 
     public override float sample( Vector3 position ) {
         // avoid division by zero
-        if( position - origin == Vector3.zero ) {
+        if( position - this.origin == Vector3.zero ) {
             return -1.0f;
         }
 

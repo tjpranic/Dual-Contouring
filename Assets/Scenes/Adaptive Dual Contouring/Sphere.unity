@@ -215,7 +215,10 @@ MonoBehaviour:
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
-  vertexMode: 0
+  _implementation: 0
+  _qefSolver: 0
+  _intersectionApproximation: 0
+  _vertexNormals: 0
   debugFlags: 30
   debugCornerSize: 0.0125
   debugEdgeSize: 0.025
@@ -229,9 +232,6 @@ MonoBehaviour:
   debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
   debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
   debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
-  _implementation: 0
-  _intersectionApproximation: 0
-  _qefSolver: 0
   simplification: 0
   errorThreshold: 0.01
 --- !u!1 &766627100
@@ -372,7 +372,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 6ddb063ee95f0c5498a1ace2072261de, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _combinationMode: 0
+  _combination: 0
   _materialIndex: 1
 --- !u!1 &1769153670
 GameObject:
@@ -442,7 +442,7 @@ Camera:
     height: 1
   near clip plane: 0.3
   far clip plane: 1000
-  field of view: 60
+  field of view: 69
   orthographic: 0
   orthographic size: 5
   m_Depth: -1

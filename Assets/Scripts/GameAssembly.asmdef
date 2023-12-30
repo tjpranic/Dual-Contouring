@@ -1,7 +1,9 @@
 {
     "name": "GameAssembly",
     "rootNamespace": "",
-    "references": [],
+    "references": [
+        "Unity.Mathematics"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": true,
