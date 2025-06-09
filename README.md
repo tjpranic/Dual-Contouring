@@ -18,41 +18,6 @@ This Unity project implements three main variants of the dual contouring algorit
 - **Unity Mathematics Package** (1.2.6)
 - Compute Shader support for GPU implementations
 
-## Getting Started
-
-### Usage
-
-1. Open the project in Unity
-2. Navigate to the `Assets/Scenes` folder and open a test scene
-3. Create a new GameObject and add one of the dual contouring components:
-   - `UniformDualContouring`
-   - `AdaptiveDualContouring`
-   - `ManifoldDualContouring`
-
-## Implementation Details
-
-### Uniform Dual Contouring
-- Uses a regular 3D grid subdivision
-- Supports both CPU and GPU implementations
-- GPU version uses compute shaders for parallel processing
-- Best for uniform detail requirements
-
-### Adaptive Dual Contouring
-- Uses octree subdivision for level-of-detail
-- Optional mesh simplification based on error thresholds
-- CPU-only implementation
-- Best for scenes with varying detail requirements
-
-### Manifold Dual Contouring
-- Ensures manifold mesh topology
-- Specialized vertex clustering to prevent non-manifold edges
-- CPU-only implementation
-- Best when topological correctness is critical
-
-### QEF Solvers
-- **Simple QEF**: Fast iterative solver
-- **SVD QEF**: More accurate Singular Value Decomposition solver
-
 ## License
 
 The MIT License (MIT)
