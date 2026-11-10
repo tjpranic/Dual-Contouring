@@ -45,8 +45,16 @@ public class MeshTopology {
     }
 
     public static MeshTopology of( Mesh mesh ) {
+        return of( mesh.triangles );
+    }
+
+    // the triangles of a single sub mesh, which is the part of the surface that one material covers
+    public static MeshTopology of( Mesh mesh, int subMesh ) {
+        return of( mesh.GetTriangles( subMesh ) );
+    }
+
+    private static MeshTopology of( int[] indices ) {
         var topology = new MeshTopology( );
-        var indices  = mesh.triangles;
 
         var faces = new List<int[]>( );
         for( var index = 0; index < indices.Length; index += 3 ) {

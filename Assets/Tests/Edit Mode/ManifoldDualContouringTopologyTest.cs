@@ -21,6 +21,14 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
         cuboid( new Vector3( 0.0f, 0.0625f, 0.0625f ), new Vector3( 1.0f, 0.04f, 0.04f ) )
     };
 
+    // a box with a thin finger standing on it. On its way up the finger passes through the 1 / 8 wide cells above the
+    // leaves as a tube, which no vertex may stand in for. Every octant of the grid holds a disk: a corner of the box,
+    // and in one of them the finger on top of it
+    private static readonly Shape[] boxWithFinger = {
+        cuboid( new Vector3( 0.0f,    0.0f,    -0.2f ), new Vector3( 0.4f,  0.4f,  0.23f ) ),
+        cuboid( new Vector3( 0.1875f, 0.1875f,  0.2f ), new Vector3( 0.04f, 0.04f, 0.2f  ) )
+    };
+
     // an error threshold that lets about half of the clusters above the leaves collapse on every model. The solvers
     // measure error differently: the SVD solver reports the residual of the QEF, the simple one how far the vertex is
     // from the surface
@@ -82,6 +90,48 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
         var topology = this.contour( voxelizer );
 
         Assert.AreEqual( 0, topology.degenerateTriangles, $"degenerate triangles in: {topology}" );
+    }
+
+    // section IV.A: a clustered vertex is collapsible "if the error for this vertex is less than the threshold", at
+    // every level of the octree. A cube centered in the grid has an octant around each of its corners, and the three
+    // faces in an octant meet in that corner without any error: the corners should be all that is left
+    [Test]
+    public void cubeClustersToItsCorners( ) {
+        var voxelizer = this.create( resolution, QEFSolverType.SVD, new[] { cube( Vector3.zero, 0.35f ) }, 1e-4f );
+
+        var topology = this.contour( voxelizer );
+
+        assertSingleSphere( topology );
+
+        Assert.AreEqual( 8,  topology.vertices,  $"vertices of: {topology}" );
+        Assert.AreEqual( 12, topology.triangles, $"triangles of: {topology}" );
+    }
+
+    // with the error threshold out of the way only the manifold criterion stops clustering. Every Model is a closed
+    // surface around the center of the grid: the root holds all of it, which is not a disk, and each of the eight
+    // octants holds a part that is
+    [Test]
+    public void clusteringGoesAsFarAsTheManifoldCriterionAllows( [Values] Model model, [Values] QEFSolverType solver ) {
+        var voxelizer = this.create( resolution, solver, shapesOf( model ), float.MaxValue );
+
+        var topology = this.contour( voxelizer );
+
+        assertSingleSphere( topology );
+
+        Assert.AreEqual( 8, topology.vertices, $"vertices of: {topology}" );
+    }
+
+    // section VI: "our manifold criterion may be able to determine that a safe simplification occurs later in vertex
+    // clustering even if unsafe collapses occurred previously"
+    [Test]
+    public void clusteringContinuesAboveUnsafeClusters( [Values] QEFSolverType solver ) {
+        var voxelizer = this.create( resolution, solver, boxWithFinger, float.MaxValue );
+
+        var topology = this.contour( voxelizer );
+
+        assertSingleSphere( topology );
+
+        Assert.AreEqual( 8, topology.vertices, $"vertices of: {topology}" );
     }
 
     // proposition 1 only lets a vertex stand in for a piece of surface with an euler characteristic of 1, a disk. A

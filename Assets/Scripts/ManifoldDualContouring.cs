@@ -84,7 +84,8 @@ public class ManifoldDualContouring : Voxelizer {
         public Vector3   normal        { get; set; } = Vector3.zero;
         public float     error         { get; set; } = 0.0f;
         public Voxel     parent        { get; set; } = null;
-        public bool      collapsible   { get; set; } = true;
+        public bool      collapsible   { get; set; } = true;  // whether the vertex may stand in for the vertices clustered below it
+        public bool      collapsed     { get; set; } = false; // whether contouring can skip the cell, no polygon comes out of it
         public int       index         { get; set; } = -1;
         public int[]     intersections { get; set; } = new int[SurfaceExtractor.Voxel.EdgeCount]; // number of intersections on each edge
         public int       euler         { get; set; } = 0;    // euler characteristic, manifold condition 1
@@ -396,7 +397,7 @@ public class ManifoldDualContouring : Voxelizer {
             );
         }
 
-        // mark voxels as collapsible
+        // mark vertices as collapsible and cells as collapsed
 
         Octree<Voxel>.climb(
             this.octree,
@@ -404,19 +405,23 @@ public class ManifoldDualContouring : Voxelizer {
                 var voxel = node.data;
 
                 if( voxel.type == VoxelType.Internal ) {
-                    var collapsible = voxel.error < this.errorThreshold && (
+                    // the vertex of a cluster is judged by itself: a cluster that is safe to collapse can sit above
+                    // clusters that are not
+                    voxel.collapsible = voxel.hasFeaturePoint && voxel.error < this.errorThreshold && (
                         !this.enforceManifold || ( voxel.euler == 1 && voxel.face )
                     );
 
-                    if( collapsible ) {
-                        foreach( var child in node.children ) {
-                            if( child.data.type == VoxelType.Internal && !child.data.collapsible ) {
-                                collapsible = false;
-                                break;
-                            }
+                    // every polygon inside a cell collapses to an edge or a point when its vertex is collapsible and
+                    // its children are leaves or collapsed themselves. A cell without a vertex holds no surface
+                    var collapsed = voxel.collapsible || !voxel.hasFeaturePoint;
+
+                    foreach( var child in node.children ) {
+                        if( child.data.type == VoxelType.Internal && !child.data.collapsed ) {
+                            collapsed = false;
+                            break;
                         }
                     }
-                    voxel.collapsible = collapsible;
+                    voxel.collapsed = collapsed;
                 }
             }
         );
@@ -556,11 +561,13 @@ public class ManifoldDualContouring : Voxelizer {
         };
     }
 
+    // the edges of a child that lie inside the parent or on one of its faces: all but the three that meet at the
+    // corner the child shares with the parent, which run along the edges of the parent
     int[] lookupInternelEdgeIndices( int childIndex ) {
         return childIndex switch {
             0 => new int[] { 1, 2, 3, 5, 6, 7, 9, 10, 11 },
-            1 => new int[] { 0, 2, 3, 4, 5, 6, 8, 10, 11 },
-            2 => new int[] { 1, 2, 3, 4, 6, 7, 8, 10, 11 },
+            1 => new int[] { 1, 2, 3, 4, 6, 7, 8, 10, 11 },
+            2 => new int[] { 0, 2, 3, 4, 5, 6, 8, 10, 11 },
             3 => new int[] { 0, 2, 3, 4, 5, 7, 9, 10, 11 },
             4 => new int[] { 0, 1, 2, 4, 5, 7, 8,  9, 11 },
             5 => new int[] { 0, 1, 3, 5, 6, 7, 8,  9, 11 },
@@ -573,7 +580,7 @@ public class ManifoldDualContouring : Voxelizer {
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
         if( node.data.type == VoxelType.Internal ) {
 
-            if( node.data.collapsible ) {
+            if( node.data.collapsed ) {
                 return;
             }
 
@@ -630,7 +637,7 @@ public class ManifoldDualContouring : Voxelizer {
 
         if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
 
-            if( nodes[0].data.collapsible && nodes[1].data.collapsible ) {
+            if( nodes[0].data.collapsed && nodes[1].data.collapsed ) {
                 return;
             }
 
@@ -709,49 +716,39 @@ public class ManifoldDualContouring : Voxelizer {
 
             var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
 
-            // ensure quad is indexed facing outward and reject polygons that were collapsed to an edge or point
+            int[] indices;
+
+            // ensure quad is indexed facing outward
             if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
-                if( voxels[0].index != voxels[1].index && voxels[1].index != voxels[2].index ) {
-                    triangles.Add(
-                        new(
-                            voxels[0].index,
-                            voxels[1].index,
-                            voxels[2].index,
-                            subMeshIndex
-                        )
-                    );
-                }
-                if( voxels[3].index != voxels[2].index && voxels[2].index != voxels[1].index ) {
-                    triangles.Add(
-                        new(
-                            voxels[3].index,
-                            voxels[2].index,
-                            voxels[1].index,
-                            subMeshIndex
-                        )
-                    );
-                }
+                indices = new int[] {
+                    voxels[0].index,
+                    voxels[1].index,
+                    voxels[2].index,
+                    voxels[3].index,
+                    voxels[2].index,
+                    voxels[1].index
+                };
             }
             else {
-                if( voxels[1].index != voxels[2].index && voxels[2].index != voxels[3].index ) {
-                    triangles.Add(
-                        new(
-                            voxels[1].index,
-                            voxels[2].index,
-                            voxels[3].index,
-                            subMeshIndex
-                        )
-                    );
-                }
-                if( voxels[2].index != voxels[1].index && voxels[1].index != voxels[0].index ) {
-                    triangles.Add(
-                        new(
-                            voxels[2].index,
-                            voxels[1].index,
-                            voxels[0].index,
-                            subMeshIndex
-                        )
-                    );
+                indices = new int[] {
+                    voxels[1].index,
+                    voxels[2].index,
+                    voxels[3].index,
+                    voxels[2].index,
+                    voxels[1].index,
+                    voxels[0].index
+                };
+            }
+
+            // voxels of the same cluster share a vertex, so clustering can collapse the quad to a triangle, an edge or
+            // a point. Whatever is left of it are the triangles that do not use a vertex twice
+            for( var triangleIndex = 0; triangleIndex < indices.Length; triangleIndex += 3 ) {
+                var a = indices[triangleIndex];
+                var b = indices[triangleIndex + 1];
+                var c = indices[triangleIndex + 2];
+
+                if( a != b && b != c && a != c ) {
+                    triangles.Add( new( a, b, c, subMeshIndex ) );
                 }
             }
         }

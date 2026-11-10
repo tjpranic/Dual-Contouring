@@ -35,8 +35,6 @@ public abstract class ContouringTest {
     private readonly List<Object>                created           = new( );
     private readonly List<UniformDualContouring> uniformVoxelizers = new( );
 
-    private LogType logFilter;
-
     protected static Shape ellipsoid( Vector3 origin, Vector3 extents, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) {
         return new( DensityFunction.Type.Ellipsoid, origin, extents, combination, materialIndex );
     }
@@ -53,19 +51,8 @@ public abstract class ContouringTest {
         return cuboid( origin, Vector3.one * extent, combination, materialIndex );
     }
 
-    [SetUp]
-    public void setUp( ) {
-        // SurfaceExtractor.findHighestMaterialBit logs a message for every quad of Material0, which would bury the
-        // output of a test run. Warnings, failed assertions and errors still get through
-        this.logFilter = Debug.unityLogger.filterLogType;
-
-        Debug.unityLogger.filterLogType = LogType.Warning;
-    }
-
     [TearDown]
     public void tearDown( ) {
-        Debug.unityLogger.filterLogType = this.logFilter;
-
         // OnDestroy releases the compute buffers of the GPU implementation, and edit mode does not call it by itself
         foreach( var voxelizer in this.uniformVoxelizers ) {
             voxelizer.OnDestroy( );

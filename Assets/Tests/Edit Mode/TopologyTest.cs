@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -51,6 +52,13 @@ public abstract class TopologyTest : ContouringTest {
 
     protected MeshTopology contour( Voxelizer voxelizer ) {
         return MeshTopology.of( this.voxelize( voxelizer ).mesh );
+    }
+
+    // in how many separate pieces each material shows on the surface, from the material with the fewest pieces up
+    protected int[] contourRegions( Voxelizer voxelizer ) {
+        var mesh = this.voxelize( voxelizer ).mesh;
+
+        return Enumerable.Range( 0, mesh.subMeshCount ).Select( ( subMesh ) => MeshTopology.of( mesh, subMesh ).components ).OrderBy( ( pieces ) => pieces ).ToArray( );
     }
 
     // every edge is shared by an even number of triangles

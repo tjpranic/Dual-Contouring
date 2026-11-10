@@ -185,6 +185,9 @@ public class AdaptiveDualContouring : Voxelizer {
     [Min( 0.0f )]
     public float errorThreshold = 0.01f;
 
+    [Tooltip( "Only simplify where that keeps the topology of the surface and of the regions its materials cover" )]
+    public bool topologySafe = true;
+
     private Octree<Voxel> octree;
 
     protected override Implementation implementation {
@@ -329,7 +332,6 @@ public class AdaptiveDualContouring : Voxelizer {
         );
 
         // simplify octree
-        // not topologically safe and i'm not gonna bother to fix it
 
         if( this.simplification ) {
             UnityEngine.Debug.Assert( this.errorThreshold != 0.0f );
@@ -368,6 +370,18 @@ public class AdaptiveDualContouring : Voxelizer {
                     }
 
                     if( voxel.qef.intersectionCount == 0 ) {
+                        // none of the children contain any of the surface, so the node is entirely inside or outside
+                        // the volume. It collapses into a leaf without a vertex, otherwise it would stay internal and
+                        // keep every node above it from collapsing
+                        voxel.type = VoxelType.Pseudo;
+                        voxel.qef  = null;
+
+                        node.children = null;
+
+                        return;
+                    }
+
+                    if( this.topologySafe && !OctreeTopology.collapsePreservesTopology( node ) ) {
                         return;
                     }
 
