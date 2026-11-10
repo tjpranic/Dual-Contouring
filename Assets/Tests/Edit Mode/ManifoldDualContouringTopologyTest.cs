@@ -86,6 +86,18 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
         assertTwoSpheres( this.contour( voxelizer ) );
     }
 
+    [Test]
+    public void materialBoundaryIsFollowed( ) {
+        this.assertBandFollowsMaterialBoundary( this.create( resolution, QEFSolverType.SVD, slabWithBand, 0.0f ) );
+    }
+
+    // the boundary is part of the QEFs that are combined during clustering, so a vertex only stands in for others
+    // when it can stay on the boundary as well as on the surface
+    [Test]
+    public void clusteredMaterialBoundaryIsFollowed( ) {
+        this.assertBandFollowsMaterialBoundary( this.create( resolution, QEFSolverType.SVD, slabWithBand, clusteringThreshold ) );
+    }
+
     // the debug visualization is given a voxel for every vertex on the contour: the cell the vertex was created in,
     // with that vertex in it. A cell that holds two pieces of the contour is there twice
     [Test]

@@ -307,22 +307,27 @@ public class AdaptiveDualContouring : Voxelizer {
                 var averageNormal = Vector3.zero;
 
                 foreach( var edge in voxel.edges ) {
-                    if( !edge.intersectsContour( ) ) {
-                        continue;
+                    if( edge.intersectsContour( ) ) {
+                        edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
+                        edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
+
+                        voxel.qef.add( edge.intersection, edge.normal );
+
+                        averageNormal += edge.normal;
                     }
+                    else if( SurfaceExtractor.crossesMaterialBoundary( edge ) ) {
+                        // the boundary between two materials draws the vertex to where they meet on the contour. Its
+                        // normal is not one of the contour, and stays out of the normal of the vertex
+                        ( edge.intersection, edge.normal ) = SurfaceExtractor.calculateMaterialBoundary( edge, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
 
-                    edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
-                    edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
-
-                    voxel.qef.add( edge.intersection, edge.normal );
-
-                    averageNormal += edge.normal;
+                        voxel.qef.add( edge.intersection, edge.normal );
+                    }
                 }
 
                 if( voxel.qef.intersectionCount > 0 ) {
                     ( voxel.vertex, voxel.error ) = QEFSolver.placeVertex( voxel.qef, voxel );
 
-                    voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
+                    voxel.normal = Vector3.Normalize( averageNormal );
 
                     voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
 

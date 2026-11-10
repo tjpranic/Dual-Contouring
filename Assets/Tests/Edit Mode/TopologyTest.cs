@@ -29,6 +29,16 @@ public abstract class TopologyTest : ContouringTest {
         sphere( new Vector3( 0.03125f + 0.0849f, 0.03125f + 0.0849f, 0.003f ), 0.1f )
     };
 
+    // a slab with a band of a second material across it, flush with the slab on every side. The band reaches from
+    // x = -0.13 to x = 0.17, and neither of those lies on a plane of a grid of 16^3 cells
+    protected const float bandMinimum = -0.13f;
+    protected const float bandMaximum =  0.17f;
+
+    protected static readonly Shape[] slabWithBand = {
+        cuboid( Vector3.zero,                    new Vector3( 0.4f,  0.1f, 0.4f ) ),
+        cuboid( new Vector3( 0.02f, 0.0f, 0.0f ), new Vector3( 0.15f, 0.1f, 0.4f ), Combination.Union, MaterialIndex.Material1 )
+    };
+
     protected static Shape[] shapesOf( Model model ) {
         return model switch {
             // sits off the grid lines so no corner or edge of the grid lands exactly on the surface
@@ -67,6 +77,38 @@ public abstract class TopologyTest : ContouringTest {
         var mesh = this.voxelize( voxelizer ).mesh;
 
         return Enumerable.Range( 0, mesh.subMeshCount ).Select( ( subMesh ) => MeshTopology.of( mesh, subMesh ).components ).OrderBy( ( pieces ) => pieces ).ToArray( );
+    }
+
+    // Dual Contouring of Hermite Data, section 2.3: with several materials, "edges that exhibit index changes are also
+    // tagged by exact intersection points and normals", which go into the QEF of a cell like those of the surface.
+    // That puts the vertices of the cells a material boundary passes through on that boundary: the part of the
+    // surface that shows the band begins and ends where the band does, not where the grid happens to put it
+    protected void assertBandFollowsMaterialBoundary( Voxelizer voxelizer ) {
+        // a binary search of six steps finds an intersection to within a sixty-fourth of an edge of a cell
+        const float tolerance = 0.002f;
+
+        var mesh = this.voxelize( voxelizer ).mesh;
+
+        Assert.AreEqual( 2, mesh.subMeshCount, "materials on the surface" );
+
+        var vertices = mesh.vertices;
+
+        // where along x the vertices of each material lie, the band is the one that spans less
+        var spans = Enumerable.Range( 0, mesh.subMeshCount ).Select(
+            ( subMesh ) => mesh.GetTriangles( subMesh ).Distinct( ).Select( ( index ) => vertices[index].x ).ToArray( )
+        ).OrderBy(
+            ( span ) => span.Max( ) - span.Min( )
+        ).ToArray( );
+
+        var band = spans[0];
+        var slab = spans[1];
+
+        Assert.AreEqual( bandMinimum, band.Min( ), tolerance, "where the band begins" );
+        Assert.AreEqual( bandMaximum, band.Max( ), tolerance, "where the band ends" );
+
+        var overlapping = slab.Count( ( x ) => x > bandMinimum + tolerance && x < bandMaximum - tolerance );
+
+        Assert.AreEqual( 0, overlapping, "vertices of the slab that lie inside the band" );
     }
 
     // every edge is shared by an even number of triangles

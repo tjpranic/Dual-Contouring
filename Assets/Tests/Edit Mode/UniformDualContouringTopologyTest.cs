@@ -32,6 +32,13 @@ public class UniformDualContouringTopologyTest : TopologyTest {
     }
 
     [Test]
+    public void materialBoundaryIsFollowed( [Values] ImplementationType implementation ) {
+        var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, slabWithBand ); // 16^3 cells
+
+        this.assertBandFollowsMaterialBoundary( voxelizer );
+    }
+
+    [Test]
     public void surfaceWithVertexAtOriginIsClosed( [Values] ImplementationType implementation ) {
         var voxelizer = this.createUniformVoxelizer( 3, implementation, QEFSolverType.SVD, cubeWithCornerAtOrigin ); // 8^3 cells
 

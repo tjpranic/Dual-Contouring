@@ -150,6 +150,22 @@ public class AdaptiveDualContouringTopologyTest : TopologyTest {
         Assert.AreEqual( 0, topology.degenerateTriangles, $"degenerate triangles in: {topology}" );
     }
 
+    [Test]
+    public void materialBoundaryIsFollowed( ) {
+        var voxelizer = this.createVoxelizer<AdaptiveDualContouring>( resolution, QEFSolverType.SVD, slabWithBand );
+
+        this.assertBandFollowsMaterialBoundary( voxelizer );
+    }
+
+    // the boundary is part of the QEFs that are added up during simplification, so a node only collapses when its
+    // vertex can stay on the boundary as well as on the surface
+    [Test]
+    public void simplifiedMaterialBoundaryIsFollowed( [Values] Simplification simplification ) {
+        var voxelizer = this.createSimplifying( QEFSolverType.SVD, slabWithBand, thresholdOf( simplification ), true );
+
+        this.assertBandFollowsMaterialBoundary( voxelizer );
+    }
+
     // section 4.2: the regions that the materials cover on the contour keep their topology as well. To the test for
     // empty and solid alone the top of the slab is a flat face that can collapse all the way, which would wipe out
     // the strip

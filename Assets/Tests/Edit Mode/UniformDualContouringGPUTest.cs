@@ -27,6 +27,12 @@ public class UniformDualContouringGPUTest : TopologyTest {
         this.assertVerticesMatchCPU( twoSpheres );
     }
 
+    // where the boundary between two materials passes through a cell it has a say in where the vertex goes
+    [Test]
+    public void verticesMatchCPUAlongAMaterialBoundary( ) {
+        this.assertVerticesMatchCPU( slabWithBand );
+    }
+
     private void assertVerticesMatchCPU( Shape[] shapes ) {
         var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.CPU, QEFSolverType.SVD, shapes );
 

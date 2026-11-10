@@ -244,54 +244,67 @@ void sampleCornerDensities( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     }
 }
 
-float calculateDensity( float3 position ) {
+// every density function, whatever its material
+#define MATERIAL_INDEX_ANY 0xFFFFFFFF
+
+// the density of the density functions of the given materials combined by themselves. A density function only ever sets
+// or clears its own material, so a material is present exactly where this is negative for it
+float calculateDensity( float3 position, uint materialIndex ) {
 
     float density = POSITIVE_INFINITY;
 
     for( uint densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
 
-        switch( densityFunctions[densityFunctionIndex].combination ) {
-            case DENSITY_FUNCTION_COMBINATION_UNION:
-                density = min( density,  sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
-                break;
-            case DENSITY_FUNCTION_COMBINATION_INTERSECTION:
-                density = max( density,  sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
-                break;
-            case DENSITY_FUNCTION_COMBINATION_SUBTRACTION:
-                density = max( density, -sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
-                break;
-            default:
-                density = 0.0f;
-                break;
+        if( materialIndex == MATERIAL_INDEX_ANY || ( densityFunctions[densityFunctionIndex].materialIndex & materialIndex ) != 0 ) {
+
+            switch( densityFunctions[densityFunctionIndex].combination ) {
+                case DENSITY_FUNCTION_COMBINATION_UNION:
+                    density = min( density,  sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
+                    break;
+                case DENSITY_FUNCTION_COMBINATION_INTERSECTION:
+                    density = max( density,  sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
+                    break;
+                case DENSITY_FUNCTION_COMBINATION_SUBTRACTION:
+                    density = max( density, -sampleDensityFunction( position, densityFunctions[densityFunctionIndex] ) );
+                    break;
+                default:
+                    density = 0.0f;
+                    break;
+            }
         }
     }
 
     return density;
 }
 
-float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
-    if( corner0.density == 0.0f || corner1.density == 0.0f ) {
+float calculateDensity( float3 position ) {
+    return calculateDensity( position, MATERIAL_INDEX_ANY );
+}
+
+// where the density of the given materials changes sign between two positions, given that density at each of them
+float3 approximateIntersection( float3 position0, float density0, float3 position1, float density1, uint materialIndex ) {
+    if( density0 == 0.0f || density1 == 0.0f ) {
         // one of the corners is at the exact intersection
-        return corner0.density == 0.0f ? corner0.position : corner1.position;
+        return density0 == 0.0f ? position0 : position1;
     }
     else if( intersectionApproximation == INTERSECTION_APPROXIMATION_BINARY_SEARCH ) {
 
         float3 start = float3( 0.0f, 0.0f, 0.0f );
         float3 end   = float3( 0.0f, 0.0f, 0.0f );
-        if( corner0.density < corner1.density ) {
-            start = corner0.position;
-            end   = corner1.position;
+        if( density0 < density1 ) {
+            start = position0;
+            end   = position1;
         }
         else {
-            start = corner1.position;
-            end   = corner0.position;
+            start = position1;
+            end   = position0;
         }
 
         float3 intersection = float3( 0.0f, 0.0f, 0.0f );
         for( uint binarySearchIteration = 0; binarySearchIteration < binarySearchIterations; ++binarySearchIteration ) {
             intersection = start + ( 0.5f * ( end - start ) );
 
-            float density = calculateDensity( intersection );
+            float density = calculateDensity( intersection, materialIndex );
 
             if( density < 0.0f ) {
                 start = intersection;
@@ -307,32 +320,40 @@ float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
         return intersection;
     }
     else if( intersectionApproximation == INTERSECTION_APPROXIMATION_LINEAR_INTERPOLATION ) {
-        return corner0.position + ( ( -corner0.density ) * ( corner1.position - corner0.position ) / ( corner1.density - corner0.density ) );
+        return position0 + ( ( -density0 ) * ( position1 - position0 ) / ( density1 - density0 ) );
     }
     return float3( 0.0f, 0.0f, 0.0f );
+}
+
+float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
+    return approximateIntersection( corner0.position, corner0.density, corner1.position, corner1.density, MATERIAL_INDEX_ANY );
 }
 
 // far smaller than a voxel so the samples do not reach across sharp edges of the surface, and well above the precision
 // of a float so the difference is not mostly rounding error
 #define STEP 1e-4f
 
-float3 calculateNormal( float3 position ) {
+float3 calculateNormal( float3 position, uint materialIndex ) {
 
     // sample surrounding x, y, z locations and take the difference
 
     float3 positive = float3( POSITIVE_INFINITY, POSITIVE_INFINITY, POSITIVE_INFINITY );
 
-    positive.x = calculateDensity( position + float3( STEP, 0.0f, 0.0f ) );
-    positive.y = calculateDensity( position + float3( 0.0f, STEP, 0.0f ) );
-    positive.z = calculateDensity( position + float3( 0.0f, 0.0f, STEP ) );
+    positive.x = calculateDensity( position + float3( STEP, 0.0f, 0.0f ), materialIndex );
+    positive.y = calculateDensity( position + float3( 0.0f, STEP, 0.0f ), materialIndex );
+    positive.z = calculateDensity( position + float3( 0.0f, 0.0f, STEP ), materialIndex );
 
     float3 negative = float3( POSITIVE_INFINITY, POSITIVE_INFINITY, POSITIVE_INFINITY );
 
-    negative.x = calculateDensity( position - float3( STEP, 0.0f, 0.0f ) );
-    negative.y = calculateDensity( position - float3( 0.0f, STEP, 0.0f ) );
-    negative.z = calculateDensity( position - float3( 0.0f, 0.0f, STEP ) );
+    negative.x = calculateDensity( position - float3( STEP, 0.0f, 0.0f ), materialIndex );
+    negative.y = calculateDensity( position - float3( 0.0f, STEP, 0.0f ), materialIndex );
+    negative.z = calculateDensity( position - float3( 0.0f, 0.0f, STEP ), materialIndex );
 
     return normalize( positive - negative );
+}
+
+float3 calculateNormal( float3 position ) {
+    return calculateNormal( position, MATERIAL_INDEX_ANY );
 }
 
 #include "QEF.hlsl"
@@ -363,6 +384,8 @@ static uint EDGE_LOOKUP[VOXEL_EDGE_COUNT][2] = {
     { 5, 4 },
     { 6, 7 }
 };
+
+uint findHighestMaterialBit( uint materialIndex );
 
 // how many separate pieces of the contour pass through a voxel, for every combination of solid corners: bit 0 for
 // corner 0 up to bit 7 for corner 7
@@ -403,6 +426,13 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
                 corners[cornerIndex1].materialIndex == MATERIAL_INDEX_VOID && corners[cornerIndex0].materialIndex >= MATERIAL_INDEX_MATERIAL0
             );
 
+            // an edge between two solid corners crosses the boundary between their materials, where the material of a
+            // corner is the highest one it has
+            bool edgeCrossesMaterialBoundary =
+                corners[cornerIndex0].materialIndex != MATERIAL_INDEX_VOID &&
+                corners[cornerIndex1].materialIndex != MATERIAL_INDEX_VOID &&
+                findHighestMaterialBit( corners[cornerIndex0].materialIndex ) != findHighestMaterialBit( corners[cornerIndex1].materialIndex );
+
             if( edgeIntersectsContour ) {
                 uint edgeIndex = ( voxelIndex * VOXEL_EDGE_COUNT ) + voxelEdgeIndex;
 
@@ -412,6 +442,27 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
                 addToQEF( qef, edges[edgeIndex].intersection, edges[edgeIndex].normal );
 
                 averageNormal += edges[edgeIndex].normal;
+            }
+            else if( edgeCrossesMaterialBoundary ) {
+                uint edgeIndex = ( voxelIndex * VOXEL_EDGE_COUNT ) + voxelEdgeIndex;
+
+                // the higher of the two materials is absent from the other end of the edge, so the boundary is the
+                // surface of that material taken by itself
+                uint materialIndex = 1u << max(
+                    findHighestMaterialBit( corners[cornerIndex0].materialIndex ),
+                    findHighestMaterialBit( corners[cornerIndex1].materialIndex )
+                );
+
+                edges[edgeIndex].intersection = approximateIntersection(
+                    corners[cornerIndex0].position, calculateDensity( corners[cornerIndex0].position, materialIndex ),
+                    corners[cornerIndex1].position, calculateDensity( corners[cornerIndex1].position, materialIndex ),
+                    materialIndex
+                );
+                edges[edgeIndex].normal = calculateNormal( edges[edgeIndex].intersection, materialIndex );
+
+                // the boundary draws the vertex to where the materials meet on the contour. Its normal is not one of
+                // the contour, and stays out of the normal of the vertex
+                addToQEF( qef, edges[edgeIndex].intersection, edges[edgeIndex].normal );
             }
         }
 
@@ -428,7 +479,7 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
                 vertex = qef.massPoint / qef.intersectionCount;
             }
 
-            float3 normal = normalize( averageNormal / qef.intersectionCount );
+            float3 normal = normalize( averageNormal );
 
             vertex = surfaceCorrection( vertex, normal );
 

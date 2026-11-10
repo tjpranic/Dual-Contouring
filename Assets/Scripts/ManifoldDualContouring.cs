@@ -346,7 +346,27 @@ public class ManifoldDualContouring : Voxelizer {
 
                 var materialIndices = voxel.corners.Select( ( corner ) => corner.materialIndex ).ToArray( );
 
-                foreach( var edgeIndices in DualMarchingCubes.lookupVertexEdges( materialIndices ) ) {
+                var vertexEdges = DualMarchingCubes.lookupVertexEdges( materialIndices );
+
+                if( vertexEdges.Length == 0 ) {
+                    // the contour does not pass through the cell
+                    return;
+                }
+
+                // the boundaries between materials that pass through the cell
+
+                var boundaries = voxel.edges.Where( SurfaceExtractor.crossesMaterialBoundary ).ToList( );
+
+                foreach( var boundary in boundaries ) {
+                    ( boundary.intersection, boundary.normal ) = SurfaceExtractor.calculateMaterialBoundary( boundary, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
+                }
+
+                // whether one of the given edges ends in one of the two corners that a boundary passes between
+                bool reaches( int[] edgeIndices, SurfaceExtractor.Edge boundary ) {
+                    return edgeIndices.Any( ( edgeIndex ) => voxel.edges[edgeIndex].corners.Any( ( corner ) => boundary.corners.Contains( corner ) ) );
+                }
+
+                foreach( var edgeIndices in vertexEdges ) {
                     var vertex = new Vertex( voxel ) {
                         qef = this.createQEF( )
                     };
@@ -369,9 +389,19 @@ public class ManifoldDualContouring : Voxelizer {
                     // and it is a disk, which has an euler characteristic of 1
                     vertex.euler = 1;
 
+                    // the boundary between two materials draws a vertex to where they meet on the contour. Its normal
+                    // is not one of the contour, and stays out of the normal of the vertex. In a cell with several
+                    // vertices a boundary goes to those whose piece of the contour reaches a corner next to the
+                    // boundary, or to all of them when none does
+                    foreach( var boundary in boundaries ) {
+                        if( reaches( edgeIndices, boundary ) || !vertexEdges.Any( ( other ) => reaches( other, boundary ) ) ) {
+                            vertex.qef.add( boundary.intersection, boundary.normal );
+                        }
+                    }
+
                     ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel );
 
-                    vertex.normal = Vector3.Normalize( averageNormal / vertex.qef.intersectionCount );
+                    vertex.normal = Vector3.Normalize( averageNormal );
 
                     vertex.vertex = QEFSolver.surfaceCorrection( vertex.vertex, vertex.normal, densityFunctions, this.surfaceCorrectionIterations );
 
