@@ -8,14 +8,6 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
 
     private const int resolution = 5; // 16^3 leaves
 
-    // two spheres 0.04 apart along the diagonal of the leaf [0, 0.0625]^2 in x and y. Each sphere covers one of two
-    // diagonally opposite corners of that leaf and neither covers the other two, so the leaf holds two separate pieces
-    // of surface
-    private static readonly Shape[] twoSpheres = {
-        sphere( new Vector3( 0.03125f - 0.0849f, 0.03125f - 0.0849f, 0.003f ), 0.1f ),
-        sphere( new Vector3( 0.03125f + 0.0849f, 0.03125f + 0.0849f, 0.003f ), 0.1f )
-    };
-
     // a 0.08 thick beam that runs through the whole grid along x, centered in one row of the 1 / 8 wide cells above the
     // leaves. Every cell it passes through, at any level of the octree, holds a tube that is open at both ends
     private static readonly Shape[] beam = {
@@ -37,12 +29,9 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
         cuboid( new Vector3( 0.1875f, 0.1875f,  0.2f ), new Vector3( 0.04f, 0.04f, 0.2f  ) )
     };
 
-    // an error threshold that lets about half of the clusters above the leaves collapse on every model. The solvers
-    // measure error differently: the SVD solver reports the residual of the QEF, the simple one how far the vertex is
-    // from the surface
-    private static float thresholdOf( QEFSolverType solver ) {
-        return solver == QEFSolverType.SVD ? 2e-4f : 0.014f;
-    }
+    // an error threshold at which part of the vertices is clustered on every model, with either solver: both report
+    // the value of the QEF at the vertex they found
+    private const float clusteringThreshold = 2e-4f;
 
     private ManifoldDualContouring create( int resolution, QEFSolverType solver, Shape[] shapes, float errorThreshold ) {
         var voxelizer = this.createVoxelizer<ManifoldDualContouring>( resolution, solver, shapes );
@@ -92,7 +81,7 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     // the vertices of the two pieces go up the vertex tree separately, and the spheres stay apart
     [Test]
     public void clusteredSurfaceIsManifoldWhereALeafHoldsTwoPiecesOfSurface( [Values] QEFSolverType solver ) {
-        var voxelizer = this.create( resolution, solver, twoSpheres, thresholdOf( solver ) );
+        var voxelizer = this.create( resolution, solver, twoSpheres, clusteringThreshold );
 
         assertTwoSpheres( this.contour( voxelizer ) );
     }
@@ -132,7 +121,7 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     // the surface
     [Test]
     public void clusteredSurfaceIsClosedAndManifold( [Values] Model model, [Values] QEFSolverType solver ) {
-        var voxelizer = this.create( resolution, solver, shapesOf( model ), thresholdOf( solver ) );
+        var voxelizer = this.create( resolution, solver, shapesOf( model ), clusteringThreshold );
 
         assertSingleSphere( this.contour( voxelizer ) );
     }
@@ -140,7 +129,7 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     // section IV.B: "If the resulting polygon collapses to an edge or a vertex, then we discard that polygon"
     [Test]
     public void clusteredSurfaceHasNoDegenerateTriangles( [Values] Model model, [Values] QEFSolverType solver ) {
-        var voxelizer = this.create( resolution, solver, shapesOf( model ), thresholdOf( solver ) );
+        var voxelizer = this.create( resolution, solver, shapesOf( model ), clusteringThreshold );
 
         var topology = this.contour( voxelizer );
 

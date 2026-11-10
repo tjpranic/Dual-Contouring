@@ -320,7 +320,7 @@ public class AdaptiveDualContouring : Voxelizer {
                 }
 
                 if( voxel.qef.intersectionCount > 0 ) {
-                    ( voxel.vertex, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+                    ( voxel.vertex, voxel.error ) = QEFSolver.placeVertex( voxel.qef, voxel );
 
                     voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
 
@@ -385,7 +385,7 @@ public class AdaptiveDualContouring : Voxelizer {
                         return;
                     }
 
-                    var ( vertex, error ) = voxel.qef.solve( voxel, densityFunctions );
+                    var ( vertex, error ) = QEFSolver.placeVertex( voxel.qef, voxel );
 
                     if( error > this.errorThreshold ) {
                         return;

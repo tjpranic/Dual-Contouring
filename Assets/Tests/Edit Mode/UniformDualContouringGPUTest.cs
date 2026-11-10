@@ -18,7 +18,17 @@ public class UniformDualContouringGPUTest : TopologyTest {
     // the compute shader is a port of the CPU implementation, so both should put the vertex of a cell in the same place
     [Test]
     public void verticesMatchCPU( [Values] Model model ) {
-        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.CPU, QEFSolverType.SVD, shapesOf( model ) );
+        this.assertVerticesMatchCPU( shapesOf( model ) );
+    }
+
+    // where a cell holds two pieces of surface its vertex is not the minimizer of its QEF, on either side
+    [Test]
+    public void verticesMatchCPUWhereACellHoldsTwoPiecesOfSurface( ) {
+        this.assertVerticesMatchCPU( twoSpheres );
+    }
+
+    private void assertVerticesMatchCPU( Shape[] shapes ) {
+        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.CPU, QEFSolverType.SVD, shapes );
 
         var expected = this.voxelize( voxelizer ).voxels.Where( ( voxel ) => voxel.hasFeaturePoint ).ToDictionary( indexOf );
 

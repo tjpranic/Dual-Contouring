@@ -39,6 +39,11 @@ public static class DualMarchingCubes {
             }
         }
 
+        return lookupVertexEdges( solidCorners );
+    }
+
+    // the same, given the solid corners as a set of bits: bit 0 for corner 0 up to bit 7 for corner 7
+    public static int[][] lookupVertexEdges( int solidCorners ) {
         return vertexEdges[solidCorners];
     }
 

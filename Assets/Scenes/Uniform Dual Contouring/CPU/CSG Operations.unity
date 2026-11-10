@@ -470,7 +470,7 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 6
   _implementation: 0
-  _qefSolver: 0
+  _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
   debugFlags: 24
@@ -947,7 +947,7 @@ MonoBehaviour:
   m_spriteAsset: {fileID: 0}
   m_tintAllSprites: 0
   m_StyleSheet: {fileID: 0}
-  m_TextStyleHashCode: 0
+  m_TextStyleHashCode: -1183493901
   m_overrideHtmlColors: 0
   m_faceColor:
     serializedVersion: 2

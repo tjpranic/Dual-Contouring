@@ -12,24 +12,30 @@ public class SimpleQEF : QEFSolver {
 
     private readonly List<Plane> intersectionPlanes = new( );
 
+    private Vector3 massPoint; // the sum of the intersections, the mass point is their average
+
     public SimpleQEF( int minimizerIterations ) {
         this.minimizerIterations = minimizerIterations;
     }
 
     public void add( Vector3 intersection, Vector3 normal ) {
         this.intersectionPlanes.Add( new( normal, intersection ) );
+
+        this.massPoint += intersection;
     }
 
     public void combine( QEFSolver other ) {
         if( other is SimpleQEF solver ) {
             this.intersectionPlanes.AddRange( solver.intersectionPlanes );
+
+            this.massPoint += solver.massPoint;
         }
         else {
             throw new Exception( "Unable to combine different derived solver" );
         }
     }
 
-    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel ) {
         if( this.intersectionCount == 0 ) {
             throw new Exception( "Unable to solve QEF, no intersections accumulated" );
         }
@@ -49,10 +55,23 @@ public class SimpleQEF : QEFSolver {
             ) / this.intersectionPlanes.Count;
         }
 
-        // error value is simply how far the minimizing vertex is from the surface before correction
-        var error = Mathf.Abs( SurfaceExtractor.calculateDensity( minimizingVertex, densityFunctions ) );
+        return ( minimizingVertex, this.calculateError( minimizingVertex ) );
+    }
 
-        return ( minimizingVertex, error );
+    public ( Vector3 vertex, float error ) solveMassPoint( ) {
+        if( this.intersectionCount == 0 ) {
+            throw new Exception( "Unable to solve QEF, no intersections accumulated" );
+        }
+
+        var massPoint = this.massPoint / this.intersectionCount;
+
+        return ( massPoint, this.calculateError( massPoint ) );
+    }
+
+    // the value of the QEF at x: the sum over the hermite samples of the squared distance from x to the plane of the
+    // sample
+    private float calculateError( Vector3 x ) {
+        return this.intersectionPlanes.Sum( ( plane ) => plane.GetDistanceToPoint( x ) * plane.GetDistanceToPoint( x ) );
     }
 
 }

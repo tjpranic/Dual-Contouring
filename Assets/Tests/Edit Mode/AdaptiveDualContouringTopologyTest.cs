@@ -40,15 +40,13 @@ public class AdaptiveDualContouringTopologyTest : TopologyTest {
         };
     }
 
-    // the solvers measure error differently: the SVD solver reports the residual of the QEF, the simple one how far the
-    // vertex is from the surface
-    private static float thresholdOf( QEFSolverType solver, Simplification simplification ) {
-        return ( solver, simplification ) switch {
-            ( QEFSolverType.SVD,    Simplification.Light ) => 2e-4f,
-            ( QEFSolverType.SVD,    Simplification.Heavy ) => 2e-3f,
-            ( QEFSolverType.Simple, Simplification.Light ) => 0.007f,
-            ( QEFSolverType.Simple, Simplification.Heavy ) => 0.015f,
-            _                                              => throw new Exception( "Unknown solver or simplification specified" )
+    // both solvers report the value of the QEF at the vertex they found, so a threshold is the same amount of error
+    // for either
+    private static float thresholdOf( Simplification simplification ) {
+        return simplification switch {
+            Simplification.Light => 2e-4f,
+            Simplification.Heavy => 2e-3f,
+            _                    => throw new Exception( "Unknown simplification specified" )
         };
     }
 
@@ -86,7 +84,7 @@ public class AdaptiveDualContouringTopologyTest : TopologyTest {
     // is contained by an even number of polygons". Any octree includes the ones that topology safety would not allow
     [Test]
     public void simplifiedSurfaceIsClosed( [Values] Model model, [Values] QEFSolverType solver, [Values] Simplification simplification ) {
-        var voxelizer = this.createSimplifying( solver, shapesOf( model ), thresholdOf( solver, simplification ), false );
+        var voxelizer = this.createSimplifying( solver, shapesOf( model ), thresholdOf( simplification ), false );
 
         assertClosed( this.contour( voxelizer ) );
     }
@@ -95,7 +93,7 @@ public class AdaptiveDualContouringTopologyTest : TopologyTest {
     // and generates a triangle rather than a quad that uses the coarse cell's vertex twice
     [Test]
     public void simplifiedSurfaceHasNoDegenerateTriangles( [Values] Model model, [Values] QEFSolverType solver, [Values] Simplification simplification ) {
-        var voxelizer = this.createSimplifying( solver, shapesOf( model ), thresholdOf( solver, simplification ), false );
+        var voxelizer = this.createSimplifying( solver, shapesOf( model ), thresholdOf( simplification ), false );
 
         var topology = this.contour( voxelizer );
 

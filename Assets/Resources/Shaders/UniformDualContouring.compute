@@ -364,6 +364,10 @@ static uint EDGE_LOOKUP[VOXEL_EDGE_COUNT][2] = {
     { 6, 7 }
 };
 
+// how many separate pieces of the contour pass through a voxel, for every combination of solid corners: bit 0 for
+// corner 0 up to bit 7 for corner 7
+StructuredBuffer<uint> vertexCounts;
+
 [numthreads( 1, 1, 1 )]
 void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
@@ -417,12 +421,10 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
 
             solveQEF( qef, vertex, error, minimizerIterations );
 
-            if(
-                vertex.x < voxels[voxelIndex].minimum.x || vertex.x > voxels[voxelIndex].maximum.x ||
-                vertex.y < voxels[voxelIndex].minimum.y || vertex.y > voxels[voxelIndex].maximum.y ||
-                vertex.z < voxels[voxelIndex].minimum.z || vertex.z > voxels[voxelIndex].maximum.z
-            ) {
-                // the QEF accumulates the sum of the intersections, the mass point is their average
+            // Dual Contouring: The Secret Sauce, section 2.1: where separate pieces of the contour pass through the
+            // voxel the minimizer of the QEF is a poor place for its one vertex, and the mass point is used instead.
+            // The QEF accumulates the sum of the intersections, the mass point is their average
+            if( vertexCounts[cornerBits] > 1 ) {
                 vertex = qef.massPoint / qef.intersectionCount;
             }
 

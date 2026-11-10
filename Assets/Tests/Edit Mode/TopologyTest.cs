@@ -21,6 +21,14 @@ public abstract class TopologyTest : ContouringTest {
     // three axis aligned hermite samples, so the minimizer of its QEF is the corner of the cube: exactly (0, 0, 0)
     protected static readonly Shape[] cubeWithCornerAtOrigin = { cube( new Vector3( 0.125f, 0.125f, 0.125f ), 0.125f ) };
 
+    // two spheres 0.04 apart along the diagonal of the cell [0, 0.0625]^2 in x and y of a grid of 16^3. Each sphere
+    // covers one of two diagonally opposite corners of that cell and neither covers the other two, so the cell holds
+    // two separate pieces of surface
+    protected static readonly Shape[] twoSpheres = {
+        sphere( new Vector3( 0.03125f - 0.0849f, 0.03125f - 0.0849f, 0.003f ), 0.1f ),
+        sphere( new Vector3( 0.03125f + 0.0849f, 0.03125f + 0.0849f, 0.003f ), 0.1f )
+    };
+
     protected static Shape[] shapesOf( Model model ) {
         return model switch {
             // sits off the grid lines so no corner or edge of the grid lands exactly on the surface

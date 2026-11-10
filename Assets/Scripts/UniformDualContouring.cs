@@ -374,7 +374,7 @@ public class UniformDualContouring : Voxelizer {
                 }
 
                 if( qef.intersectionCount > 0 ) {
-                    ( voxel.vertex, _ ) = qef.solve( voxel, densityFunctions );
+                    ( voxel.vertex, _ ) = QEFSolver.placeVertex( qef, voxel );
 
                     voxel.normal = Vector3.Normalize( averageNormal / qef.intersectionCount );
 
@@ -586,6 +586,7 @@ public class UniformDualContouring : Voxelizer {
         private ComputeBuffer edgesBuffer;
         private ComputeBuffer cornersBuffer;
         private ComputeBuffer densityFunctionsBuffer;
+        private ComputeBuffer vertexCountsBuffer;
         private ComputeBuffer verticesBuffer;
         private ComputeBuffer normalsBuffer;
         private ComputeBuffer quadsBuffer;
@@ -668,6 +669,7 @@ public class UniformDualContouring : Voxelizer {
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "edges",            this.edgesBuffer );
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "corners",          this.cornersBuffer );
             this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "densityFunctions", this.densityFunctionsBuffer );
+            this.uniformDualContouring.SetBuffer ( this.calculateMinimizingVerticesKernel, "vertexCounts",     this.vertexCountsBuffer );
             this.uniformDualContouring.Dispatch  ( this.calculateMinimizingVerticesKernel, resolution, resolution, resolution );
         }
 
@@ -731,11 +733,19 @@ public class UniformDualContouring : Voxelizer {
                 densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
             }
 
+            // how many separate pieces of the contour pass through a voxel, for every combination of solid corners
+            var vertexCountsData = new int[1 << SurfaceExtractor.Voxel.CornerCount];
+
+            for( var solidCorners = 0; solidCorners < vertexCountsData.Length; ++solidCorners ) {
+                vertexCountsData[solidCorners] = DualMarchingCubes.lookupVertexEdges( solidCorners ).Length;
+            }
+
             this.configurationBuffer    = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
             this.voxelsBuffer           = new ComputeBuffer( voxelData.Length,           Marshal.SizeOf( typeof( Voxel.Data ) ) );
             this.edgesBuffer            = new ComputeBuffer( edgeData.Length,            Marshal.SizeOf( typeof( Edge.Data ) ) );
             this.cornersBuffer          = new ComputeBuffer( cornerData.Length,          Marshal.SizeOf( typeof( Corner.Data ) ) );
             this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionData.Length, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
+            this.vertexCountsBuffer     = new ComputeBuffer( vertexCountsData.Length,    Marshal.SizeOf( typeof( int ) ) );
             this.verticesBuffer         = new ComputeBuffer( verticesData.Length,        Marshal.SizeOf( typeof( Vector3 ) ) );
             this.normalsBuffer          = new ComputeBuffer( normalsData.Length,         Marshal.SizeOf( typeof( Vector3 ) ) );
             this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ) );
@@ -750,6 +760,7 @@ public class UniformDualContouring : Voxelizer {
             this.edgesBuffer.SetData            ( edgeData );
             this.cornersBuffer.SetData          ( cornerData );
             this.densityFunctionsBuffer.SetData ( densityFunctionData );
+            this.vertexCountsBuffer.SetData     ( vertexCountsData );
             this.verticesBuffer.SetData         ( verticesData );
             this.normalsBuffer.SetData          ( normalsData );
             this.quadsBuffer.SetData            ( quadsData );
@@ -763,6 +774,7 @@ public class UniformDualContouring : Voxelizer {
             this.edgesBuffer?.Release( );
             this.cornersBuffer?.Release( );
             this.densityFunctionsBuffer?.Release( );
+            this.vertexCountsBuffer?.Release( );
             this.verticesBuffer?.Release( );
             this.normalsBuffer?.Release( );
             this.quadsBuffer?.Release( );

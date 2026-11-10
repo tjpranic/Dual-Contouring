@@ -369,7 +369,7 @@ public class ManifoldDualContouring : Voxelizer {
                     // and it is a disk, which has an euler characteristic of 1
                     vertex.euler = 1;
 
-                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel, densityFunctions );
+                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel );
 
                     vertex.normal = Vector3.Normalize( averageNormal / vertex.qef.intersectionCount );
 
@@ -496,7 +496,7 @@ public class ManifoldDualContouring : Voxelizer {
 
                     // solve QEF for vertex cluster
 
-                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel, densityFunctions );
+                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel );
 
                     vertex.normal = Vector3.Normalize( averageNormal );
 

@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 public class SVDQEF : QEFSolver {
@@ -40,7 +39,13 @@ public class SVDQEF : QEFSolver {
     private SymmetricMatrix3x3 ATA = new( );
     private Vector3            ATB;
     private float              BTB;
-    private Vector3            massPoint;
+
+    // Dual Contouring: The Secret Sauce, section 2.1: the mass point is the average of the intersections, kept as their
+    // sum and how many there are. It also has the dimension of the feature those intersections lie on: 1 for a plane,
+    // 2 for an edge and 3 for a corner, which is known once the QEF has been solved and is 0 until then
+    private Vector3 massPoint;
+    private int     massPointCount;
+    private int     massPointDimension;
 
     public SVDQEF( int minimizerIterations ) {
         this.minimizerIterations = minimizerIterations;
@@ -51,6 +56,7 @@ public class SVDQEF : QEFSolver {
         this.ATB               = qefData.ATB;
         this.BTB               = qefData.BTB;
         this.massPoint         = qefData.massPoint;
+        this.massPointCount    = qefData.intersectionCount;
         this.intersectionCount = qefData.intersectionCount;
     }
 
@@ -68,6 +74,7 @@ public class SVDQEF : QEFSolver {
         this.BTB       += dot * dot;
         this.massPoint += intersection;
 
+        ++this.massPointCount;
         ++this.intersectionCount;
     }
 
@@ -81,15 +88,27 @@ public class SVDQEF : QEFSolver {
             this.ATA.m22           += solver.ATA.m22;
             this.ATB               += solver.ATB;
             this.BTB               += solver.BTB;
-            this.massPoint         += solver.massPoint;
             this.intersectionCount += solver.intersectionCount;
+
+            // mass points of the same dimension are merged. Of mass points that differ the one of the higher dimension
+            // is kept: the minimizer of the combined QEF is likely to be near the sharpest feature, so that the mass
+            // point should be the average of only the intersections on that feature
+            if( solver.massPointDimension == this.massPointDimension ) {
+                this.massPoint      += solver.massPoint;
+                this.massPointCount += solver.massPointCount;
+            }
+            else if( solver.massPointDimension > this.massPointDimension ) {
+                this.massPoint          = solver.massPoint;
+                this.massPointCount     = solver.massPointCount;
+                this.massPointDimension = solver.massPointDimension;
+            }
         }
         else {
             throw new Exception( "Unable to combine different derived solvers" );
         }
     }
 
-    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+    public ( Vector3 vertex, float error ) solve( SurfaceExtractor.Voxel voxel ) {
         if( this.intersectionCount == 0 ) {
             throw new Exception( "Unable to solve QEF, no intersections accumulated" );
         }
@@ -97,25 +116,30 @@ public class SVDQEF : QEFSolver {
         // copy QEF data into temporaries so the SVD solve doesn't affect future QEF combinations
         var ATA       = this.ATA;
         var ATB       = this.ATB;
-        var massPoint = this.massPoint / this.intersectionCount;
+        var massPoint = this.massPoint / this.massPointCount;
 
         ATB -= ATA.multiplyVector( massPoint );
 
-        var minimizingVertex = SVD.solve( ATA, ATB, this.minimizerIterations ) + massPoint;
+        // of the points that minimize the QEF this is the one closest to the mass point, x = p + (AtA)^+ (AtB - AtA p)
+        var ( VTAV, V ) = SVD.getSymmetricSVD( ATA, this.minimizerIterations );
 
-        // if the solved position is outside the voxel, use the mass point instead
-        if(
-            minimizingVertex.x < voxel.minimum.x || minimizingVertex.x > voxel.maximum.x ||
-            minimizingVertex.y < voxel.minimum.y || minimizingVertex.y > voxel.maximum.y ||
-            minimizingVertex.z < voxel.minimum.z || minimizingVertex.z > voxel.maximum.z
-        ) {
-            minimizingVertex = massPoint;
+        var minimizingVertex = SVD.pseudoInverse( VTAV, V ).multiplyVector( ATB ) + massPoint;
+
+        // the singular values that the pseudo inverse did not truncate are the directions the samples pin the vertex
+        // down in: one for a plane, two for an edge and three for a corner
+        this.massPointDimension = SVD.calculateRank( VTAV );
+
+        return ( minimizingVertex, SVD.calculateError( this.ATA, this.ATB, this.BTB, minimizingVertex ) );
+    }
+
+    public ( Vector3 vertex, float error ) solveMassPoint( ) {
+        if( this.intersectionCount == 0 ) {
+            throw new Exception( "Unable to solve QEF, no intersections accumulated" );
         }
 
-        // the error belongs to the vertex that is returned, which is not the solved one if the mass point replaced it
-        var error = SVD.calculateError( this.ATA, this.ATB, this.BTB, minimizingVertex );
+        var massPoint = this.massPoint / this.massPointCount;
 
-        return ( minimizingVertex, error );
+        return ( massPoint, SVD.calculateError( this.ATA, this.ATB, this.BTB, massPoint ) );
     }
 
     public class Matrix3x3 {
@@ -390,6 +414,19 @@ public class SVDQEF : QEFSolver {
 
         public static float pseudoInverse( float x ) {
             return Mathf.Abs( x ) < PseudoInverseTolerance ? 0.0f : ( 1.0f / x );
+        }
+
+        // the number of singular values that the pseudo inverse keeps
+        public static int calculateRank( SymmetricMatrix3x3 VTAV ) {
+            var rank = 0;
+
+            foreach( var singularValue in new float[] { VTAV.m00, VTAV.m11, VTAV.m22 } ) {
+                if( pseudoInverse( singularValue ) != 0.0f ) {
+                    ++rank;
+                }
+            }
+
+            return rank;
         }
 
         public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {

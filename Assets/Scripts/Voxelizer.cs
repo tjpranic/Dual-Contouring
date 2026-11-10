@@ -39,7 +39,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     }
 
     [SerializeField( ), Range( 0, 12 )]
-    private int _surfaceCorrectionIterations = 6;
+    private int _surfaceCorrectionIterations = 0;
     public int surfaceCorrectionIterations {
         get { return this._surfaceCorrectionIterations;  }
         set { this._surfaceCorrectionIterations = value; }
@@ -53,7 +53,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     }
 
     [SerializeField( )]
-    private QEFSolverType _qefSolver = QEFSolverType.Simple;
+    private QEFSolverType _qefSolver = QEFSolverType.SVD;
     public QEFSolverType qefSolverType {
         get { return this._qefSolver;  }
         set { this._qefSolver = value; }

@@ -77,6 +77,9 @@ public abstract class ContouringTest {
         voxelizer.resolution    = resolution;
         voxelizer.qefSolverType = solver;
 
+        // vertices stay where the solver puts them, as in the papers
+        voxelizer.surfaceCorrectionIterations = 0;
+
         foreach( var shape in shapes ) {
             var child = new GameObject( shape.type.ToString( ) ) { hideFlags = HideFlags.HideAndDontSave };
 

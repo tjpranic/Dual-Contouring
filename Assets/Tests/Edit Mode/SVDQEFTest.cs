@@ -62,7 +62,11 @@ public class SVDQEFTest {
             qef.add( intersection, normal );
         }
 
-        return qef.solve( voxel, null );
+        return solve( qef, voxel );
+    }
+
+    private static ( Vector3 vertex, float error ) solve( QEFSolver qef, SurfaceExtractor.Voxel voxel ) {
+        return qef.solve( voxel );
     }
 
     // three faces pin the minimizer down completely
@@ -147,10 +151,10 @@ public class SVDQEFTest {
         Assert.AreEqual( residualOf( samples, vertex ), error, 1e-6f );
     }
 
-    // a voxel that does not contain the corner gets the mass point as its vertex, and the error has to be that of the
-    // vertex it got rather than that of the corner
+    // the minimizer is searched from the mass point, which keeps it near the samples by itself. Nothing ties it to the
+    // voxel the samples came from: a corner just outside of it is still where the vertex belongs
     [Test]
-    public void errorIsResidualAtMassPointWhenVertexLeavesVoxel( ) {
+    public void vertexMayLieOutsideItsVoxel( ) {
         var samples   = faces( rotationOf( Orientation.Rotated ), 3, 2, 1 );
         var massPoint = massPointOf( samples );
 
@@ -159,9 +163,71 @@ public class SVDQEFTest {
 
         var ( vertex, error ) = solve( samples, voxel );
 
-        Assert.Less( Vector3.Distance( massPoint, vertex ), epsilon, $"the vertex is {vertex:F5}, the mass point {massPoint:F5}" );
+        Assert.Less( Vector3.Distance( corner, vertex ), epsilon, $"the vertex is {vertex:F5}, the corner {corner:F5}" );
 
-        Assert.AreEqual( residualOf( samples, massPoint ), error, 1e-6f );
+        Assert.AreEqual( 0.0f, error, 1e-6f );
+    }
+
+    // a QEF that has been solved, which is what tells the dimension of the feature its samples lie on
+    private static SVDQEF solved( List<( Vector3 intersection, Vector3 normal )> samples ) {
+        var qef = new SVDQEF( 6 );
+
+        foreach( var ( intersection, normal ) in samples ) {
+            qef.add( intersection, normal );
+        }
+
+        solve( qef, unbounded );
+
+        return qef;
+    }
+
+    private static List<( Vector3 intersection, Vector3 normal )> moved( List<( Vector3 intersection, Vector3 normal )> samples, Vector3 offset ) {
+        return samples.Select( ( sample ) => ( sample.intersection + offset, sample.normal ) ).ToList( );
+    }
+
+    // the point of the edge that the first two faces share, the line through the corner along the third axis, that
+    // lies closest to the given point
+    private static Vector3 closestOnEdge( Vector3 point ) {
+        return corner + ( axes[2] * Vector3.Dot( point - corner, axes[2] ) );
+    }
+
+    // section 2.1, on combining QEFs during simplification: "If the mass points are of differing dimensions, set the
+    // combined mass point equal to the mass point of the highest dimension". A stretch of an edge and, half a unit
+    // further along it, a stretch of one of its faces by itself: the vertex stays with the samples of the edge
+    [Test]
+    public void massPointOfCombinedQEFsIsThatOfTheSharpestFeature( ) {
+        var edge = faces( Quaternion.identity, 2, 2 );
+        var face = moved( faces( Quaternion.identity, 3 ), axes[2] * 0.5f );
+
+        var combined = new SVDQEF( 6 );
+
+        combined.combine( solved( face ) );
+        combined.combine( solved( edge ) );
+
+        var ( vertex, _ ) = solve( combined, unbounded );
+
+        var expected = closestOnEdge( massPointOf( edge ) );
+
+        Assert.Less( Vector3.Distance( expected, vertex ), epsilon, $"the vertex is {vertex:F5}, the closest point of the edge to the mass point of its own samples {expected:F5}" );
+    }
+
+    // "If the mass points are of the same dimension, merge the two mass points like before by summing their
+    // components": two stretches of the same edge put the vertex in between
+    [Test]
+    public void massPointsOfTheSameDimensionAreCombined( ) {
+        var edge  = faces( Quaternion.identity, 2, 2 );
+        var other = moved( faces( Quaternion.identity, 2, 1 ), axes[2] * 0.5f );
+
+        var combined = new SVDQEF( 6 );
+
+        combined.combine( solved( edge ) );
+        combined.combine( solved( other ) );
+
+        var ( vertex, _ ) = solve( combined, unbounded );
+
+        var expected = closestOnEdge( massPointOf( edge.Concat( other ).ToList( ) ) );
+
+        Assert.Less( Vector3.Distance( expected, vertex ), epsilon, $"the vertex is {vertex:F5}, the closest point of the edge to the mass point of all samples {expected:F5}" );
     }
 
 }
