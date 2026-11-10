@@ -1,9 +1,7 @@
 # Dual Contouring Unity Project
-
 A Unity implementation of various **Dual Contouring** algorithms for mesh generation from implicit surfaces. This project includes multiple dual contouring variants with both CPU and GPU implementations.
 
 ## Overview
-
 Dual Contouring is a technique for generating meshes from volumetric data represented by implicit functions. Unlike Marching Cubes, Dual Contouring preserves sharp features and produces better-quality meshes by solving a Quadratic Error Function (QEF) to find optimal vertex positions.
 
 This Unity project implements three main variants of the dual contouring algorithm:
@@ -13,13 +11,12 @@ This Unity project implements three main variants of the dual contouring algorit
 - **Manifold Dual Contouring** - Specialized version that ensures manifold mesh topology
 
 ## Requirements
-
-- **Unity 2022.3.40f1** or later
-- **Unity Mathematics Package** (1.2.6)
+- **Unity 6000.4.5f1** or later
+- **Unity Mathematics** (1.3.3)
 - Compute Shader support for GPU implementations
+- **Shapes** library by Freya Holmer
 
 ## License
-
 The MIT License (MIT)
 
 Copyright (c) 2025 Thomas Pranic
