@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.InputSystem;
 
 public class CameraController : MonoBehaviour {
 
@@ -11,71 +12,101 @@ public class CameraController : MonoBehaviour {
     private Vector2 cameraRotation = new( 0.0f, 0.0f );
 
     public void Start( ) {
-        this.cameraRotation = Quaternion.Euler( this.transform.eulerAngles.y, this.transform.eulerAngles.x, 0.0f ).eulerAngles;
+        cameraRotation = Quaternion.Euler( transform.eulerAngles.y, transform.eulerAngles.x, 0.0f ).eulerAngles;
     }
 
     public void LateUpdate( ) {
-        // x and y axis rotation
-        if( Input.GetMouseButton( 0 ) ) {
-            if( this.freeCamera ) {
-                var x =  Input.GetAxis( "Mouse X" ) * this.sensitivity;
-                var y = -Input.GetAxis( "Mouse Y" ) * this.sensitivity;
+        var mouse = Mouse.current;
 
-                this.transform.Rotate( 0.0f, x, 0.0f );
-                this.transform.Rotate( y, 0.0f, 0.0f );
+        // x and y axis rotation
+        if( IsMouseButtonPressed( mouse, 0 ) ) {
+            var mouseDelta = GetScaledMouseDelta( mouse );
+
+            if( freeCamera ) {
+                var x =  mouseDelta.x * sensitivity;
+                var y = -mouseDelta.y * sensitivity;
+
+                transform.Rotate( 0.0f, x, 0.0f );
+                transform.Rotate( y, 0.0f, 0.0f );
             }
             else {
-                this.cameraRotation.x += Input.GetAxis( "Mouse X" ) * this.sensitivity;
-                this.cameraRotation.y -= Input.GetAxis( "Mouse Y" ) * this.sensitivity;
+                cameraRotation.x += mouseDelta.x * sensitivity;
+                cameraRotation.y -= mouseDelta.y * sensitivity;
 
-                this.cameraRotation.x = Mathf.Repeat ( this.cameraRotation.x, 360.0f );
-                this.cameraRotation.y = Mathf.Clamp  ( this.cameraRotation.y, -90.0f, 90.0f );
+                cameraRotation.x = Mathf.Repeat ( cameraRotation.x, 360.0f );
+                cameraRotation.y = Mathf.Clamp  ( cameraRotation.y, -90.0f, 90.0f );
 
-                this.transform.rotation = Quaternion.Euler( this.cameraRotation.y, this.cameraRotation.x, 0 );
+                transform.rotation = Quaternion.Euler( cameraRotation.y, cameraRotation.x, 0 );
             }
         }
         // z axis rotation, free camera only
-        if( this.freeCamera && Input.GetMouseButton( 1 ) ) {
-            var z = -Input.GetAxis( "Mouse X" ) * this.sensitivity;
+        if( freeCamera && IsMouseButtonPressed( mouse, 1 ) ) {
+            var z = -GetScaledMouseDelta( mouse ).x * sensitivity;
 
-            this.transform.Rotate( 0.0f, 0.0f, -z );
+            transform.Rotate( 0.0f, 0.0f, -z );
         }
         // movement
-        if( Input.GetMouseButton( 0 ) || Input.GetMouseButton( 1 ) ) {
-            var direction = this.getMovementDirection( );
-            if( Input.GetKey( KeyCode.LeftShift ) ) {
-                direction *= this.boostSpeed;
+        if( IsMouseButtonPressed( mouse, 0 ) || IsMouseButtonPressed( mouse, 1 ) ) {
+            var direction = GetMovementDirection( );
+            if( Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed ) {
+                direction *= boostSpeed;
             }
             else {
-                direction *= this.cameraSpeed;
+                direction *= cameraSpeed;
             }
             direction *= Time.deltaTime;
 
-            this.transform.Translate( direction );
+            transform.Translate( direction );
         }
     }
 
-    private Vector3 getMovementDirection( ) {
+    private Vector3 GetMovementDirection( ) {
         var direction = new Vector3( 0.0f, 0.0f, 0.0f );
-        if( Input.GetKey( KeyCode.W ) ) {
+        var keyboard  = Keyboard.current;
+        if( keyboard == null ) {
+            return direction;
+        }
+
+        if( keyboard.wKey.isPressed ) {
             direction += new Vector3( 0, 0, 1 );
         }
-        if( Input.GetKey( KeyCode.S ) ) {
+        if( keyboard.sKey.isPressed ) {
             direction += new Vector3( 0, 0, -1 );
         }
-        if( Input.GetKey( KeyCode.A ) ) {
+        if( keyboard.aKey.isPressed ) {
             direction += new Vector3( -1, 0, 0 );
         }
-        if( Input.GetKey( KeyCode.D ) ) {
+        if( keyboard.dKey.isPressed ) {
             direction += new Vector3( 1, 0, 0 );
         }
-        if( Input.GetKey( KeyCode.Space ) ) {
+        if( keyboard.spaceKey.isPressed ) {
             direction += new Vector3( 0, 1, 0 );
         }
-        if( Input.GetKey( KeyCode.C ) ) {
+        if( keyboard.cKey.isPressed ) {
             direction += new Vector3( 0, -1, 0 );
         }
         return direction.normalized;
+    }
+
+    private Vector2 GetScaledMouseDelta( Mouse mouse ) {
+        if( mouse == null ) {
+            return Vector2.zero;
+        }
+
+        // the old Input Manager "Mouse X/Y" default sensitivity is 0.1.
+        return mouse.delta.ReadValue( ) * 0.1f;
+    }
+
+    private bool IsMouseButtonPressed( Mouse mouse, int mouseButton ) {
+        if( mouse == null ) {
+            return false;
+        }
+
+        return mouseButton switch {
+            0 => mouse.leftButton.isPressed,
+            1 => mouse.rightButton.isPressed,
+            _ => false,
+        };
     }
 
 }

@@ -2,7 +2,9 @@
     "name": "GameAssembly",
     "rootNamespace": "",
     "references": [
-        "Unity.Mathematics"
+        "Unity.Mathematics",
+        "Unity.InputSystem",
+        "Unity.TextMeshPro"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

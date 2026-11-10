@@ -15,29 +15,16 @@ Shader "Custom/RenderContourDiffuse"
     }
     SubShader
     {
-        Tags { "RenderType" = "Opaque" }
+        Tags { "RenderType" = "Opaque" "RenderPipeline" = "UniversalPipeline" "Queue" = "Geometry" }
 
         LOD 200
 
-        CGPROGRAM
+        HLSLINCLUDE
 
-        #pragma surface surfaceShader Standard addshadow vertex:vertexShader
-        #pragma target 5.0
+        // structured buffers in the vertex stage
+        #pragma target 4.5
 
-        #include "UnityCG.cginc"
-
-        struct Vertex {
-            float4 vertex    : POSITION;
-            float4 tangent   : TANGENT;
-            float3 normal    : NORMAL;
-            float4 texcoord0 : TEXCOORD0;
-            float4 texcoord1 : TEXCOORD1;
-            float4 texcoord2 : TEXCOORD2;
-            float4 texcoord3 : TEXCOORD3;
-            uint   vertexID  : SV_VertexID;
-        };
-
-        #ifdef SHADER_API_D3D11
+        #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
         struct Quad {
             uint indices[6];
@@ -48,90 +35,199 @@ Shader "Custom/RenderContourDiffuse"
         StructuredBuffer<float3> normals;
         StructuredBuffer<Quad>   quads;
 
-        #endif
-
+        // the contour is drawn procedurally, so there's no per-object transform from the renderer, the voxelizer
+        // supplies its own
         float4x4 localToWorld;
         float4x4 worldToLocal;
 
-        struct Input {
-            float subMeshIndex;
+        CBUFFER_START( UnityPerMaterial )
+            half4 color0;
+            half4 color1;
+            half4 color2;
+            half4 color3;
+            half4 color4;
+            half4 color5;
+            half4 color6;
+            half4 color7;
+            half4 color8;
+            half4 color9;
+        CBUFFER_END
+
+        struct ContourVertex {
+            float3 positionWS;
+            float3 normalWS;
+            uint   subMeshIndex;
         };
 
-        void vertexShader( in out Vertex v, out Input o ) {
+        ContourVertex fetchContourVertex( uint vertexID ) {
+            Quad quad        = quads[vertexID / 6];
+            uint vertexIndex = quad.indices[vertexID % 6];
 
-            UNITY_INITIALIZE_OUTPUT( Input, o );
-
-            #ifdef SHADER_API_D3D11
-
-            uint quadIndex = floor( v.vertexID / 6 );
-
-            // the absolute STATE of surface shaders:
-            // https://forum.unity.com/threads/output-color-in-surface-shader-has-artifacts-when-using-instanceid.926984/
-            o.subMeshIndex = quads[quadIndex].subMeshIndex + 0.5f; // HUH
-
-            uint vertexIndex = quads[quadIndex].indices[v.vertexID % 6];
-
-            float3 vertex = vertices[vertexIndex];
-            float3 normal = normals[vertexIndex];
-
-            v.vertex = float4( vertex, 1.0f );
-            v.normal = normal;
-
-            #endif
-
-            unity_ObjectToWorld = localToWorld;
-            unity_WorldToObject = worldToLocal;
+            ContourVertex output;
+            output.positionWS   = mul( localToWorld, float4( vertices[vertexIndex], 1.0f ) ).xyz;
+            // normals transform by the inverse transpose
+            output.normalWS     = normalize( mul( normals[vertexIndex], ( float3x3 )worldToLocal ) );
+            output.subMeshIndex = quad.subMeshIndex;
+            return output;
         }
 
-        fixed4 color0;
-        fixed4 color1;
-        fixed4 color2;
-        fixed4 color3;
-        fixed4 color4;
-        fixed4 color5;
-        fixed4 color6;
-        fixed4 color7;
-        fixed4 color8;
-        fixed4 color9;
-
-        void surfaceShader( Input input, in out SurfaceOutputStandard output ) {
-            switch( input.subMeshIndex ) {
-                case 0:
-                    output.Albedo = color0.rgb;
-                    break;
-                case 1:
-                    output.Albedo = color1.rgb;
-                    break;
-                case 2:
-                    output.Albedo = color2.rgb;
-                    break;
-                case 3:
-                    output.Albedo = color3.rgb;
-                    break;
-                case 4:
-                    output.Albedo = color4.rgb;
-                    break;
-                case 5:
-                    output.Albedo = color5.rgb;
-                    break;
-                case 6:
-                    output.Albedo = color6.rgb;
-                    break;
-                case 7:
-                    output.Albedo = color7.rgb;
-                    break;
-                case 8:
-                    output.Albedo = color8.rgb;
-                    break;
-                case 9:
-                    output.Albedo = color9.rgb;
-                    break;
-                default:
-                    output.Albedo = color0.rgb;
-                    break;
+        half4 getSubMeshColor( uint subMeshIndex ) {
+            switch( subMeshIndex ) {
+                case 0:  return color0;
+                case 1:  return color1;
+                case 2:  return color2;
+                case 3:  return color3;
+                case 4:  return color4;
+                case 5:  return color5;
+                case 6:  return color6;
+                case 7:  return color7;
+                case 8:  return color8;
+                case 9:  return color9;
+                default: return color0;
             }
         }
-        ENDCG
+
+        ENDHLSL
+
+        Pass
+        {
+            Name "ForwardLit"
+            Tags { "LightMode" = "UniversalForward" }
+
+            HLSLPROGRAM
+
+            #pragma vertex   vertexShader
+            #pragma fragment fragmentShader
+
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _SHADOWS_SOFT _SHADOWS_SOFT_LOW _SHADOWS_SOFT_MEDIUM _SHADOWS_SOFT_HIGH
+            #pragma multi_compile_fragment _ _SCREEN_SPACE_OCCLUSION
+            #pragma multi_compile _ _CLUSTER_LIGHT_LOOP
+            #include_with_pragmas "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Fog.hlsl"
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+
+            struct Varyings {
+                float4               positionCS     : SV_POSITION;
+                float3               positionWS     : TEXCOORD0;
+                float3               normalWS       : TEXCOORD1;
+                nointerpolation uint subMeshIndex   : TEXCOORD2;
+                half                 fogFactor      : TEXCOORD3;
+                half3                vertexLighting : TEXCOORD4;
+            };
+
+            Varyings vertexShader( uint vertexID : SV_VertexID ) {
+                ContourVertex contourVertex = fetchContourVertex( vertexID );
+
+                Varyings output;
+                output.positionWS     = contourVertex.positionWS;
+                output.normalWS       = contourVertex.normalWS;
+                output.subMeshIndex   = contourVertex.subMeshIndex;
+                output.positionCS     = TransformWorldToHClip( contourVertex.positionWS );
+                output.fogFactor      = ComputeFogFactor( output.positionCS.z );
+                output.vertexLighting = VertexLighting( contourVertex.positionWS, contourVertex.normalWS );
+                return output;
+            }
+
+            half4 fragmentShader( Varyings input ) : SV_TARGET {
+                InputData inputData = ( InputData )0;
+                inputData.positionWS              = input.positionWS;
+                inputData.positionCS              = input.positionCS;
+                inputData.normalWS                = NormalizeNormalPerPixel( input.normalWS );
+                inputData.viewDirectionWS         = GetWorldSpaceNormalizeViewDir( input.positionWS );
+                inputData.normalizedScreenSpaceUV = GetNormalizedScreenSpaceUV( input.positionCS );
+                inputData.fogCoord                = InitializeInputDataFog( float4( input.positionWS, 1.0f ), input.fogFactor );
+                inputData.vertexLighting          = input.vertexLighting;
+                inputData.bakedGI                 = SampleSH( inputData.normalWS );
+                inputData.shadowMask              = half4( 1.0h, 1.0h, 1.0h, 1.0h );
+
+                #if defined( _MAIN_LIGHT_SHADOWS_SCREEN )
+                inputData.shadowCoord = float4( inputData.normalizedScreenSpaceUV, 0.0f, 1.0f );
+                #else
+                inputData.shadowCoord = TransformWorldToShadowCoord( input.positionWS );
+                #endif
+
+                // matches the original surface shader's SurfaceOutputStandard: zero metallic and smoothness
+                SurfaceData surfaceData = ( SurfaceData )0;
+                surfaceData.albedo    = getSubMeshColor( input.subMeshIndex ).rgb;
+                surfaceData.occlusion = 1.0h;
+                surfaceData.alpha     = 1.0h;
+
+                half4 color = UniversalFragmentPBR( inputData, surfaceData );
+                color.rgb   = MixFog( color.rgb, inputData.fogCoord );
+                return color;
+            }
+
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags { "LightMode" = "ShadowCaster" }
+
+            ZWrite    On
+            ZTest     LEqual
+            ColorMask 0
+
+            HLSLPROGRAM
+
+            #pragma vertex   shadowVertexShader
+            #pragma fragment shadowFragmentShader
+
+            #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+
+            // set by URP while rendering shadow maps
+            float3 _LightDirection;
+            float3 _LightPosition;
+
+            float4 shadowVertexShader( uint vertexID : SV_VertexID ) : SV_POSITION {
+                ContourVertex contourVertex = fetchContourVertex( vertexID );
+
+                #if _CASTING_PUNCTUAL_LIGHT_SHADOW
+                float3 lightDirectionWS = normalize( _LightPosition - contourVertex.positionWS );
+                #else
+                float3 lightDirectionWS = _LightDirection;
+                #endif
+
+                float4 positionCS = TransformWorldToHClip( ApplyShadowBias( contourVertex.positionWS, contourVertex.normalWS, lightDirectionWS ) );
+                return ApplyShadowClamping( positionCS );
+            }
+
+            half4 shadowFragmentShader( ) : SV_TARGET {
+                return 0;
+            }
+
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite    On
+            ColorMask R
+
+            HLSLPROGRAM
+
+            #pragma vertex   depthVertexShader
+            #pragma fragment depthFragmentShader
+
+            float4 depthVertexShader( uint vertexID : SV_VertexID ) : SV_POSITION {
+                return TransformWorldToHClip( fetchContourVertex( vertexID ).positionWS );
+            }
+
+            half depthFragmentShader( float4 positionCS : SV_POSITION ) : SV_TARGET {
+                return positionCS.z;
+            }
+
+            ENDHLSL
+        }
     }
-    FallBack "Diffuse"
+    FallBack "Hidden/Universal Render Pipeline/FallbackError"
 }
