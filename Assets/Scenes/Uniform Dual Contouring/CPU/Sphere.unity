@@ -698,6 +698,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c69b06bc781819c44ab723a90165b8e5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  useCullingMasks: 0
   _resolution: 3
   _minimizerIterations: 6
   _binarySearchIterations: 6
@@ -707,18 +708,17 @@ MonoBehaviour:
   _intersectionApproximation: 0
   _vertexNormals: 0
   debugFlags: 30
-  debugCornerSize: 0.0125
-  debugEdgeSize: 0.025
-  debugMinimizingVertexSize: 0.1
-  debugSurfaceNormalSize: 0.025
-  debugCellMesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
-  debugCellMaterial: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
-  debugCornerMesh: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
-  debugCornerMaterial: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
-  debugEdgeMaterial: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
-  debugEdgeIntersectionMaterial: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
-  debugMinimizingVertexMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
-  debugSurfaceNormalMaterial: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+  debugAlwaysOnTop: 0
+  debugLineThickness: 1.5
+  debugCornerRadius: 2
+  debugMinimizingVertexRadius: 3
+  debugSurfaceNormalLength: 0.5
+  debugCellColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugCornerColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugEdgeColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugEdgeIntersectionColor: {r: 1, g: 0, b: 0, a: 1}
+  debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
+  debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   testing: 0
 --- !u!4 &2104129286
 Transform:

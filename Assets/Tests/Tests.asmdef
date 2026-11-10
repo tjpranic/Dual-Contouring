@@ -4,7 +4,8 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEngine.UI",
-        "GameAssembly"
+        "GameAssembly",
+        "ShapesRuntime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

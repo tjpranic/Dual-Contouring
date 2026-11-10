@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
+using Shapes;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -13,7 +15,7 @@ using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 [RequireComponent( typeof( MeshRenderer ) )]
-public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
+public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     [SerializeField( ), Range( 2, 8 )]
     private int _resolution = 2;
@@ -85,23 +87,52 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
     [Space]
 
-    public Debug    debugFlags                = Debug.Off;
-    public float    debugCornerSize           = 0.0125f;
-    public float    debugEdgeSize             = 0.025f;
-    public float    debugMinimizingVertexSize = 0.1f;
-    public float    debugSurfaceNormalSize    = 0.025f;
-    public Mesh     debugCellMesh;
-    public Material debugCellMaterial;
-    public Mesh     debugCornerMesh;
-    public Material debugCornerMaterial;
-    public Material debugEdgeMaterial;
-    public Material debugEdgeIntersectionMaterial;
-    public Material debugMinimizingVertexMaterial;
-    public Material debugSurfaceNormalMaterial;
+    public Debug debugFlags = Debug.Off;
+
+    [Tooltip( "Draw over the contour instead of being hidden by it" )]
+    public bool debugAlwaysOnTop = false;
+
+    [Tooltip( "Edge, intersection and surface normal thickness in pixels" ), Min( 0.5f )]
+    public float debugLineThickness = 1.5f;
+
+    [Tooltip( "Corner radius in pixels" ), Min( 0.5f )]
+    public float debugCornerRadius = 2.0f;
+
+    [Tooltip( "Minimizing vertex radius in pixels" ), Min( 0.5f )]
+    public float debugMinimizingVertexRadius = 3.0f;
+
+    [Tooltip( "Surface normal length, relative to the size of its voxel" ), Min( 0.0f )]
+    public float debugSurfaceNormalLength = 0.5f;
+
+    public Color debugCellColor             = new( 1.0f, 1.0f, 1.0f, 0.125f );
+    public Color debugCornerColor           = new( 1.0f, 1.0f, 1.0f, 0.125f );
+    public Color debugEdgeColor             = new( 1.0f, 1.0f, 1.0f, 0.125f );
+    public Color debugEdgeIntersectionColor = Color.red;
+    public Color debugMinimizingVertexColor = Color.blue;
+    public Color debugSurfaceNormalColor    = Color.blue;
 
     private bool          directToGPU = false;
     private Material      material;
     private ComputeBuffer argumentsBuffer;
+
+    // snapshot of the voxelization, in voxelizer object space, for drawing debug information each frame
+    private struct DebugEdge {
+        public Vector3 start;
+        public Vector3 end;
+        public bool    intersectsContour;
+    }
+
+    private struct DebugVoxel {
+        public Vector3 center;
+        public Vector3 size;
+        public bool    hasFeaturePoint;
+        public Vector3 vertex;
+        public Vector3 normal;
+    }
+
+    private Vector3[]    debugCorners;
+    private DebugEdge[]  debugEdges;
+    private DebugVoxel[] debugVoxels;
 
     public virtual void Start( ) {
 
@@ -181,142 +212,115 @@ public abstract class Voxelizer : MonoBehaviour, SurfaceExtractor {
 
             meshFilter.mesh = mesh;
 
-            this.renderDebugInformation( corners, edges, voxels );
+            this.captureDebugInformation( corners, edges, voxels );
 
         }
 
     }
 
-    private void renderDebugInformation(
+    private void captureDebugInformation(
         IEnumerable<SurfaceExtractor.Corner> corners,
         IEnumerable<SurfaceExtractor.Edge>   edges,
         IEnumerable<SurfaceExtractor.Voxel>  voxels
     ) {
-        if( this.debugFlags != Debug.Off ) {
-            var debugObject                  = new GameObject( "Debug" );
-                debugObject.transform.parent = this.gameObject.transform;
+        if( this.debugFlags == Debug.Off ) {
+            return;
+        }
 
-            var voxelsObject                  = new GameObject( $"Voxels" );
-                voxelsObject.transform.parent = debugObject.transform;
+        this.debugCorners = corners.Select( ( corner ) => corner.position ).ToArray( );
 
-            var voxelCount = 0;
-            foreach( var voxel in voxels ) {
-                var voxelObject                      = new GameObject( $"Voxel {++voxelCount}" );
-                    voxelObject.transform.parent     = voxelsObject.transform;
-                    voxelObject.transform.position   = voxel.center;
-                    voxelObject.transform.localScale = voxel.size;
+        this.debugEdges = edges.Select(
+            ( edge ) => new DebugEdge {
+                start             = edge.corners[0].position,
+                end               = edge.corners[1].position,
+                intersectsContour = edge.intersectsContour( )
+            }
+        ).ToArray( );
 
-                if( this.debugCellMaterial ) {
-                    var cellMeshRenderer          = voxelObject.AddComponent<MeshRenderer>( );
-                        cellMeshRenderer.material = this.debugCellMaterial;
+        this.debugVoxels = voxels.Select(
+            ( voxel ) => new DebugVoxel {
+                center          = voxel.center,
+                size            = voxel.size,
+                hasFeaturePoint = voxel.hasFeaturePoint( ),
+                vertex          = voxel.vertex,
+                normal          = voxel.normal
+            }
+        ).ToArray( );
+    }
 
-                    cellMeshRenderer.enabled = ( this.debugFlags & Debug.Cells ) == Debug.Cells;
-                }
-                if( this.debugCellMesh ) {
-                    var cellMeshFilter      = voxelObject.AddComponent<MeshFilter>( );
-                        cellMeshFilter.mesh = this.debugCellMesh;
-                }
+    public override void DrawShapes( Camera camera ) {
+        if( this.debugFlags == Debug.Off || this.debugVoxels == null ) {
+            return;
+        }
 
-                if( voxel.hasFeaturePoint( ) ) {
-                    var minimizingVertexObject                      = new GameObject( $"Minimizing Vertex" );
-                        minimizingVertexObject.transform.parent     = voxelObject.transform;
-                        minimizingVertexObject.transform.position   = voxel.vertex;
-                        minimizingVertexObject.transform.localScale = new Vector3( this.debugMinimizingVertexSize, this.debugMinimizingVertexSize, this.debugMinimizingVertexSize );
+        using( Draw.Command( camera ) ) {
 
-                    if( this.debugMinimizingVertexMaterial ) {
-                        var minimizingVertexMeshRenderer          = minimizingVertexObject.AddComponent<MeshRenderer>( );
-                            minimizingVertexMeshRenderer.material = this.debugMinimizingVertexMaterial;
+            Draw.ResetAllDrawStates( );
 
-                        minimizingVertexMeshRenderer.enabled = ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers;
-                    }
-                    if( this.debugCornerMesh ) {
-                        var minimizingVertexMeshFilter      = minimizingVertexObject.AddComponent<MeshFilter>( );
-                            minimizingVertexMeshFilter.mesh = this.debugCornerMesh;
-                    }
-                    if( this.debugSurfaceNormalMaterial ) {
-                        var minimizingVertexLineRenderer = minimizingVertexObject.AddComponent<LineRenderer>( );
+            Draw.BlendMode      = ShapesBlendMode.Transparent;
+            Draw.ZTest          = this.debugAlwaysOnTop ? CompareFunction.Always : CompareFunction.LessEqual;
+            Draw.LineGeometry   = LineGeometry.Billboard;
+            Draw.ThicknessSpace = ThicknessSpace.Pixels;
+            Draw.Thickness      = this.debugLineThickness;
+            Draw.RadiusSpace    = ThicknessSpace.Pixels;
 
-                        minimizingVertexLineRenderer.startWidth                = this.debugSurfaceNormalSize;
-                        minimizingVertexLineRenderer.endWidth                  = this.debugSurfaceNormalSize;
-                        minimizingVertexLineRenderer.numCapVertices            = 0;
-                        minimizingVertexLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                        minimizingVertexLineRenderer.receiveShadows            = false;
-                        minimizingVertexLineRenderer.material                  = this.debugSurfaceNormalMaterial;
-                        minimizingVertexLineRenderer.useWorldSpace             = false;
-                        minimizingVertexLineRenderer.startColor                = Color.white;
-                        minimizingVertexLineRenderer.endColor                  = Color.white;
-                        minimizingVertexLineRenderer.allowOcclusionWhenDynamic = false;
+            // the voxelization is in voxelizer object space
+            var localToWorld = this.transform.localToWorldMatrix;
 
-                        minimizingVertexLineRenderer.SetPositions( new Vector3[] { voxel.vertex, voxel.vertex + voxel.normal } );
+            // cells are sized in voxelizer object space, so they're drawn in it
+            if( ( this.debugFlags & Debug.Cells ) == Debug.Cells ) {
+                Draw.Matrix = localToWorld;
 
-                        minimizingVertexLineRenderer.enabled = ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers;
-                    }
+                foreach( var voxel in this.debugVoxels ) {
+                    Draw.Cuboid( voxel.center, voxel.size, this.debugCellColor );
                 }
 
+                Draw.ResetMatrix( );
             }
 
-            var cornersObject                  = new GameObject( $"Corners" );
-                cornersObject.transform.parent = debugObject.transform;
+            // everything else is sized in pixels and drawn in world space, otherwise the voxelizer's scale would scale
+            // the sphere radii too
 
-            var cornerCount = 0;
-            foreach( var corner in corners ) {
-                var cornerObject                      = new GameObject( $"Corner {++cornerCount}" );
-                    cornerObject.transform.parent     = cornersObject.transform;
-                    cornerObject.transform.position   = corner.position;
-                    cornerObject.transform.localScale = new Vector3( this.debugCornerSize, this.debugCornerSize, this.debugCornerSize );
-
-                if( this.debugCornerMaterial ) {
-                    var cornerMeshRenderer                           = cornerObject.AddComponent<MeshRenderer>( );
-                        cornerMeshRenderer.material                  = this.debugCornerMaterial;
-                        cornerMeshRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                        cornerMeshRenderer.receiveShadows            = false;
-                        cornerMeshRenderer.lightProbeUsage           = LightProbeUsage.Off;
-                        cornerMeshRenderer.reflectionProbeUsage      = ReflectionProbeUsage.Off;
-                        cornerMeshRenderer.allowOcclusionWhenDynamic = false;
-
-                    cornerMeshRenderer.enabled = ( this.debugFlags & Debug.Corners ) == Debug.Corners;
-                }
-                if( this.debugCornerMesh ) {
-                    var cornerMeshFilter      = cornerObject.AddComponent<MeshFilter>( );
-                        cornerMeshFilter.mesh = this.debugCornerMesh;
+            if( ( this.debugFlags & Debug.Corners ) == Debug.Corners ) {
+                foreach( var corner in this.debugCorners ) {
+                    Draw.Sphere( localToWorld.MultiplyPoint3x4( corner ), this.debugCornerRadius, this.debugCornerColor );
                 }
             }
 
-            var edgesObject                  = new GameObject( $"Edges" );
-                edgesObject.transform.parent = debugObject.transform;
+            var drawEdges         = ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
+            var drawIntersections = ( this.debugFlags & Debug.Intersections ) == Debug.Intersections;
 
-            var edgeCount = 0;
-            foreach( var edge in edges ) {
-                var edgeObject                  = new GameObject( $"Edge {++edgeCount}" );
-                    edgeObject.transform.parent = edgesObject.transform;
-
-                if(
-                    this.debugEdgeMaterial || (
-                        this.debugEdgeIntersectionMaterial && edge.intersectsContour( )
-                    )
-                ) {
-                    var edgeLineRenderer = edgeObject.AddComponent<LineRenderer>( );
-
-                    edgeLineRenderer.startWidth                = this.debugEdgeSize;
-                    edgeLineRenderer.endWidth                  = this.debugEdgeSize;
-                    edgeLineRenderer.numCapVertices            = 0;
-                    edgeLineRenderer.shadowCastingMode         = ShadowCastingMode.Off;
-                    edgeLineRenderer.receiveShadows            = false;
-                    edgeLineRenderer.material                  = edge.intersectsContour( ) ? this.debugEdgeIntersectionMaterial : this.debugEdgeMaterial;
-                    edgeLineRenderer.useWorldSpace             = false;
-                    edgeLineRenderer.startColor                = Color.white;
-                    edgeLineRenderer.endColor                  = Color.white;
-                    edgeLineRenderer.allowOcclusionWhenDynamic = false;
-
-                    edgeLineRenderer.SetPositions( new Vector3[] { edge.corners[0].position, edge.corners[1].position } );
-
-                    edgeLineRenderer.enabled = edge.intersectsContour( )
-                        ? ( this.debugFlags & Debug.Intersections ) == Debug.Intersections
-                        : ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
+            if( drawEdges || drawIntersections ) {
+                foreach( var edge in this.debugEdges ) {
+                    if( edge.intersectsContour ? drawIntersections : drawEdges ) {
+                        Draw.Line(
+                            localToWorld.MultiplyPoint3x4( edge.start ),
+                            localToWorld.MultiplyPoint3x4( edge.end ),
+                            edge.intersectsContour ? this.debugEdgeIntersectionColor : this.debugEdgeColor
+                        );
+                    }
                 }
             }
 
-            debugObject.transform.localScale = Vector3.one;
+            // normals and vertices are drawn in separate passes, Shapes only instances consecutive draws of the same shape
+            if( ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers ) {
+                foreach( var voxel in this.debugVoxels ) {
+                    if( voxel.hasFeaturePoint ) {
+                        var normalLength = this.debugSurfaceNormalLength * Mathf.Min( voxel.size.x, Mathf.Min( voxel.size.y, voxel.size.z ) );
+
+                        Draw.Line(
+                            localToWorld.MultiplyPoint3x4( voxel.vertex ),
+                            localToWorld.MultiplyPoint3x4( voxel.vertex + ( voxel.normal * normalLength ) ),
+                            this.debugSurfaceNormalColor
+                        );
+                    }
+                }
+                foreach( var voxel in this.debugVoxels ) {
+                    if( voxel.hasFeaturePoint ) {
+                        Draw.Sphere( localToWorld.MultiplyPoint3x4( voxel.vertex ), this.debugMinimizingVertexRadius, this.debugMinimizingVertexColor );
+                    }
+                }
+            }
 
         }
     }

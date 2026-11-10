@@ -25,11 +25,39 @@ Preset:
     value: 
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: resolution
+    propertyPath: useCullingMasks
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _resolution
     value: 5
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: vertexMode
+    propertyPath: _minimizerIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _binarySearchIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _surfaceCorrectionIterations
+    value: 6
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _implementation
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _qefSolver
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _intersectionApproximation
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: _vertexNormals
     value: 1
     objectReference: {fileID: 0}
   - target: {fileID: 0}
@@ -37,75 +65,132 @@ Preset:
     value: 24
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugCornerSize
-    value: 0.0125
+    propertyPath: debugAlwaysOnTop
+    value: 0
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugEdgeSize
-    value: 0.025
+    propertyPath: debugLineThickness
+    value: 1.5
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugMinimizingVertexSize
-    value: 0.1
+    propertyPath: debugCornerRadius
+    value: 2
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugSurfaceNormalSize
-    value: 0.025
+    propertyPath: debugMinimizingVertexRadius
+    value: 3
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugCellMesh
-    value: 
-    objectReference: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+    propertyPath: debugSurfaceNormalLength
+    value: 0.5
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugCellMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+    propertyPath: debugCellColor.r
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugCornerMesh
-    value: 
-    objectReference: {fileID: 10207, guid: 0000000000000000e000000000000000, type: 0}
+    propertyPath: debugCellColor.g
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugCornerMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+    propertyPath: debugCellColor.b
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugEdgeMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: 06921e617ad34634e94ff14aefb4d730, type: 2}
+    propertyPath: debugCellColor.a
+    value: 0.125
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugEdgeIntersectionMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: b0ab2bc59f4b3e749acc13540f2f2894, type: 2}
+    propertyPath: debugCornerColor.r
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugMinimizingVertexMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+    propertyPath: debugCornerColor.g
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: debugSurfaceNormalMaterial
-    value: 
-    objectReference: {fileID: 2100000, guid: 758972fbe45c26146951ab9c4f1ee92c, type: 2}
+    propertyPath: debugCornerColor.b
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugCornerColor.a
+    value: 0.125
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeColor.r
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeColor.g
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeColor.b
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeColor.a
+    value: 0.125
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeIntersectionColor.r
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeIntersectionColor.g
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeIntersectionColor.b
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugEdgeIntersectionColor.a
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexColor.r
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexColor.g
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexColor.b
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugMinimizingVertexColor.a
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalColor.r
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalColor.g
+    value: 0
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalColor.b
+    value: 1
+    objectReference: {fileID: 0}
+  - target: {fileID: 0}
+    propertyPath: debugSurfaceNormalColor.a
+    value: 1
+    objectReference: {fileID: 0}
   - target: {fileID: 0}
     propertyPath: errorThreshold
     value: 6e-12
     objectReference: {fileID: 0}
   - target: {fileID: 0}
-    propertyPath: minimizerIterations
-    value: 6
-    objectReference: {fileID: 0}
-  - target: {fileID: 0}
-    propertyPath: binarySearchIterations
-    value: 6
-    objectReference: {fileID: 0}
-  - target: {fileID: 0}
-    propertyPath: surfaceCorrectionIterations
-    value: 6
-    objectReference: {fileID: 0}
-  - target: {fileID: 0}
-    propertyPath: intersectionApproximationMode
-    value: 0
-    objectReference: {fileID: 0}
-  - target: {fileID: 0}
-    propertyPath: qefSolver
-    value: 0
+    propertyPath: enforceManifold
+    value: 1
     objectReference: {fileID: 0}
   m_ExcludedProperties: []
+  m_CoupledType:
+    m_NativeTypeID: 0
+    m_ManagedTypePPtr: {fileID: 0}
+    m_ManagedTypeFallback: 
+  m_CoupledProperties: []

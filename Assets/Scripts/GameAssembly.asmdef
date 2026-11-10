@@ -4,7 +4,8 @@
     "references": [
         "Unity.Mathematics",
         "Unity.InputSystem",
-        "Unity.TextMeshPro"
+        "Unity.TextMeshPro",
+        "ShapesRuntime"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],
