@@ -417,13 +417,27 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
         };
     }
 
+    // the index of the edge that the four nodes around an edge have in common, as each of them numbers it
+    private static readonly int[] commonEdgeX = { 3,  2, 1,  0 };
+    private static readonly int[] commonEdgeY = { 7,  6, 5,  4 };
+    private static readonly int[] commonEdgeZ = { 11, 9, 10, 8 };
+
     public static SurfaceExtractor.Edge lookupEdgeWithinEdgeNodes( Octree<Voxel>[] nodes, Axis axis, Position position ) {
+        // the minimal edge is an edge of the smallest of the four nodes. A larger node has a longer edge in that place
+        // or, when the minimal edge lies in one of its faces and it takes up two of the four places, no edge at all
+        var smallest = 0;
+        for( var nodeIndex = 1; nodeIndex < nodes.Length; ++nodeIndex ) {
+            if( nodes[nodeIndex].data.size.x < nodes[smallest].data.size.x ) {
+                smallest = nodeIndex;
+            }
+        }
+
         return position switch {
             Position.Root or
             Position.NegativeXNegativeYNegativeZ => axis switch {
-                Axis.X => nodes[0].data.edges[3],
-                Axis.Y => nodes[0].data.edges[7],
-                Axis.Z => nodes[0].data.edges[11],
+                Axis.X => nodes[smallest].data.edges[commonEdgeX[smallest]],
+                Axis.Y => nodes[smallest].data.edges[commonEdgeY[smallest]],
+                Axis.Z => nodes[smallest].data.edges[commonEdgeZ[smallest]],
                 _      => throw new Exception( "Unknown axis specified" ),
             },
             Position.PositiveXNegativeYNegativeZ => axis switch {

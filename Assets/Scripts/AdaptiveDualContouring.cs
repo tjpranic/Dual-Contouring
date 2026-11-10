@@ -83,6 +83,8 @@ public class AdaptiveDualContouring : Voxelizer {
         public float     error  { get; set; } = 0.0f;
         public int       index  { get; set; } = -1;
 
+        public bool hasFeaturePoint { get; set; } = false;
+
         public Voxel( VoxelType type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
             this.depth   = depth;
@@ -152,10 +154,6 @@ public class AdaptiveDualContouring : Voxelizer {
                 new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[4] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[7] } )
             };
-        }
-
-        public bool hasFeaturePoint( ) {
-            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
         }
 
         public bool Equals( SurfaceExtractor.Voxel other ) {
@@ -324,6 +322,8 @@ public class AdaptiveDualContouring : Voxelizer {
                     voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
 
                     voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
+
+                    voxel.hasFeaturePoint = true;
                 }
             }
         );
@@ -380,6 +380,8 @@ public class AdaptiveDualContouring : Voxelizer {
                     voxel.type   = VoxelType.Pseudo;
                     voxel.vertex = vertex;
                     voxel.normal = Vector3.Normalize( averageNormal );
+
+                    voxel.hasFeaturePoint = true;
 
                     node.children = null;
 
@@ -544,7 +546,7 @@ public class AdaptiveDualContouring : Voxelizer {
 
         var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
-        if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+        if( nodes.All( ( node ) => node.data.hasFeaturePoint ) && edge.intersectsContour( ) ) {
 
             var materialIndex = edge.corners[0].materialIndex == MaterialIndex.Void
                 ? edge.corners[1].materialIndex
@@ -586,9 +588,23 @@ public class AdaptiveDualContouring : Voxelizer {
                 };
             }
 
+            // a minimal edge in the middle of the face of a coarser node is contained by only three nodes, the coarse
+            // one takes up two of the four places. The polygon is then a triangle, and the half of the quad that
+            // uses the same vertex twice is left out
+            var indices = new List<int>( );
+            for( var triangleIndex = 0; triangleIndex < triangles.Length; triangleIndex += 3 ) {
+                var a = triangles[triangleIndex];
+                var b = triangles[triangleIndex + 1];
+                var c = triangles[triangleIndex + 2];
+
+                if( a != b && b != c && a != c ) {
+                    indices.AddRange( new int[] { a, b, c } );
+                }
+            }
+
             var subMeshIndex = SurfaceExtractor.findHighestMaterialBit( materialIndex );
 
-            quads.Add( new( triangles, subMeshIndex ) );
+            quads.Add( new( indices.ToArray( ), subMeshIndex ) );
         }
     }
 

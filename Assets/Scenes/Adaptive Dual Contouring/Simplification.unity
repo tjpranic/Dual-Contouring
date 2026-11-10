@@ -497,7 +497,7 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   simplification: 1
-  errorThreshold: 0.007
+  errorThreshold: 0.0002
 --- !u!4 &1429825957
 Transform:
   m_ObjectHideFlags: 0

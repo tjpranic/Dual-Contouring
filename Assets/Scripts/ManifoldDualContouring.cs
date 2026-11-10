@@ -90,6 +90,8 @@ public class ManifoldDualContouring : Voxelizer {
         public int       euler         { get; set; } = 0;    // euler characteristic, manifold condition 1
         public bool      face          { get; set; } = true; // whether face edge intersection count == 0 or 2, manifold condition 2
 
+        public bool hasFeaturePoint { get; set; } = false;
+
         public Voxel( VoxelType type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
             this.depth   = depth;
@@ -129,10 +131,6 @@ public class ManifoldDualContouring : Voxelizer {
                 new( new SurfaceExtractor.Corner[] { this.corners[5], this.corners[4] } ),
                 new( new SurfaceExtractor.Corner[] { this.corners[6], this.corners[7] } )
             };
-        }
-
-        public bool hasFeaturePoint( ) {
-            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
         }
 
         public bool Equals( SurfaceExtractor.Voxel other ) {
@@ -280,6 +278,8 @@ public class ManifoldDualContouring : Voxelizer {
                     voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
 
                     voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
+
+                    voxel.hasFeaturePoint = true;
                 }
             }
         );
@@ -298,7 +298,7 @@ public class ManifoldDualContouring : Voxelizer {
                     }
 
                     // euler characteristic for leaf cells is 1 if the cell contains a vertex, 0 otherwise
-                    voxel.euler = Convert.ToInt32( voxel.hasFeaturePoint( ) );
+                    voxel.euler = Convert.ToInt32( voxel.hasFeaturePoint );
                 }
                 else {
                     // calculate intersections for each non-leaf cell by counting intersections of sub-edges in children
@@ -361,6 +361,8 @@ public class ManifoldDualContouring : Voxelizer {
 
                         voxel.normal = Vector3.Normalize( averageNormal );
 
+                        voxel.hasFeaturePoint = true;
+
                         foreach( var child in node.children ) {
                             child.data.parent = voxel;
                         }
@@ -376,7 +378,7 @@ public class ManifoldDualContouring : Voxelizer {
                 ( node ) => {
                     var voxel = node.data;
 
-                    if( voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Internal ) {
+                    if( voxel.hasFeaturePoint && voxel.type == VoxelType.Internal ) {
                         // every node other than the root should have a parent
                         UnityEngine.Debug.Assert( voxel.depth == 0 || voxel.parent != null, "Non-root octree cluster node missing a parent" );
 
@@ -453,7 +455,7 @@ public class ManifoldDualContouring : Voxelizer {
 
         // build debug information
         var voxels = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
         ).Select(
             ( voxel ) => {
                 Voxel highest = voxel;
@@ -473,7 +475,7 @@ public class ManifoldDualContouring : Voxelizer {
         ).Distinct( );
 
         var corners = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
         ).Aggregate(
             new List<SurfaceExtractor.Corner>( ),
             ( accumulator, voxel ) => {
@@ -495,7 +497,7 @@ public class ManifoldDualContouring : Voxelizer {
         ).Distinct( );
 
         var edges = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint( ) && voxel.type == VoxelType.Leaf
+            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
         ).Aggregate(
             new List<SurfaceExtractor.Edge>( ),
             ( accumulator, voxel ) => {
@@ -671,7 +673,7 @@ public class ManifoldDualContouring : Voxelizer {
 
         var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
-        if( nodes.All( ( node ) => node.data.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+        if( nodes.All( ( node ) => node.data.hasFeaturePoint ) && edge.intersectsContour( ) ) {
 
             var voxels = new Voxel[4] {
                 nodes[0].data,

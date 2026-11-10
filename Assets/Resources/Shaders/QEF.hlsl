@@ -1,5 +1,9 @@
 #define SVD_TOLERANCE 1e-6f
-#define PSEUDO_INVERSE_TOLERANCE 1e-6f
+
+// singular values of AtA below this are treated as zero. It is an absolute magnitude, which works because the hermite
+// normals are unit length: a singular value then grows with the number of normals along its direction, and one this
+// small is noise in the data rather than a feature of the surface
+#define PSEUDO_INVERSE_TOLERANCE 0.1f
 
 struct SymmetricMatrix3x3 {
     float m00, m01, m02, m11, m12, m22;
@@ -80,22 +84,6 @@ Matrix3x3 createMatrix3x3(
     matrix3x3.m20 = m20;
     matrix3x3.m21 = m21;
     matrix3x3.m22 = m22;
-
-    return matrix3x3;
-}
-
-Matrix3x3 createMatrix3x3( SymmetricMatrix3x3 symmetricMatrix3x3 ) {
-    Matrix3x3 matrix3x3;
-
-    matrix3x3.m00 = symmetricMatrix3x3.m00;
-    matrix3x3.m01 = symmetricMatrix3x3.m01;
-    matrix3x3.m02 = symmetricMatrix3x3.m02;
-    matrix3x3.m10 = 0.0f;
-    matrix3x3.m11 = symmetricMatrix3x3.m11;
-    matrix3x3.m12 = symmetricMatrix3x3.m12;
-    matrix3x3.m20 = 0.0f;
-    matrix3x3.m21 = 0.0f;
-    matrix3x3.m22 = symmetricMatrix3x3.m22;
 
     return matrix3x3;
 }
@@ -258,11 +246,7 @@ void rotate01( in out SymmetricMatrix3x3 VTAV, in out Matrix3x3 V ) {
         calculateSymmetricGivensCoefficients( VTAV.m00, VTAV.m01, VTAV.m11, c, s );
 
         VTAV = rotate01( VTAV, c, s );
-
-        c = 0.0f;
-        s = 0.0f;
-
-        V = rotate01Post( V, c, s );
+        V    = rotate01Post( V, c, s );
     }
 }
 
@@ -274,11 +258,7 @@ void rotate02( in out SymmetricMatrix3x3 VTAV, in out Matrix3x3 V ) {
         calculateSymmetricGivensCoefficients( VTAV.m00, VTAV.m02, VTAV.m22, c, s );
 
         VTAV = rotate02( VTAV, c, s );
-
-        c = 0.0f;
-        s = 0.0f;
-
-        V = rotate02Post( V, c, s );
+        V    = rotate02Post( V, c, s );
     }
 }
 
@@ -290,11 +270,7 @@ void rotate12( in out SymmetricMatrix3x3 VTAV, in out Matrix3x3 V ) {
         calculateSymmetricGivensCoefficients( VTAV.m11, VTAV.m12, VTAV.m22, c, s );
 
         VTAV = rotate12( VTAV, c, s );
-
-        c = 0.0f;
-        s = 0.0f;
-
-        V = rotate12Post( V, c, s );
+        V    = rotate12Post( V, c, s );
     }
 }
 
@@ -316,7 +292,7 @@ float pseudoInverse( float x ) {
         return 0.0f;
     }
     else {
-        return abs( 1.0f / x ) < PSEUDO_INVERSE_TOLERANCE ? 0.0f : ( 1.0f / x );
+        return 1.0f / x;
     }
 }
 
@@ -338,31 +314,31 @@ Matrix3x3 pseudoInverse( in SymmetricMatrix3x3 VTAV, in Matrix3x3 V ) {
     );
 }
 
-float calculateError( in SymmetricMatrix3x3 ATA, float3 x, float3 ATB ) {
-    Matrix3x3 A = createMatrix3x3( ATA );
+// the value of the QEF at x, E[x] = xT AtA x - 2 xT AtB + BtB: the sum over the hermite samples of the squared distance
+// from x to the plane of the sample
+float calculateError( in SymmetricMatrix3x3 ATA, float3 ATB, float BTB, float3 x ) {
+    float error = dot( x, multiplyVector( ATA, x ) ) - ( 2.0f * dot( x, ATB ) ) + BTB;
 
-    float3 V = ATB - multiplyVector( A, x );
-
-    return dot( V, V );
+    // close to the surface the three terms cancel almost completely, and rounding can leave them just below zero
+    return max( error, 0.0f );
 }
 
-void solveSVD( in SymmetricMatrix3x3 ATA, float3 ATB, out float3 vertex, out float error, uint minimizerIterations ) {
+void solveSVD( in SymmetricMatrix3x3 ATA, float3 ATB, out float3 vertex, uint minimizerIterations ) {
     SymmetricMatrix3x3 VTAV;
     Matrix3x3          V;
     getSymmetricSVD( ATA, VTAV, V, minimizerIterations );
 
     vertex = multiplyVector( pseudoInverse( VTAV, V ), ATB );
-    error  = calculateError( ATA, vertex, ATB );
 }
 
 void solveQEF( in SVDQEF qef, out float3 vertex, out float error, uint minimizerIterations ) {
     if( qef.intersectionCount > 0 ) {
-        qef.massPoint /= qef.intersectionCount;
-        qef.ATB       -= multiplyVector( qef.ATA, qef.massPoint );
+        float3 massPoint = qef.massPoint / qef.intersectionCount;
 
-        solveSVD( qef.ATA, qef.ATB, vertex, error, minimizerIterations );
+        solveSVD( qef.ATA, qef.ATB - multiplyVector( qef.ATA, massPoint ), vertex, minimizerIterations );
 
-        vertex += qef.massPoint;
+        vertex += massPoint;
+        error   = calculateError( qef.ATA, qef.ATB, qef.BTB, vertex );
     }
     else {
         vertex = float3( 0.0f, 0.0f, 0.0f );

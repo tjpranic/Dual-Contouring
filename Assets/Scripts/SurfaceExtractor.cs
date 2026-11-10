@@ -118,7 +118,9 @@ public interface SurfaceExtractor {
         public Corner[] corners { get; }
         public Edge[]   edges   { get; }
 
-        public bool hasFeaturePoint( );
+        // whether a minimizing vertex was placed in the voxel. This is kept separately from the vertex and normal
+        // because any value of those, including zero, is a valid result
+        public bool hasFeaturePoint { get; }
 
     }
 
@@ -205,7 +207,10 @@ public interface SurfaceExtractor {
     }
 
     public static Vector3 calculateNormal( Edge edge, IEnumerable<DensityFunction> densityFunctions ) {
-        var step = 0.1f;
+        // the step has to be far smaller than a voxel, or the samples reach across sharp edges of the surface and the
+        // normal becomes a blend of the faces on either side. It also has to stay well above the precision of a float,
+        // or the difference is mostly rounding error
+        var step = 1e-4f;
 
         // sample surrounding x, y, z locations and take the difference
 

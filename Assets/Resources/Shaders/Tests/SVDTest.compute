@@ -94,21 +94,26 @@ void pseudoInverseMatrixTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     pseudoInverseMatrixTestResult[0] = pseudoInverse( pseudoInverseMatrixTestParameter0[0], pseudoInverseMatrixTestParameter1[0] );
 }
 
-StructuredBuffer<SymmetricMatrix3x3> calculateErrorTestParameter0;
-StructuredBuffer<float3>             calculateErrorTestParameter1;
-StructuredBuffer<float3>             calculateErrorTestParameter2;
+StructuredBuffer<SymmetricMatrix3x3> calculateErrorTestParameter0; // AtA
+StructuredBuffer<float4>             calculateErrorTestParameter1; // AtB in xyz, BtB in w
+StructuredBuffer<float3>             calculateErrorTestParameter2; // x
 RWStructuredBuffer<float>            calculateErrorTestResult;
 
 [numthreads( 1, 1, 1 )]
 void calculateErrorTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
-    calculateErrorTestResult[0] = calculateError( calculateErrorTestParameter0[0], calculateErrorTestParameter1[0], calculateErrorTestParameter2[0] );
+    calculateErrorTestResult[0] = calculateError(
+        calculateErrorTestParameter0[0],
+        calculateErrorTestParameter1[0].xyz,
+        calculateErrorTestParameter1[0].w,
+        calculateErrorTestParameter2[0]
+    );
 }
 
 StructuredBuffer<SymmetricMatrix3x3> solveSVDTestParameter0;
 StructuredBuffer<float3>             solveSVDTestParameter1;
-RWStructuredBuffer<float4>           solveSVDTestResult;
+RWStructuredBuffer<float3>           solveSVDTestResult;
 
 [numthreads( 1, 1, 1 )]
 void solveSVDTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
-    solveSVD( solveSVDTestParameter0[0], solveSVDTestParameter1[0], solveSVDTestResult[0].xyz, solveSVDTestResult[0].w, SVD_SWEEPS );
+    solveSVD( solveSVDTestParameter0[0], solveSVDTestParameter1[0], solveSVDTestResult[0], SVD_SWEEPS );
 }

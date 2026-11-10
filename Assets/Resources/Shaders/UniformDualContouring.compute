@@ -64,6 +64,7 @@ struct Voxel {
     float3 vertex;
     float3 normal;
     int    index;
+    uint   hasFeaturePoint; // whether a minimizing vertex was placed in the voxel, any vertex and normal are valid values
 };
 
 Voxel createVoxel( float3 center, float3 size ) {
@@ -77,6 +78,8 @@ Voxel createVoxel( float3 center, float3 size ) {
     voxel.vertex  = float3( 0.0f, 0.0f, 0.0f );
     voxel.normal  = float3( 0.0f, 0.0f, 0.0f );
     voxel.index   = -1;
+
+    voxel.hasFeaturePoint = 0;
 
     return voxel;
 }
@@ -309,7 +312,9 @@ float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
     return float3( 0.0f, 0.0f, 0.0f );
 }
 
-#define STEP 0.1f
+// far smaller than a voxel so the samples do not reach across sharp edges of the surface, and well above the precision
+// of a float so the difference is not mostly rounding error
+#define STEP 1e-4f
 
 float3 calculateNormal( float3 position ) {
 
@@ -369,7 +374,11 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
     for( uint voxelCornerIndex = 0; voxelCornerIndex < VOXEL_CORNER_COUNT; ++voxelCornerIndex ) {
         uint cornerIndex = ( voxelIndex * VOXEL_CORNER_COUNT ) + voxelCornerIndex;
 
-        cornerBits |= ( corners[cornerIndex].materialIndex << voxelCornerIndex );
+        // one bit per corner: a material index is a set of flags, shifted as it is it would spill into the bits of
+        // the corners after it
+        if( corners[cornerIndex].materialIndex != MATERIAL_INDEX_VOID ) {
+            cornerBits |= ( 1u << voxelCornerIndex );
+        }
     }
 
     bool allEmpty = cornerBits == 0;   // no bits set
@@ -413,7 +422,8 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
                 vertex.y < voxels[voxelIndex].minimum.y || vertex.y > voxels[voxelIndex].maximum.y ||
                 vertex.z < voxels[voxelIndex].minimum.z || vertex.z > voxels[voxelIndex].maximum.z
             ) {
-                vertex = qef.massPoint;
+                // the QEF accumulates the sum of the intersections, the mass point is their average
+                vertex = qef.massPoint / qef.intersectionCount;
             }
 
             float3 normal = normalize( averageNormal / qef.intersectionCount );
@@ -422,6 +432,8 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
 
             voxels[voxelIndex].vertex = vertex;
             voxels[voxelIndex].normal = normal;
+
+            voxels[voxelIndex].hasFeaturePoint = 1;
         }
 
     }
@@ -458,10 +470,7 @@ RWStructuredBuffer<uint>   counts;
 void generateSharedVertices( uint3 dispatchThreadID : SV_DispatchThreadID ) {
     uint voxelIndex = ( dispatchThreadID.z * resolution * resolution ) + ( dispatchThreadID.y * resolution ) + dispatchThreadID.x;
 
-    if(
-        voxels[voxelIndex].index == -1 &&
-        ( length( voxels[voxelIndex].vertex ) > 0.0f && length( voxels[voxelIndex].normal ) > 0.0f )
-    ) {
+    if( voxels[voxelIndex].index == -1 && voxels[voxelIndex].hasFeaturePoint == 1 ) {
         uint vertexIndex;
         InterlockedAdd( counts[VERTEX_COUNT_INDEX], 1, vertexIndex );
 
@@ -504,7 +513,7 @@ void generateIndices( uint voxelIndices[4], uint voxelEdgeIndex ) {
     for( uint voxelIndexIndex = 0; voxelIndexIndex < 4; ++voxelIndexIndex ) {
         uint voxelIndex = voxelIndices[voxelIndexIndex];
 
-        if( !( length( voxels[voxelIndex].vertex ) > 0.0f && length( voxels[voxelIndex].normal ) > 0.0f ) ) {
+        if( voxels[voxelIndex].hasFeaturePoint == 0 ) {
             allHaveFeatures = false;
             break;
         }

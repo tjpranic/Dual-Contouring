@@ -387,16 +387,12 @@ public class SVDTest : ImplementationTest {
 
     [Test]
     public void calculateErrorTest( ) {
+        // AtA, AtB with BtB in w, and the point the error is evaluated at
         var parameter0 = new SVDQEF.SymmetricMatrix3x3( 0.7640296f, 0.6270213f, 0.6270213f, 1.117985f, 0.935941f, 1.117985f );
-        var parameter1 = new Vector3( 0.0f, 0.0f, 0.0f );
-        var parameter2 = new Vector3( -0.02622265f, -0.02307659f, -0.02307659f );
+        var parameter1 = new Vector4( -0.02622265f, -0.02307659f, -0.02307659f, 0.3124973f );
+        var parameter2 = new Vector3( 0.2325951f, 0.5514052f, -0.6665196f );
 
-        // fails with these parameters, no idea why
-        // parameter0 = new SVDQEF.SymmetricMatrix3x3( -0.5651875f, 0.8850253f, -0.2808784f, 0.3854723f, 0.2691586f, 0.5050807f );
-        // parameter1 = new Vector3( 0.2325951f, 0.5514052f, -0.6665196f );
-        // parameter2 = new Vector3( 0.563621f, 0.7674949f, 0.1588005f );
-
-        var expectedResult = SVDQEF.SVD.calculateError( parameter0, parameter1, parameter2 );
+        var expectedResult = SVDQEF.SVD.calculateError( parameter0, parameter1, parameter1.w, parameter2 );
         var actualResult   = this.testKernel(
             "calculateErrorTest",
             new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
@@ -411,10 +407,10 @@ public class SVDTest : ImplementationTest {
             100,
             ( ) => {
                 var parameter0 = this.generateRandomSymmetricMatrix3x3( );
-                var parameter1 = this.generateRandomVector3( );
+                var parameter1 = new Vector4( this.generateRandomFloat( ), this.generateRandomFloat( ), this.generateRandomFloat( ), this.generateRandomFloat( ) );
                 var parameter2 = this.generateRandomVector3( );
 
-                var expectedResult = SVDQEF.SVD.calculateError( parameter0, parameter1, parameter2 );
+                var expectedResult = SVDQEF.SVD.calculateError( parameter0, parameter1, parameter1.w, parameter2 );
                 var actualResult   = this.testKernel(
                     "calculateErrorTest",
                     new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
@@ -438,13 +434,12 @@ public class SVDTest : ImplementationTest {
             "solveSVDTest",
             new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
             parameter1,
-            new Vector4( )
+            new Vector3( )
         );
 
-        Assert.AreEqual( expectedResult.Item1.x, actualResult.x, epsilon );
-        Assert.AreEqual( expectedResult.Item1.y, actualResult.y, epsilon );
-        Assert.AreEqual( expectedResult.Item1.z, actualResult.z, epsilon );
-        Assert.AreEqual( expectedResult.Item2,   actualResult.w, epsilon );
+        Assert.AreEqual( expectedResult.x, actualResult.x, epsilon );
+        Assert.AreEqual( expectedResult.y, actualResult.y, epsilon );
+        Assert.AreEqual( expectedResult.z, actualResult.z, epsilon );
 
         this.repeat(
             100,
@@ -457,13 +452,12 @@ public class SVDTest : ImplementationTest {
                     "solveSVDTest",
                     new SVDQEF.SymmetricMatrix3x3.Data( parameter0 ),
                     parameter1,
-                    new Vector4( )
+                    new Vector3( )
                 );
 
-                Assert.AreEqual( expectedResult.Item1.x, actualResult.x, epsilon );
-                Assert.AreEqual( expectedResult.Item1.y, actualResult.y, epsilon );
-                Assert.AreEqual( expectedResult.Item1.z, actualResult.z, epsilon );
-                Assert.AreEqual( expectedResult.Item2,   actualResult.w, epsilon );
+                Assert.AreEqual( expectedResult.x, actualResult.x, epsilon );
+                Assert.AreEqual( expectedResult.y, actualResult.y, epsilon );
+                Assert.AreEqual( expectedResult.z, actualResult.z, epsilon );
             }
         );
     }

@@ -340,7 +340,7 @@ MonoBehaviour:
   debugEdgeIntersectionColor: {r: 1, g: 0, b: 0, a: 1}
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
-  errorThreshold: 0.014
+  errorThreshold: 0.0002
   enforceManifold: 1
 --- !u!1 &501333545
 GameObject:

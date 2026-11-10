@@ -22,8 +22,12 @@ public class SVDQEF : QEFSolver {
 
     }
 
-    private const float SVDTolerance           = 1e-6f;
-    private const float PseudoInverseTolerance = 1e-6f;
+    private const float SVDTolerance = 1e-6f;
+
+    // singular values of AtA below this are treated as zero. It is an absolute magnitude, which works because the
+    // hermite normals are unit length: a singular value then grows with the number of normals along its direction, and
+    // one this small is noise in the data rather than a feature of the surface
+    private const float PseudoInverseTolerance = 0.1f;
 
     public int minimizerIterations { get; set; }
 
@@ -97,9 +101,7 @@ public class SVDQEF : QEFSolver {
 
         ATB -= ATA.multiplyVector( massPoint );
 
-        var ( minimizingVertex, error ) = SVD.solve( ATA, ATB, this.minimizerIterations );
-
-        minimizingVertex += massPoint;
+        var minimizingVertex = SVD.solve( ATA, ATB, this.minimizerIterations ) + massPoint;
 
         // if the solved position is outside the voxel, use the mass point instead
         if(
@@ -109,6 +111,9 @@ public class SVDQEF : QEFSolver {
         ) {
             minimizingVertex = massPoint;
         }
+
+        // the error belongs to the vertex that is returned, which is not the solved one if the mass point replaced it
+        var error = SVD.calculateError( this.ATA, this.ATB, this.BTB, minimizingVertex );
 
         return ( minimizingVertex, error );
     }
@@ -153,18 +158,6 @@ public class SVDQEF : QEFSolver {
             this.m20 = m20;
             this.m21 = m21;
             this.m22 = m22;
-        }
-
-        public Matrix3x3( SymmetricMatrix3x3 other ) {
-            this.m00 = other.m00;
-            this.m01 = other.m01;
-            this.m02 = other.m02;
-            this.m10 = 0.0f;
-            this.m11 = other.m11;
-            this.m12 = other.m12;
-            this.m20 = 0.0f;
-            this.m21 = 0.0f;
-            this.m22 = other.m22;
         }
 
         public Vector3 multiplyVector( Vector3 vector ) {
@@ -355,10 +348,7 @@ public class SVDQEF : QEFSolver {
                 var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV.m00, VTAV.m01, VTAV.m11 );
 
                 VTAV = VTAV.rotate01( c, s );
-
-                ( c, s ) = ( 0.0f, 0.0f );
-
-                V = V.rotate01Post( c, s );
+                V    = V.rotate01Post( c, s );
             }
             return ( VTAV, V );
         }
@@ -368,12 +358,7 @@ public class SVDQEF : QEFSolver {
                 var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV.m00, VTAV.m02, VTAV.m22 );
 
                 VTAV = VTAV.rotate02( c, s );
-
-                // not sure why these are needed
-                // I think they keep minimizing vertices bounded to voxels
-                ( c, s ) = ( 0.0f, 0.0f );
-
-                V = V.rotate02Post( c, s );
+                V    = V.rotate02Post( c, s );
             }
             return ( VTAV, V );
         }
@@ -383,10 +368,7 @@ public class SVDQEF : QEFSolver {
                 var ( c, s ) = calculateSymmetricGivensCoefficients( VTAV.m11, VTAV.m12, VTAV.m22 );
 
                 VTAV = VTAV.rotate12( c, s );
-
-                ( c, s ) = ( 0.0f, 0.0f );
-
-                V = V.rotate12Post( c, s );
+                V    = V.rotate12Post( c, s );
             }
             return ( VTAV, V );
         }
@@ -407,7 +389,7 @@ public class SVDQEF : QEFSolver {
         }
 
         public static float pseudoInverse( float x ) {
-            return ( Mathf.Abs( x ) < PseudoInverseTolerance || Mathf.Abs( 1.0f / x ) < PseudoInverseTolerance ) ? 0.0f : ( 1.0f / x );
+            return Mathf.Abs( x ) < PseudoInverseTolerance ? 0.0f : ( 1.0f / x );
         }
 
         public static Matrix3x3 pseudoInverse( SymmetricMatrix3x3 VTAV, Matrix3x3 V ) {
@@ -428,22 +410,19 @@ public class SVDQEF : QEFSolver {
             );
         }
 
-        public static float calculateError( SymmetricMatrix3x3 ATA, Vector3 x, Vector3 ATB ) {
-            var A = new Matrix3x3( ATA );
+        // the value of the QEF at x, E[x] = xT AtA x - 2 xT AtB + BtB: the sum over the hermite samples of the squared
+        // distance from x to the plane of the sample
+        public static float calculateError( SymmetricMatrix3x3 ATA, Vector3 ATB, float BTB, Vector3 x ) {
+            var error = Vector3.Dot( x, ATA.multiplyVector( x ) ) - ( 2.0f * Vector3.Dot( x, ATB ) ) + BTB;
 
-            var V = ATB - A.multiplyVector( x );
-
-            return Vector3.Dot( V, V );
+            // close to the surface the three terms cancel almost completely, and rounding can leave them just below zero
+            return Mathf.Max( error, 0.0f );
         }
 
-        public static ( Vector3, float ) solve( SymmetricMatrix3x3 ATA, Vector3 ATB, int sweeps ) {
+        public static Vector3 solve( SymmetricMatrix3x3 ATA, Vector3 ATB, int sweeps ) {
             var ( VTAV, V ) = getSymmetricSVD( ATA, sweeps );
 
-            var x = pseudoInverse( VTAV, V ).multiplyVector( ATB );
-
-            var error = calculateError( ATA, x, ATB );
-
-            return ( x, error );
+            return pseudoInverse( VTAV, V ).multiplyVector( ATB );
         }
 
     }

@@ -241,7 +241,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             ( voxel ) => new DebugVoxel {
                 center          = voxel.center,
                 size            = voxel.size,
-                hasFeaturePoint = voxel.hasFeaturePoint( ),
+                hasFeaturePoint = voxel.hasFeaturePoint,
                 vertex          = voxel.vertex,
                 normal          = voxel.normal
             }

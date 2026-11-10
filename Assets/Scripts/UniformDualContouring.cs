@@ -115,6 +115,7 @@ public class UniformDualContouring : Voxelizer {
             public Vector3 vertex;
             public Vector3 normal;
             public int     index;
+            public int     hasFeaturePoint;
 
             public Data( Voxel voxel ) {
                 this.center  = voxel.center;
@@ -125,6 +126,8 @@ public class UniformDualContouring : Voxelizer {
                 this.vertex  = voxel.vertex;
                 this.normal  = voxel.normal;
                 this.index   = voxel.index;
+
+                this.hasFeaturePoint = Convert.ToInt32( voxel.hasFeaturePoint );
             }
 
         }
@@ -140,6 +143,8 @@ public class UniformDualContouring : Voxelizer {
         public Vector3                   vertex  { get; set; } = Vector3.zero;
         public Vector3                   normal  { get; set; } = Vector3.zero;
         public int                       index   { get; set; } = -1;
+
+        public bool hasFeaturePoint { get; set; } = false;
 
         public Voxel( Vector3 center, Vector3 size ) {
             this.center  = center;
@@ -246,10 +251,8 @@ public class UniformDualContouring : Voxelizer {
             this.vertex = voxelData.vertex;
             this.normal = voxelData.normal;
             this.index  = voxelData.index;
-        }
 
-        public bool hasFeaturePoint( ) {
-            return Vector3.Magnitude( this.vertex ) > 0.0f && Vector3.Magnitude( this.normal ) > 0.0f;
+            this.hasFeaturePoint = voxelData.hasFeaturePoint != 0;
         }
 
         public bool Equals( SurfaceExtractor.Voxel other ) {
@@ -376,6 +379,8 @@ public class UniformDualContouring : Voxelizer {
                     voxel.normal = Vector3.Normalize( averageNormal / qef.intersectionCount );
 
                     voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, surfaceCorrectionIterations );
+
+                    voxel.hasFeaturePoint = true;
                 }
             }
 
@@ -390,7 +395,7 @@ public class UniformDualContouring : Voxelizer {
                     for( var z = 0; z < this.grid.GetLength( 2 ); ++z ) {
                         var voxel = this.grid[x, y, z];
 
-                        if( !voxel.hasFeaturePoint( ) ) {
+                        if( !voxel.hasFeaturePoint ) {
                             continue;
                         }
 
@@ -490,7 +495,7 @@ public class UniformDualContouring : Voxelizer {
         }
 
         private void contour( Voxel[] voxels, SurfaceExtractor.Edge edge, List<Vector3> vertices, List<Vector3> normals, List<Quad> quads ) {
-            if( voxels.All( ( voxel ) => voxel.hasFeaturePoint( ) ) && edge.intersectsContour( ) ) {
+            if( voxels.All( ( voxel ) => voxel.hasFeaturePoint ) && edge.intersectsContour( ) ) {
 
                 // indices should only be generated from void - solid intersections
                 UnityEngine.Debug.Assert(
