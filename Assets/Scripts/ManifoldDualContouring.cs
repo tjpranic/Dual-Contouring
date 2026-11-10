@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Profiling;
 using UnityEditor;
 using UnityEngine;
 
@@ -272,14 +273,38 @@ public class ManifoldDualContouring : Voxelizer {
 
     private Octree<Voxel> octree;
 
+    private static readonly ProfilerMarker buildOctreeMarker   = new( "ManifoldDualContouring.Managed.BuildOctree" );
+    private static readonly ProfilerMarker sampleCornersMarker = new( "ManifoldDualContouring.Managed.SampleCorners" );
+    private static readonly ProfilerMarker solveVerticesMarker = new( "ManifoldDualContouring.Managed.SolveVertices" );
+    private static readonly ProfilerMarker clusterMarker       = new( "ManifoldDualContouring.Managed.Cluster" );
+    private static readonly ProfilerMarker validateMarker      = new( "ManifoldDualContouring.Managed.Validate" );
+    private static readonly ProfilerMarker markCollapsedMarker = new( "ManifoldDualContouring.Managed.MarkCollapsed" );
+    private static readonly ProfilerMarker contourMarker       = new( "ManifoldDualContouring.Managed.Contour" );
+    private static readonly ProfilerMarker buildMeshMarker     = new( "ManifoldDualContouring.Managed.BuildMesh" );
+    private static readonly ProfilerMarker debugMarker         = new( "ManifoldDualContouring.Managed.DebugInformation" );
+
     protected override Implementation implementation {
         get { throw new NotImplementedException( ); }
         set { throw new NotImplementedException( ); }
     }
 
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+        return this.implementationType switch {
+            ImplementationType.Managed => this.voxelizeManaged( densityFunctions ),
+            ImplementationType.Burst   => throw new NotImplementedException( "Manifold dual contouring has no Burst implementation yet" ),
+            ImplementationType.GPU     => throw new NotSupportedException( "Manifold dual contouring has no GPU implementation" ),
+            _                          => throw new Exception( "Unknown implementation type specified" )
+        };
+    }
+
+    private Either<CPUVoxelization, GPUVoxelization> voxelizeManaged( IEnumerable<DensityFunction> densityFunctions ) {
+
+        // volumes work out where they are from their transforms on every sample
+        densityFunctions = DensityFunction.snapshot( densityFunctions );
 
         // build octree with depth equal to resolution
+
+        buildOctreeMarker.Begin( );
 
         this.octree = Octree<Voxel>.build(
             new( VoxelType.Internal, 0, Vector3.zero, Vector3.one ),
@@ -308,7 +333,11 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
+        buildOctreeMarker.End( );
+
         // sample corner densities
+
+        sampleCornersMarker.Begin( );
 
         Octree<Voxel>.walk(
             this.octree,
@@ -316,15 +345,17 @@ public class ManifoldDualContouring : Voxelizer {
                 var voxel = node.data;
 
                 foreach( var corner in voxel.corners ) {
-                    foreach( var densityFunction in densityFunctions ) {
-                        corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
-                        corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
-                    }
+                    corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
+                    corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
                 }
             }
         );
 
+        sampleCornersMarker.End( );
+
         // find contour intersections and calculate a minimizing vertex for each piece of the contour in a leaf
+
+        solveVerticesMarker.Begin( );
 
         Octree<Voxel>.walk(
             this.octree,
@@ -410,7 +441,11 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
+        solveVerticesMarker.End( );
+
         // cluster vertices
+
+        clusterMarker.Begin( );
 
         Octree<Voxel>.climb(
             this.octree,
@@ -535,6 +570,10 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
+        clusterMarker.End( );
+
+        validateMarker.Begin( );
+
         if( UnityEngine.Debug.isDebugBuild ) {
             // verify the validity of the vertex clustering
             Octree<Voxel>.walk(
@@ -559,7 +598,11 @@ public class ManifoldDualContouring : Voxelizer {
             );
         }
 
+        validateMarker.End( );
+
         // mark vertices as collapsible and cells as collapsed
+
+        markCollapsedMarker.Begin( );
 
         Octree<Voxel>.climb(
             this.octree,
@@ -590,7 +633,11 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
+        markCollapsedMarker.End( );
+
         // generate vertices and indices
+
+        contourMarker.Begin( );
 
         var vertices  = new List<Vector3>( );
         var normals   = new List<Vector3>( );
@@ -598,29 +645,21 @@ public class ManifoldDualContouring : Voxelizer {
 
         this.contourCell( this.octree, Position.Root, vertices, normals, triangles );
 
+        contourMarker.End( );
+
         // build mesh
-        var mesh = new Mesh {
-            vertices = vertices.ToArray( ),
-            normals  = normals.ToArray( )
-        };
 
-        var subMeshIndices = new Dictionary<int, List<int>>( );
+        buildMeshMarker.Begin( );
 
-        foreach( var triangle in triangles.Distinct( ) ) {
-            var subMeshIndex = triangle.subMeshIndex;
-            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
-                subMeshIndices.Add( subMeshIndex, new( ) );
-            }
-            subMeshIndices[subMeshIndex].AddRange( triangle.indices );
-        }
+        var mesh = SurfaceExtractor.createMesh(
+            vertices.ToArray( ),
+            normals.ToArray( ),
+            triangles.Distinct( ).Select( ( triangle ) => ( triangle.subMeshIndex, triangle.indices ) )
+        );
 
-        mesh.subMeshCount = subMeshIndices.Keys.Count;
+        buildMeshMarker.End( );
 
-        var subMeshCount = 0;
-        foreach( var indices in subMeshIndices ) {
-            mesh.SetTriangles( indices.Value, subMeshCount );
-            ++subMeshCount;
-        }
+        debugMarker.Begin( );
 
         // build debug information: the vertices on the contour, each shown in the cell it was created in
         var voxels = Octree<Voxel>.flatten( this.octree ).Where(
@@ -634,6 +673,8 @@ public class ManifoldDualContouring : Voxelizer {
         var corners = voxels.SelectMany( ( vertex ) => vertex.corners ).Distinct( );
 
         var edges = voxels.SelectMany( ( vertex ) => vertex.edges ).Distinct( );
+
+        debugMarker.End( );
 
         return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
             mesh    = mesh,
@@ -895,6 +936,13 @@ public class ManifoldDualContouringEditor : VoxelizerEditor {
 
     public override void OnInspectorGUI( ) {
         base.OnInspectorGUI( );
+
+        var manifoldDualContouring = this.target as ManifoldDualContouring;
+
+        // there is no GPU implementation of manifold dual contouring
+        if( manifoldDualContouring.implementationType == ImplementationType.GPU ) {
+            manifoldDualContouring.implementationType = ImplementationType.Managed;
+        }
     }
 
 }

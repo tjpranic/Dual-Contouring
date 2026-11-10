@@ -5,7 +5,8 @@
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
         "GameAssembly",
-        "ShapesRuntime"
+        "ShapesRuntime",
+        "Unity.PerformanceTesting"
     ],
     "includePlatforms": [
         "Editor"

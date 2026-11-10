@@ -10,7 +10,7 @@ public class UniformDualContouringTopologyTest : TopologyTest {
     // of the models puts two pieces of surface in one cell, so it is manifold as well
     [Test]
     public void surfaceIsClosedAndManifold( [Values] Model model, [Values] QEFSolverType solver ) {
-        var voxelizer = this.createUniformVoxelizer( 4, ImplementationType.CPU, solver, shapesOf( model ) ); // 16^3 cells
+        var voxelizer = this.createUniformVoxelizer( 4, ImplementationType.Managed, solver, shapesOf( model ) ); // 16^3 cells
 
         var topology = this.contour( voxelizer );
 
@@ -32,14 +32,14 @@ public class UniformDualContouringTopologyTest : TopologyTest {
     }
 
     [Test]
-    public void materialBoundaryIsFollowed( [Values] ImplementationType implementation ) {
+    public void materialBoundaryIsFollowed( [Values( ImplementationType.Managed, ImplementationType.GPU )] ImplementationType implementation ) {
         var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, slabWithBand ); // 16^3 cells
 
         this.assertBandFollowsMaterialBoundary( voxelizer );
     }
 
     [Test]
-    public void surfaceWithVertexAtOriginIsClosed( [Values] ImplementationType implementation ) {
+    public void surfaceWithVertexAtOriginIsClosed( [Values( ImplementationType.Managed, ImplementationType.GPU )] ImplementationType implementation ) {
         var voxelizer = this.createUniformVoxelizer( 3, implementation, QEFSolverType.SVD, cubeWithCornerAtOrigin ); // 8^3 cells
 
         assertClosed( this.contour( voxelizer ) );

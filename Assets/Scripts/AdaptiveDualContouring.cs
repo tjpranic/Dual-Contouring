@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Profiling;
 using UnityEditor;
 using UnityEngine;
 
@@ -190,14 +191,36 @@ public class AdaptiveDualContouring : Voxelizer {
 
     private Octree<Voxel> octree;
 
+    private static readonly ProfilerMarker buildOctreeMarker   = new( "AdaptiveDualContouring.Managed.BuildOctree" );
+    private static readonly ProfilerMarker sampleCornersMarker = new( "AdaptiveDualContouring.Managed.SampleCorners" );
+    private static readonly ProfilerMarker solveVerticesMarker = new( "AdaptiveDualContouring.Managed.SolveVertices" );
+    private static readonly ProfilerMarker simplifyMarker      = new( "AdaptiveDualContouring.Managed.Simplify" );
+    private static readonly ProfilerMarker contourMarker       = new( "AdaptiveDualContouring.Managed.Contour" );
+    private static readonly ProfilerMarker buildMeshMarker     = new( "AdaptiveDualContouring.Managed.BuildMesh" );
+    private static readonly ProfilerMarker debugMarker         = new( "AdaptiveDualContouring.Managed.DebugInformation" );
+
     protected override Implementation implementation {
         get { throw new NotImplementedException( ); }
         set { throw new NotImplementedException( ); }
     }
 
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
+        return this.implementationType switch {
+            ImplementationType.Managed => this.voxelizeManaged( densityFunctions ),
+            ImplementationType.Burst   => throw new NotImplementedException( "Adaptive dual contouring has no Burst implementation yet" ),
+            ImplementationType.GPU     => throw new NotSupportedException( "Adaptive dual contouring has no GPU implementation" ),
+            _                          => throw new Exception( "Unknown implementation type specified" )
+        };
+    }
+
+    private Either<CPUVoxelization, GPUVoxelization> voxelizeManaged( IEnumerable<DensityFunction> densityFunctions ) {
+
+        // volumes work out where they are from their transforms on every sample
+        densityFunctions = DensityFunction.snapshot( densityFunctions );
 
         // build octree with depth equal to resolution
+
+        buildOctreeMarker.Begin( );
 
         this.octree = Octree<Voxel>.build(
             new( VoxelType.Internal, 0, Vector3.zero, Vector3.one ),
@@ -267,7 +290,11 @@ public class AdaptiveDualContouring : Voxelizer {
             }
         );
 
+        buildOctreeMarker.End( );
+
         // sample corner densities
+
+        sampleCornersMarker.Begin( );
 
         Octree<Voxel>.walk(
             this.octree,
@@ -275,15 +302,17 @@ public class AdaptiveDualContouring : Voxelizer {
                 var voxel = node.data;
 
                 foreach( var corner in voxel.corners ) {
-                    foreach( var densityFunction in densityFunctions ) {
-                        corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
-                        corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
-                    }
+                    corner.density       = SurfaceExtractor.calculateDensity  ( corner.position, densityFunctions );
+                    corner.materialIndex = SurfaceExtractor.calculateMaterial ( corner.position, densityFunctions );
                 }
             }
         );
 
+        sampleCornersMarker.End( );
+
         // find contour intersections and calculate minimizing vertices
+
+        solveVerticesMarker.Begin( );
 
         Octree<Voxel>.walk(
             this.octree,
@@ -336,7 +365,11 @@ public class AdaptiveDualContouring : Voxelizer {
             }
         );
 
+        solveVerticesMarker.End( );
+
         // simplify octree
+
+        simplifyMarker.Begin( );
 
         if( this.simplification ) {
             UnityEngine.Debug.Assert( this.errorThreshold != 0.0f );
@@ -409,7 +442,11 @@ public class AdaptiveDualContouring : Voxelizer {
 
         }
 
+        simplifyMarker.End( );
+
         // generate vertices and indices
+
+        contourMarker.Begin( );
 
         var vertices = new List<Vector3>( );
         var normals  = new List<Vector3>( );
@@ -417,29 +454,21 @@ public class AdaptiveDualContouring : Voxelizer {
 
         this.contourCell( this.octree, Position.Root, vertices, normals, quads );
 
+        contourMarker.End( );
+
         // build mesh
-        var mesh = new Mesh {
-            vertices = vertices.ToArray( ),
-            normals  = normals.ToArray( )
-        };
 
-        var subMeshIndices = new Dictionary<int, List<int>>( );
+        buildMeshMarker.Begin( );
 
-        foreach( var quad in quads ) {
-            var subMeshIndex = quad.subMeshIndex;
-            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
-                subMeshIndices.Add( subMeshIndex, new( ) );
-            }
-            subMeshIndices[subMeshIndex].AddRange( quad.indices );
-        }
+        var mesh = SurfaceExtractor.createMesh(
+            vertices.ToArray( ),
+            normals.ToArray( ),
+            quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
+        );
 
-        mesh.subMeshCount = subMeshIndices.Keys.Count;
+        buildMeshMarker.End( );
 
-        var subMeshCount = 0;
-        foreach( var indices in subMeshIndices ) {
-            mesh.SetTriangles( indices.Value, subMeshCount );
-            ++subMeshCount;
-        }
+        debugMarker.Begin( );
 
         // build debug information
         var voxels = Octree<Voxel>.flatten( this.octree ).Where(
@@ -461,6 +490,8 @@ public class AdaptiveDualContouring : Voxelizer {
                 return accumulator;
             }
         ).Distinct( );
+
+        debugMarker.End( );
 
         return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
             mesh    = mesh,
@@ -641,9 +672,9 @@ public class AdaptiveDualContouringEditor : VoxelizerEditor {
 
         var adaptiveDualContouring = this.target as AdaptiveDualContouring;
 
-        // not going to bother implementing GPU solver for adaptive dual contouring
+        // there is no GPU implementation of adaptive dual contouring
         if( adaptiveDualContouring.implementationType == ImplementationType.GPU ) {
-            adaptiveDualContouring.implementationType = ImplementationType.CPU;
+            adaptiveDualContouring.implementationType = ImplementationType.Managed;
         }
     }
 

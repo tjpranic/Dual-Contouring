@@ -33,9 +33,11 @@ public interface SurfaceExtractor {
 
         }
 
+        // the values are what scenes save, so they stay as they are
         public enum Type {
-            CPU,
-            GPU
+            Managed = 0,
+            GPU     = 1,
+            Burst   = 2
         }
 
         public Either<CPU.Voxelization, GPU.Voxelization> voxelize(
@@ -134,6 +136,34 @@ public interface SurfaceExtractor {
     public VertexNormals             vertexNormals               { get; set; }
 
     public Either<Implementation.CPU.Voxelization, Implementation.GPU.Voxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
+
+    // the mesh of a contour. Sub-mesh n holds the polygons on the surface of material bit n, which the mesh renderer
+    // draws with its n-th material and the GPU with its n-th colour, so a material that is not on the surface leaves its
+    // sub-mesh empty. Past 65,535 vertices the indices need 32 bits
+    public static Mesh createMesh( Vector3[] vertices, Vector3[] normals, IEnumerable<( int subMeshIndex, int[] indices )> polygons ) {
+        var mesh = new Mesh {
+            indexFormat = vertices.Length > ushort.MaxValue ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16,
+            vertices    = vertices,
+            normals     = normals
+        };
+
+        var subMeshes = new List<List<int>>( );
+
+        foreach( var ( subMeshIndex, indices ) in polygons ) {
+            while( subMeshes.Count <= subMeshIndex ) {
+                subMeshes.Add( new( ) );
+            }
+            subMeshes[subMeshIndex].AddRange( indices );
+        }
+
+        mesh.subMeshCount = subMeshes.Count;
+
+        for( var subMeshIndex = 0; subMeshIndex < subMeshes.Count; ++subMeshIndex ) {
+            mesh.SetTriangles( subMeshes[subMeshIndex], subMeshIndex );
+        }
+
+        return mesh;
+    }
 
     public static MaterialIndex calculateMaterial( Vector3 position, IEnumerable<DensityFunction> densityFunctions ) {
         return densityFunctions.Aggregate(

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using Shapes;
+using Unity.Profiling;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -46,7 +47,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     }
 
     [SerializeField( )]
-    private ImplementationType _implementation = ImplementationType.CPU;
+    private ImplementationType _implementation = ImplementationType.Managed;
     public ImplementationType implementationType {
         get { return this._implementation;  }
         set { this._implementation = value; }
@@ -134,11 +135,20 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private DebugEdge[]  debugEdges;
     private DebugVoxel[] debugVoxels;
 
+    private static readonly ProfilerMarker voxelizeMarker      = new( "Voxelizer.Voxelize" );
+    private static readonly ProfilerMarker splitVerticesMarker = new( "Voxelizer.SplitVertices" );
+    private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
+    private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
+
     public virtual void Start( ) {
 
         var volumes = this.GetComponentsInChildren<Volume>( );
 
+        voxelizeMarker.Begin( );
+
         var voxelization = this.voxelize( volumes );
+
+        voxelizeMarker.End( );
 
         if( this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
@@ -171,30 +181,13 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                 ( voxelization ) => {
                     var mesh = voxelization.mesh;
 
-                    // convert to flat shading by splitting vertices
+                    // convert to flat shading by splitting vertices. The GPU does that itself, in the contour kernel
                     if( this.vertexNormals == VertexNormals.Split ) {
-                        var vertices  = new Vector3[mesh.triangles.Length];
-                        var triangles = new Dictionary<int, int[]>( );
+                        splitVerticesMarker.Begin( );
 
-                        var subMeshTriangleIndexStart = 0;
-                        for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
-                            var subMeshTriangles = mesh.GetTriangles( subMeshIndex );
-                            for( var subMeshTriangleIndex = subMeshTriangleIndexStart; subMeshTriangleIndex < subMeshTriangleIndexStart + subMeshTriangles.Length; ++subMeshTriangleIndex ) {
-                                var triangleIndex = subMeshTriangleIndex - subMeshTriangleIndexStart;
+                        splitVertices( mesh );
 
-                                vertices[subMeshTriangleIndex]  = mesh.vertices[subMeshTriangles[triangleIndex]];
-                                subMeshTriangles[triangleIndex] = subMeshTriangleIndex;
-                            }
-                            triangles.Add( subMeshIndex, subMeshTriangles );
-                            subMeshTriangleIndexStart += subMeshTriangles.Length;
-                        }
-
-                        mesh.vertices = vertices;
-                        for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
-                            mesh.SetTriangles( triangles[subMeshIndex], subMeshIndex );
-                        }
-
-                        mesh.RecalculateNormals( );
+                        splitVerticesMarker.End( );
                     }
 
                     return ( mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
@@ -205,17 +198,60 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                 }
             );
 
+            finishMeshMarker.Begin( );
+
             mesh.RecalculateBounds( );
             mesh.OptimizeReorderVertexBuffer( );
+
+            finishMeshMarker.End( );
 
             var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
 
             meshFilter.mesh = mesh;
 
+            captureDebugMarker.Begin( );
+
             this.captureDebugInformation( corners, edges, voxels );
+
+            captureDebugMarker.End( );
 
         }
 
+    }
+
+    // gives every triangle three vertices of its own, which makes the normals of the mesh the normals of its faces.
+    // The vertices are read once: every read of Mesh.vertices returns a new copy of them
+    public static void splitVertices( Mesh mesh ) {
+        var shared = mesh.vertices;
+
+        var subMeshes = new int[mesh.subMeshCount][];
+        for( var subMeshIndex = 0; subMeshIndex < subMeshes.Length; ++subMeshIndex ) {
+            subMeshes[subMeshIndex] = mesh.GetTriangles( subMeshIndex );
+        }
+
+        var vertices = new Vector3[subMeshes.Sum( ( triangles ) => triangles.Length )];
+
+        var vertexIndex = 0;
+        foreach( var triangles in subMeshes ) {
+            for( var index = 0; index < triangles.Length; ++index ) {
+                vertices[vertexIndex] = shared[triangles[index]];
+                triangles[index]      = vertexIndex;
+
+                ++vertexIndex;
+            }
+        }
+
+        // three vertices for every triangle pass 65,535 vertices three times as soon
+        if( vertices.Length > ushort.MaxValue ) {
+            mesh.indexFormat = IndexFormat.UInt32;
+        }
+
+        mesh.vertices = vertices;
+        for( var subMeshIndex = 0; subMeshIndex < subMeshes.Length; ++subMeshIndex ) {
+            mesh.SetTriangles( subMeshes[subMeshIndex], subMeshIndex );
+        }
+
+        mesh.RecalculateNormals( );
     }
 
     private void captureDebugInformation(
@@ -328,6 +364,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     public abstract Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions );
 
     public abstract CPUVoxelization convert( GPUVoxelization voxelization );
+
+    // releases what an implementation holds on to outside of managed memory, such as compute buffers
+    public virtual void OnDestroy( ) { }
 
     public void Update( ) {
         if( this.directToGPU ) {

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using Unity.Profiling;
 using UnityEditor;
 using UnityEngine;
 
@@ -302,7 +303,14 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    private class CPUImplementation : Implementation {
+    private class ManagedImplementation : Implementation {
+
+        private static readonly ProfilerMarker buildGridMarker      = new( "UniformDualContouring.Managed.BuildGrid" );
+        private static readonly ProfilerMarker sampleCornersMarker  = new( "UniformDualContouring.Managed.SampleCorners" );
+        private static readonly ProfilerMarker solveVerticesMarker  = new( "UniformDualContouring.Managed.SolveVertices" );
+        private static readonly ProfilerMarker contourMarker        = new( "UniformDualContouring.Managed.Contour" );
+        private static readonly ProfilerMarker buildMeshMarker      = new( "UniformDualContouring.Managed.BuildMesh" );
+        private static readonly ProfilerMarker debugMarker          = new( "UniformDualContouring.Managed.DebugInformation" );
 
         private Voxel[,,] grid;
 
@@ -317,7 +325,12 @@ public class UniformDualContouring : Voxelizer {
             VertexNormals                vertexNormals
         ) {
 
+            // volumes work out where they are from their transforms on every sample
+            densityFunctions = DensityFunction.snapshot( densityFunctions );
+
             // create uniformly subdivided voxel grid
+
+            buildGridMarker.Begin( );
 
             this.grid = new Voxel[resolution, resolution, resolution];
             for( var x = 0; x < this.grid.GetLength( 0 ); ++x ) {
@@ -331,7 +344,11 @@ public class UniformDualContouring : Voxelizer {
                 }
             }
 
+            buildGridMarker.End( );
+
             // sample corner densities
+
+            sampleCornersMarker.Begin( );
 
             foreach( var voxel in this.grid ) {
                 foreach( var corner in voxel.corners ) {
@@ -340,7 +357,11 @@ public class UniformDualContouring : Voxelizer {
                 }
             }
 
+            sampleCornersMarker.End( );
+
             // find contour intersections and calculate minimizing vertices
+
+            solveVerticesMarker.Begin( );
 
             foreach( var voxel in this.grid ) {
 
@@ -389,7 +410,11 @@ public class UniformDualContouring : Voxelizer {
                 }
             }
 
+            solveVerticesMarker.End( );
+
             // generate vertices and indices
+
+            contourMarker.Begin( );
 
             var vertices = new List<Vector3>( );
             var normals  = new List<Vector3>( );
@@ -448,31 +473,24 @@ public class UniformDualContouring : Voxelizer {
                 }
             }
 
+            contourMarker.End( );
+
             // build mesh
-            var mesh = new Mesh {
-                vertices = vertices.ToArray( ),
-                normals  = normals.ToArray( )
-            };
 
-            var subMeshIndices = new Dictionary<int, List<int>>( );
+            buildMeshMarker.Begin( );
 
-            foreach( var quad in quads ) {
-                var subMeshIndex = quad.subMeshIndex;
-                if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
-                    subMeshIndices.Add( subMeshIndex, new( ) );
-                }
-                subMeshIndices[subMeshIndex].AddRange( quad.indices );
-            }
+            var mesh = SurfaceExtractor.createMesh(
+                vertices.ToArray( ),
+                normals.ToArray( ),
+                quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
+            );
 
-            mesh.subMeshCount = subMeshIndices.Keys.Count;
-
-            var subMeshCount = 0;
-            foreach( var indices in subMeshIndices ) {
-                mesh.SetTriangles( indices.Value, subMeshCount );
-                ++subMeshCount;
-            }
+            buildMeshMarker.End( );
 
             // build debug information
+
+            debugMarker.Begin( );
+
             var voxels = this.grid.flatten( );
 
             var edges = voxels.Aggregate(
@@ -490,6 +508,8 @@ public class UniformDualContouring : Voxelizer {
                     return accumulator;
                 }
             ).Distinct( );
+
+            debugMarker.End( );
 
             return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
                 mesh    = mesh,
@@ -789,23 +809,25 @@ public class UniformDualContouring : Voxelizer {
 
     }
 
-    private CPUImplementation cpuImplementation;
-    private GPUImplementation gpuImplementation;
+    private ManagedImplementation managedImplementation;
+    private GPUImplementation     gpuImplementation;
 
     private Implementation _implementation;
     protected override Implementation implementation {
         get {
             return this.implementationType switch {
-                ImplementationType.CPU => this.cpuImplementation,
-                ImplementationType.GPU => this.gpuImplementation,
-                _ => throw new Exception( "Unknown implementation type specified" )
+                ImplementationType.Managed => this.managedImplementation,
+                ImplementationType.GPU     => this.gpuImplementation,
+                ImplementationType.Burst   => throw new NotImplementedException( "Uniform dual contouring has no Burst implementation yet" ),
+                _                          => throw new Exception( "Unknown implementation type specified" )
             };
         }
         set {
             this._implementation = this.implementationType switch {
-                ImplementationType.CPU => value,
-                ImplementationType.GPU => value,
-                _ => throw new Exception( "Unknown implementation type specified" ),
+                ImplementationType.Managed => value,
+                ImplementationType.GPU     => value,
+                ImplementationType.Burst   => value,
+                _                          => throw new Exception( "Unknown implementation type specified" ),
             };
         }
     }
@@ -815,16 +837,16 @@ public class UniformDualContouring : Voxelizer {
     public bool testing = false;
 
     public override void Start( ) {
-        this.cpuImplementation = new CPUImplementation( );
-        this.gpuImplementation = new GPUImplementation( );
+        this.managedImplementation = new ManagedImplementation( );
+        this.gpuImplementation     = new GPUImplementation( );
 
         if( !testing ) {
             base.Start( );
         }
     }
 
-    public void OnDestroy( ) {
-        this.gpuImplementation.releaseBuffers( );
+    public override void OnDestroy( ) {
+        this.gpuImplementation?.releaseBuffers( );
     }
 
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
@@ -867,30 +889,13 @@ public class UniformDualContouring : Voxelizer {
         voxelization.counts.GetData   ( countsData );
 
         // build mesh
-        var mesh = new Mesh {
-            vertices = verticesData.Take ( countsData[0] ).ToArray( ),
-            normals  = normalsData.Take  ( countsData[0] ).ToArray( ),
-        };
-
         var quads = quadsData.Take( countsData[1] ).Select( ( quadData ) => new Quad( quadData ) );
 
-        var subMeshIndices = new Dictionary<int, List<int>>( );
-
-        foreach( var quad in quads ) {
-            var subMeshIndex = quad.subMeshIndex;
-            if( !subMeshIndices.ContainsKey( subMeshIndex ) ) {
-                subMeshIndices.Add( subMeshIndex, new( ) );
-            }
-            subMeshIndices[subMeshIndex].AddRange( quad.indices );
-        }
-
-        mesh.subMeshCount = subMeshIndices.Keys.Count;
-
-        var subMeshCount = 0;
-        foreach( var indices in subMeshIndices ) {
-            mesh.SetTriangles( indices.Value, subMeshCount );
-            ++subMeshCount;
-        }
+        var mesh = SurfaceExtractor.createMesh(
+            verticesData.Take ( countsData[0] ).ToArray( ),
+            normalsData.Take  ( countsData[0] ).ToArray( ),
+            quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
+        );
 
         // build debug information
         var voxels = voxelData.Aggregate(

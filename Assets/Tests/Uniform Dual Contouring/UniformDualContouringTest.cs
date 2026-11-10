@@ -40,7 +40,7 @@ public class UniformDualContouringTest {
         uniformDualContouring.surfaceCorrectionIterations = 0;
         uniformDualContouring.qefSolverType               = QEFSolverType.SVD;
         uniformDualContouring.intersectionApproximation   = IntersectionApproximation.BinarySearch;
-        uniformDualContouring.implementationType          = ImplementationType.CPU;
+        uniformDualContouring.implementationType          = ImplementationType.Managed;
         uniformDualContouring.testing                     = true;
 
         var sphere = new GameObject( "Sphere" );

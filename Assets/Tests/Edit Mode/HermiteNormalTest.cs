@@ -37,7 +37,7 @@ public class HermiteNormalTest : ContouringTest {
     }
 
     [Test]
-    public void normalsOfSphereAreRadial( [Values] ImplementationType implementation ) {
+    public void normalsOfSphereAreRadial( [Values( ImplementationType.Managed, ImplementationType.GPU )] ImplementationType implementation ) {
         var center = new Vector3( 0.013f, -0.021f, 0.017f );
 
         this.assertNormals( implementation, sphere( center, 0.3f ), ( intersection ) => intersection - center );
@@ -46,7 +46,7 @@ public class HermiteNormalTest : ContouringTest {
     // an edge of the grid can only cross a face of this cube at least 0.0375 away from the edges of the cube, the grid
     // lines closest to them are at 0.3125. Every normal should therefore be exactly the normal of a face
     [Test]
-    public void normalsOfCubeAreAxisAligned( [Values] ImplementationType implementation ) {
+    public void normalsOfCubeAreAxisAligned( [Values( ImplementationType.Managed, ImplementationType.GPU )] ImplementationType implementation ) {
         var extent = 0.35f;
 
         this.assertNormals(

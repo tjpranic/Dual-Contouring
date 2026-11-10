@@ -32,8 +32,8 @@ public abstract class ContouringTest {
 
     }
 
-    private readonly List<Object>                created           = new( );
-    private readonly List<UniformDualContouring> uniformVoxelizers = new( );
+    private readonly List<Object>    created    = new( );
+    private readonly List<Voxelizer> voxelizers = new( );
 
     protected static Shape ellipsoid( Vector3 origin, Vector3 extents, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) {
         return new( DensityFunction.Type.Ellipsoid, origin, extents, combination, materialIndex );
@@ -53,11 +53,12 @@ public abstract class ContouringTest {
 
     [TearDown]
     public void tearDown( ) {
-        // OnDestroy releases the compute buffers of the GPU implementation, and edit mode does not call it by itself
-        foreach( var voxelizer in this.uniformVoxelizers ) {
+        // OnDestroy releases what the implementations hold outside of managed memory, such as the compute buffers of
+        // the GPU implementation, and edit mode does not call it by itself
+        foreach( var voxelizer in this.voxelizers ) {
             voxelizer.OnDestroy( );
         }
-        this.uniformVoxelizers.Clear( );
+        this.voxelizers.Clear( );
 
         foreach( var item in this.created ) {
             Object.DestroyImmediate( item );
@@ -73,6 +74,8 @@ public abstract class ContouringTest {
         this.created.Add( gameObject );
 
         var voxelizer = gameObject.AddComponent<T>( );
+
+        this.voxelizers.Add( voxelizer );
 
         voxelizer.resolution    = resolution;
         voxelizer.qefSolverType = solver;
@@ -110,14 +113,17 @@ public abstract class ContouringTest {
         voxelizer.testing = true;
         voxelizer.Start( );
 
-        this.uniformVoxelizers.Add( voxelizer );
-
         return voxelizer;
     }
 
     // contours the volumes below the voxelizer with its current settings, the same way Voxelizer.Start does
     protected CPUVoxelization voxelize( Voxelizer voxelizer ) {
-        var voxelization = voxelizer.voxelize( voxelizer.GetComponentsInChildren<Volume>( ) ).visit(
+        return this.voxelize( voxelizer, voxelizer.GetComponentsInChildren<Volume>( ) );
+    }
+
+    // contours the given density functions with the settings of the voxelizer, whatever volumes are below it
+    protected CPUVoxelization voxelize( Voxelizer voxelizer, IEnumerable<DensityFunction> densityFunctions ) {
+        var voxelization = voxelizer.voxelize( densityFunctions ).visit(
             ( cpu ) => cpu,
             ( gpu ) => voxelizer.convert( gpu )
         );

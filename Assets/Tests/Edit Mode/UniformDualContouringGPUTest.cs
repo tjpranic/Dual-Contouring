@@ -34,7 +34,7 @@ public class UniformDualContouringGPUTest : TopologyTest {
     }
 
     private void assertVerticesMatchCPU( Shape[] shapes ) {
-        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.CPU, QEFSolverType.SVD, shapes );
+        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.Managed, QEFSolverType.SVD, shapes );
 
         var expected = this.voxelize( voxelizer ).voxels.Where( ( voxel ) => voxel.hasFeaturePoint ).ToDictionary( indexOf );
 
