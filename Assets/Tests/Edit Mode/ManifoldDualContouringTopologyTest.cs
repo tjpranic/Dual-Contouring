@@ -1,4 +1,5 @@
-﻿using NUnit.Framework;
+﻿using System.Linq;
+using NUnit.Framework;
 using UnityEngine;
 
 using QEFSolverType = QEFSolver.Type;
@@ -19,6 +20,13 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     // leaves. Every cell it passes through, at any level of the octree, holds a tube that is open at both ends
     private static readonly Shape[] beam = {
         cuboid( new Vector3( 0.0f, 0.0625f, 0.0625f ), new Vector3( 1.0f, 0.04f, 0.04f ) )
+    };
+
+    // two boxes with a gap of 0.03 between them, around the plane x = 0.0625 where two leaves meet. No leaf holds more
+    // than one piece of surface, but every larger cell along the gap holds a face of either box
+    private static readonly Shape[] twoBoxes = {
+        cuboid( new Vector3( -0.175f, 0.0f, 0.0f ), new Vector3( 0.225f, 0.4f, 0.4f ) ), // -0.4  to 0.05 along x
+        cuboid( new Vector3(  0.24f,  0.0f, 0.0f ), new Vector3( 0.16f,  0.3f, 0.3f ) )  //  0.08 to 0.4  along x
     };
 
     // a box with a thin finger standing on it. On its way up the finger passes through the 1 / 8 wide cells above the
@@ -43,6 +51,14 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
         voxelizer.enforceManifold = true;
 
         return voxelizer;
+    }
+
+    // two closed manifold surfaces without handles, apart from each other
+    private static void assertTwoSpheres( MeshTopology topology ) {
+        assertManifold( topology );
+
+        Assert.AreEqual( 2, topology.components,          $"separate pieces of surface in: {topology}" );
+        Assert.AreEqual( 4, topology.eulerCharacteristic, $"euler characteristic of: {topology}" );
     }
 
     // with a threshold of zero no vertex is collapsible and the octree contours like a uniform grid
@@ -70,7 +86,46 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     public void surfaceIsManifoldWhereALeafHoldsTwoPiecesOfSurface( ) {
         var voxelizer = this.create( resolution, QEFSolverType.SVD, twoSpheres, 0.0f );
 
-        assertManifold( this.contour( voxelizer ) );
+        assertTwoSpheres( this.contour( voxelizer ) );
+    }
+
+    // the vertices of the two pieces go up the vertex tree separately, and the spheres stay apart
+    [Test]
+    public void clusteredSurfaceIsManifoldWhereALeafHoldsTwoPiecesOfSurface( [Values] QEFSolverType solver ) {
+        var voxelizer = this.create( resolution, solver, twoSpheres, thresholdOf( solver ) );
+
+        assertTwoSpheres( this.contour( voxelizer ) );
+    }
+
+    // the debug visualization is given a voxel for every vertex on the contour: the cell the vertex was created in,
+    // with that vertex in it. A cell that holds two pieces of the contour is there twice
+    [Test]
+    public void everyVertexOfTheContourIsShownInAVoxelOfItsOwn( ) {
+        var voxelization = this.voxelize( this.create( resolution, QEFSolverType.SVD, twoSpheres, 0.0f ) );
+
+        var voxels = voxelization.voxels.ToList( );
+
+        Assert.IsTrue( voxels.All( ( voxel ) => voxel.hasFeaturePoint ), "a voxel without a vertex" );
+
+        CollectionAssert.AreEquivalent( voxelization.mesh.vertices, voxels.Select( ( voxel ) => voxel.vertex ).ToArray( ) );
+
+        Assert.Less( voxels.Select( ( voxel ) => ( voxel.center, voxel.size ) ).Distinct( ).Count( ), voxels.Count, "no cell is shown twice" );
+    }
+
+    // section VI: "multiple contour components within a same octree cell simplify in an independent manner, hence
+    // allowing flat regions to maximally collapse even if in the vicinity of other geometry". The larger box collapses
+    // to its corners, one in each octant of the grid, as if the other box was not there. The smaller box reaches from
+    // one side of its octants to the other, with opposite faces that no single vertex fits, and stops a level below:
+    // one vertex in each of the 2 x 4 x 4 cells of 1 / 4 that it passes through
+    [Test]
+    public void separateSurfacesInACellClusterIndependently( ) {
+        var voxelizer = this.create( resolution, QEFSolverType.SVD, twoBoxes, 1e-4f );
+
+        var topology = this.contour( voxelizer );
+
+        assertTwoSpheres( topology );
+
+        Assert.AreEqual( 8 + 32, topology.vertices, $"vertices of: {topology}" );
     }
 
     // proposition 1: clustering under the manifold criterion generates a closed 2-manifold, and preserves the genus of

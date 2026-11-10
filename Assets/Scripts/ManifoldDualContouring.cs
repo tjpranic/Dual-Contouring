@@ -4,8 +4,6 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
-// TODO: implement support for multiple vertices per voxel
-
 using Axis     = OctreeContouringTables<ManifoldDualContouring.Voxel>.Axis;
 using Position = OctreeContouringTables<ManifoldDualContouring.Voxel>.Position;
 
@@ -78,20 +76,22 @@ public class ManifoldDualContouring : Voxelizer {
         public SurfaceExtractor.Corner[] corners { get; }
         public SurfaceExtractor.Edge[]   edges   { get; }
 
-        public int       depth         { get; set; }
-        public QEFSolver qef           { get; set; }
-        public Vector3   vertex        { get; set; } = Vector3.zero;
-        public Vector3   normal        { get; set; } = Vector3.zero;
-        public float     error         { get; set; } = 0.0f;
-        public Voxel     parent        { get; set; } = null;
-        public bool      collapsible   { get; set; } = true;  // whether the vertex may stand in for the vertices clustered below it
-        public bool      collapsed     { get; set; } = false; // whether contouring can skip the cell, no polygon comes out of it
-        public int       index         { get; set; } = -1;
-        public int[]     intersections { get; set; } = new int[SurfaceExtractor.Voxel.EdgeCount]; // number of intersections on each edge
-        public int       euler         { get; set; } = 0;    // euler characteristic, manifold condition 1
-        public bool      face          { get; set; } = true; // whether face edge intersection count == 0 or 2, manifold condition 2
+        public int          depth        { get; set; }
+        public List<Vertex> vertices     { get; }      = new( );                                    // the vertices created in the cell
+        public Vertex[]     edgeVertices { get; }      = new Vertex[SurfaceExtractor.Voxel.EdgeCount]; // in a leaf, the vertex each intersected edge is associated with
+        public bool         collapsed    { get; set; } = false;                                     // whether contouring can skip the cell, no polygon comes out of it
 
-        public bool hasFeaturePoint { get; set; } = false;
+        // a voxel has room for one vertex and a cell can hold several, which is why each vertex is a voxel of its own.
+        // Seen as a voxel the cell shows the first of its vertices
+        public Vector3 vertex {
+            get { return this.hasFeaturePoint ? this.vertices[0].vertex : Vector3.zero; }
+        }
+        public Vector3 normal {
+            get { return this.hasFeaturePoint ? this.vertices[0].normal : Vector3.zero; }
+        }
+        public bool hasFeaturePoint {
+            get { return this.vertices.Count > 0; }
+        }
 
         public Voxel( VoxelType type, int depth, Vector3 center, Vector3 size ) {
             this.type    = type;
@@ -140,6 +140,93 @@ public class ManifoldDualContouring : Voxelizer {
 
         public override int GetHashCode( ) {
             return this.center.GetHashCode( ) ^ this.size.GetHashCode( );
+        }
+
+    }
+
+    // a vertex of the contour. A leaf holds one for every piece of the contour that passes through it (section III),
+    // and a cell above the leaves one for every group of vertices in its children that the contour connects (section
+    // IV.A). The vertices form trees of their own next to the octree, each one points at the vertex it was clustered
+    // into. A vertex is also a voxel, the cell it was created in with just that vertex in it, which is how the debug
+    // visualization gets to see it
+    public class Vertex : SurfaceExtractor.Voxel {
+
+        public Voxel voxel { get; } // the cell the vertex was created in
+
+        public QEFSolver qef           { get; set; }
+        public Vector3   vertex        { get; set; } = Vector3.zero;
+        public Vector3   normal        { get; set; } = Vector3.zero;
+        public float     error         { get; set; } = 0.0f;
+        public Vertex    parent        { get; set; } = null;
+        public bool      collapsible   { get; set; } = true; // whether the vertex may stand in for the vertices clustered below it
+        public int       index         { get; set; } = -1;
+        public int[]     intersections { get; set; } = new int[SurfaceExtractor.Voxel.EdgeCount]; // number of intersections of its part of the contour with each edge of its cell
+        public int       euler         { get; set; } = 0;    // euler characteristic of its part of the contour, manifold condition 1
+        public bool      face          { get; set; } = true; // whether that part intersects the edges of every face of its cell 0 or 2 times, manifold condition 2
+
+        public VoxelType type {
+            get { return this.voxel.type;  }
+            set { this.voxel.type = value; }
+        }
+        public Vector3 center {
+            get { return this.voxel.center; }
+        }
+        public Vector3 size {
+            get { return this.voxel.size; }
+        }
+        public Vector3 extents {
+            get { return this.voxel.extents; }
+        }
+        public Vector3 minimum {
+            get { return this.voxel.minimum; }
+        }
+        public Vector3 maximum {
+            get { return this.voxel.maximum; }
+        }
+        public SurfaceExtractor.Corner[] corners {
+            get { return this.voxel.corners; }
+        }
+        public SurfaceExtractor.Edge[] edges {
+            get { return this.voxel.edges; }
+        }
+        public bool hasFeaturePoint {
+            get { return true; }
+        }
+
+        public Vertex( Voxel voxel ) {
+            this.voxel = voxel;
+        }
+
+        // the vertices of a cell share everything but themselves
+        public bool Equals( SurfaceExtractor.Voxel other ) {
+            return ReferenceEquals( this, other );
+        }
+
+        // the vertex at the top of the vertex tree this one is part of
+        public Vertex findRoot( ) {
+            var root = this;
+
+            while( root.parent != null ) {
+                root = root.parent;
+            }
+
+            return root;
+        }
+
+        // the vertex that takes the place of this one on the contour: the last collapsible one on the way up the
+        // vertex tree (section IV.B)
+        public Vertex findContourVertex( ) {
+            var highest = this;
+
+            var parent = this.parent;
+            while( parent != null ) {
+                if( parent.collapsible ) {
+                    highest = parent;
+                }
+                parent = parent.parent;
+            }
+
+            return highest;
         }
 
     }
@@ -237,28 +324,16 @@ public class ManifoldDualContouring : Voxelizer {
             }
         );
 
-        // find contour intersections and calculate minimizing vertices
+        // find contour intersections and calculate a minimizing vertex for each piece of the contour in a leaf
 
         Octree<Voxel>.walk(
             this.octree,
             ( node ) => {
                 var voxel = node.data;
 
-                if(
-                    voxel.corners.All( ( corner ) => corner.materialIndex == MaterialIndex.Void      ) ||
-                    voxel.corners.All( ( corner ) => corner.materialIndex >= MaterialIndex.Material0 )
-                ) {
-                    // cell is either fully inside or outside the volume, skip
+                if( voxel.type != VoxelType.Leaf ) {
                     return;
                 }
-
-                voxel.qef = this.qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
-                    _                    => throw new Exception( "Unknown solver type specified" )
-                };
-
-                var averageNormal = Vector3.zero;
 
                 foreach( var edge in voxel.edges ) {
                     if( !edge.intersectsContour( ) ) {
@@ -267,20 +342,40 @@ public class ManifoldDualContouring : Voxelizer {
 
                     edge.intersection = SurfaceExtractor.approximateIntersection ( edge, densityFunctions, this.intersectionApproximation, this.binarySearchIterations );
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
-
-                    voxel.qef.add( edge.intersection, edge.normal );
-
-                    averageNormal += edge.normal;
                 }
 
-                if( voxel.qef.intersectionCount > 0 ) {
-                    ( voxel.vertex, voxel.error ) = voxel.qef.solve( voxel, densityFunctions );
+                var materialIndices = voxel.corners.Select( ( corner ) => corner.materialIndex ).ToArray( );
 
-                    voxel.normal = Vector3.Normalize( averageNormal / voxel.qef.intersectionCount );
+                foreach( var edgeIndices in DualMarchingCubes.lookupVertexEdges( materialIndices ) ) {
+                    var vertex = new Vertex( voxel ) {
+                        qef = this.createQEF( )
+                    };
 
-                    voxel.vertex = QEFSolver.surfaceCorrection( voxel.vertex, voxel.normal, densityFunctions, this.surfaceCorrectionIterations );
+                    var averageNormal = Vector3.zero;
 
-                    voxel.hasFeaturePoint = true;
+                    foreach( var edgeIndex in edgeIndices ) {
+                        var edge = voxel.edges[edgeIndex];
+
+                        vertex.qef.add( edge.intersection, edge.normal );
+
+                        averageNormal += edge.normal;
+
+                        // the contour around the vertex intersects each of its edges once
+                        vertex.intersections[edgeIndex] = 1;
+
+                        voxel.edgeVertices[edgeIndex] = vertex;
+                    }
+
+                    // and it is a disk, which has an euler characteristic of 1
+                    vertex.euler = 1;
+
+                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel, densityFunctions );
+
+                    vertex.normal = Vector3.Normalize( averageNormal / vertex.qef.intersectionCount );
+
+                    vertex.vertex = QEFSolver.surfaceCorrection( vertex.vertex, vertex.normal, densityFunctions, this.surfaceCorrectionIterations );
+
+                    voxel.vertices.Add( vertex );
                 }
             }
         );
@@ -293,81 +388,119 @@ public class ManifoldDualContouring : Voxelizer {
                 var voxel = node.data;
 
                 if( voxel.type == VoxelType.Leaf ) {
-                    // count the number of contour intersections on each edge of the leaf cell
-                    for( var edgeIndex = 0; edgeIndex < voxel.edges.Length; ++edgeIndex ) {
-                        voxel.intersections[edgeIndex] = Convert.ToInt32( voxel.edges[edgeIndex].intersectsContour( ) );
-                    }
-
-                    // euler characteristic for leaf cells is 1 if the cell contains a vertex, 0 otherwise
-                    voxel.euler = Convert.ToInt32( voxel.hasFeaturePoint );
+                    return;
                 }
-                else {
-                    // calculate intersections for each non-leaf cell by counting intersections of sub-edges in children
-                    for( var edgeIndex = 0; edgeIndex < voxel.edges.Length; ++edgeIndex ) {
-                        var count = 0;
-                        foreach( var childIndex in this.lookupExternalEdgeIndices( edgeIndex ) ) {
-                            count += node.children[childIndex].data.intersections[edgeIndex];
+
+                // the vertices at the top of the vertex trees so far are those of the children
+
+                var members       = new List<( int childIndex, Vertex vertex )>( );
+                var memberIndices = new Dictionary<Vertex, int>( );
+
+                for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
+                    foreach( var vertex in node.children[childIndex].data.vertices ) {
+                        memberIndices.Add( vertex, members.Count );
+
+                        members.Add( ( childIndex, vertex ) );
+                    }
+                }
+
+                // the member that stands for the cluster each member was found to belong to
+                var clusters = Enumerable.Range( 0, members.Count ).ToArray( );
+
+                int clusterOf( int memberIndex ) {
+                    while( clusters[memberIndex] != memberIndex ) {
+                        memberIndex = clusters[memberIndex];
+                    }
+                    return memberIndex;
+                }
+
+                // vertices belong to the same cluster when the contour connects them inside the cell. Below the
+                // children that was taken care of on the way up, which leaves the connections through the faces
+                // between the children. Where the leaves on either side of such a face share an intersected edge, the
+                // polygon around that edge runs from the vertex of the edge in one leaf to its vertex in the other
+                foreach( var axis in new Axis[] { Axis.X, Axis.Y, Axis.Z } ) {
+                    var edgeIndices = new int[][] {
+                        OctreeContouringTables<Voxel>.lookupEdgeIndicesWithinFacePair( 0, axis, Position.Root ),
+                        OctreeContouringTables<Voxel>.lookupEdgeIndicesWithinFacePair( 1, axis, Position.Root )
+                    };
+
+                    foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinNode( node, axis, Position.Root ) ) {
+                        this.findLeavesWithinFacePair(
+                            facePair,
+                            axis,
+                            Position.Root,
+                            ( leaves ) => {
+                                for( var edge = 0; edge < edgeIndices[0].Length; ++edge ) {
+                                    var vertex = leaves[0].data.edgeVertices[edgeIndices[0][edge]];
+                                    var other  = leaves[1].data.edgeVertices[edgeIndices[1][edge]];
+
+                                    // only an intersected edge has a vertex, on either side
+                                    if( vertex != null ) {
+                                        clusters[clusterOf( memberIndices[vertex.findRoot( )] )] = clusterOf( memberIndices[other.findRoot( )] );
+                                    }
+                                }
+                            }
+                        );
+                    }
+                }
+
+                foreach( var cluster in Enumerable.Range( 0, members.Count ).GroupBy( clusterOf ) ) {
+                    var vertex = new Vertex( voxel ) {
+                        qef = this.createQEF( )
+                    };
+
+                    var euler         = 0;
+                    var intersections = 0;
+                    var averageNormal = Vector3.zero;
+
+                    foreach( var memberIndex in cluster ) {
+                        var ( childIndex, member ) = members[memberIndex];
+
+                        member.parent = vertex;
+
+                        vertex.qef.combine( member.qef );
+
+                        averageNormal += member.normal;
+
+                        // count the intersections on each edge of the cell, along which lie the edges of the children
+                        // at either end of it
+                        for( var edgeIndex = 0; edgeIndex < voxel.edges.Length; ++edgeIndex ) {
+                            if( this.lookupExternalEdgeIndices( edgeIndex ).Contains( childIndex ) ) {
+                                vertex.intersections[edgeIndex] += member.intersections[edgeIndex];
+                            }
                         }
 
-                        voxel.intersections[edgeIndex] = count;
-                    }
-
-                    var euler = 0;
-                    foreach( var child in node.children ) {
-                        euler += child.data.euler;
-                    }
-
-                    // calculate euler characteristic of non-leaf cell for manifold condition 1
-                    var intersections = 0;
-                    for( var childIndex = 0; childIndex < node.children.Length; ++childIndex ) {
-                        var child = node.children[childIndex].data;
+                        // calculate euler characteristic of the cluster for manifold condition 1
+                        euler += member.euler;
 
                         foreach( var edgeIndex in this.lookupInternelEdgeIndices( childIndex ) ) {
-                            intersections += child.intersections[edgeIndex];
+                            intersections += member.intersections[edgeIndex];
                         }
                     }
 
-                    voxel.euler = euler - ( intersections / 4 );
+                    // every intersection on an edge between the children was counted by each member around it: four
+                    // inside the cell, two on a face of it of which each counts as a half
+                    UnityEngine.Debug.Assert( intersections % 4 == 0, "Contour around an edge inside a cell is not part of a single cluster" );
+
+                    vertex.euler = euler - ( intersections / 4 );
 
                     // calculate face edge intersections for manifold condition 2
-                    for( var faceIndex = 0; faceIndex < SurfaceExtractor.Voxel.FaceCount && voxel.face; ++faceIndex ) {
+                    for( var faceIndex = 0; faceIndex < SurfaceExtractor.Voxel.FaceCount && vertex.face; ++faceIndex ) {
                         var count = 0;
                         foreach( var edgeIndex in this.lookupFaceEdgeIndices( faceIndex ) ) {
-                            count += voxel.intersections[edgeIndex];
+                            count += vertex.intersections[edgeIndex];
                         }
 
-                        voxel.face = count == 0 || count == 2;
+                        vertex.face = count == 0 || count == 2;
                     }
 
                     // solve QEF for vertex cluster
 
-                    voxel.qef = this.qefSolverType switch {
-                        QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
-                        QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
-                        _                    => throw new Exception( "Unknown solver type specified" )
-                    };
+                    ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel, densityFunctions );
 
-                    var averageNormal = Vector3.zero;
+                    vertex.normal = Vector3.Normalize( averageNormal );
 
-                    foreach( var child in node.children ) {
-                        if( child.data.qef != null ) {
-                            voxel.qef.combine( child.data.qef );
-
-                            averageNormal += child.data.normal;
-                        }
-                    }
-
-                    if( voxel.qef.intersectionCount > 0 ) {
-                        ( voxel.vertex, voxel.error ) = voxel.qef.solve( node.data, densityFunctions );
-
-                        voxel.normal = Vector3.Normalize( averageNormal );
-
-                        voxel.hasFeaturePoint = true;
-
-                        foreach( var child in node.children ) {
-                            child.data.parent = voxel;
-                        }
-                    }
+                    voxel.vertices.Add( vertex );
                 }
             }
         );
@@ -379,18 +512,17 @@ public class ManifoldDualContouring : Voxelizer {
                 ( node ) => {
                     var voxel = node.data;
 
-                    if( voxel.hasFeaturePoint && voxel.type == VoxelType.Internal ) {
-                        // every node other than the root should have a parent
-                        UnityEngine.Debug.Assert( voxel.depth == 0 || voxel.parent != null, "Non-root octree cluster node missing a parent" );
-
+                    if( voxel.type == VoxelType.Internal ) {
                         var valid = true;
                         foreach( var child in node.children ) {
-                            if( child.data.parent != voxel ) {
-                                valid = false;
-                                break;
+                            foreach( var vertex in child.data.vertices ) {
+                                if( vertex.parent == null || vertex.parent.voxel != voxel ) {
+                                    valid = false;
+                                    break;
+                                }
                             }
                         }
-                        // ensure the parent of the child nodes point to the enclosing voxel
+                        // ensure every vertex of the child nodes was clustered into a vertex of the enclosing voxel
                         UnityEngine.Debug.Assert( valid, "Invalid octree cluster detected" );
                     }
                 }
@@ -407,13 +539,15 @@ public class ManifoldDualContouring : Voxelizer {
                 if( voxel.type == VoxelType.Internal ) {
                     // the vertex of a cluster is judged by itself: a cluster that is safe to collapse can sit above
                     // clusters that are not
-                    voxel.collapsible = voxel.hasFeaturePoint && voxel.error < this.errorThreshold && (
-                        !this.enforceManifold || ( voxel.euler == 1 && voxel.face )
-                    );
+                    foreach( var vertex in voxel.vertices ) {
+                        vertex.collapsible = vertex.error < this.errorThreshold && (
+                            !this.enforceManifold || ( vertex.euler == 1 && vertex.face )
+                        );
+                    }
 
-                    // every polygon inside a cell collapses to an edge or a point when its vertex is collapsible and
-                    // its children are leaves or collapsed themselves. A cell without a vertex holds no surface
-                    var collapsed = voxel.collapsible || !voxel.hasFeaturePoint;
+                    // every polygon inside a cell collapses to an edge or a point when all of its vertices are
+                    // collapsible and its children are leaves or collapsed themselves
+                    var collapsed = voxel.vertices.All( ( vertex ) => vertex.collapsible );
 
                     foreach( var child in node.children ) {
                         if( child.data.type == VoxelType.Internal && !child.data.collapsed ) {
@@ -458,70 +592,18 @@ public class ManifoldDualContouring : Voxelizer {
             ++subMeshCount;
         }
 
-        // build debug information
+        // build debug information: the vertices on the contour, each shown in the cell it was created in
         var voxels = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
+            ( voxel ) => voxel.type == VoxelType.Leaf
+        ).SelectMany(
+            ( voxel ) => voxel.vertices
         ).Select(
-            ( voxel ) => {
-                Voxel highest = voxel;
+            ( vertex ) => vertex.findContourVertex( )
+        ).Distinct( ).ToList( );
 
-                var parent = voxel.parent;
-                while( parent != null ) {
-                    if( parent.collapsible ) {
-                        highest = parent;
-                    }
-                    parent = parent.parent;
-                }
+        var corners = voxels.SelectMany( ( vertex ) => vertex.corners ).Distinct( );
 
-                UnityEngine.Debug.Assert( highest != null );
-
-                return highest;
-            }
-        ).Distinct( );
-
-        var corners = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
-        ).Aggregate(
-            new List<SurfaceExtractor.Corner>( ),
-            ( accumulator, voxel ) => {
-                Voxel highest = voxel;
-
-                var parent = voxel.parent;
-                while( parent != null ) {
-                    if( parent.collapsible ) {
-                        highest = parent;
-                    }
-                    parent = parent.parent;
-                }
-
-                UnityEngine.Debug.Assert( highest != null );
-
-                accumulator.AddRange( highest.corners );
-                return accumulator;
-            }
-        ).Distinct( );
-
-        var edges = Octree<Voxel>.flatten( this.octree ).Where(
-            ( voxel ) => voxel.hasFeaturePoint && voxel.type == VoxelType.Leaf
-        ).Aggregate(
-            new List<SurfaceExtractor.Edge>( ),
-            ( accumulator, voxel ) => {
-                Voxel highest = voxel;
-
-                var parent = voxel.parent;
-                while( parent != null ) {
-                    if( parent.collapsible ) {
-                        highest = parent;
-                    }
-                    parent = parent.parent;
-                }
-
-                UnityEngine.Debug.Assert( highest != null );
-
-                accumulator.AddRange( highest.edges );
-                return accumulator;
-            }
-        ).Distinct( );
+        var edges = voxels.SelectMany( ( vertex ) => vertex.edges ).Distinct( );
 
         return new Either<CPUVoxelization, GPUVoxelization>.Type0( new( ) {
             mesh    = mesh,
@@ -575,6 +657,33 @@ public class ManifoldDualContouring : Voxelizer {
             7 => new int[] { 0, 1, 2, 4, 5, 6, 8,  9, 10 },
             _ => throw new Exception( "Unknown child index specified" )
         };
+    }
+
+    private QEFSolver createQEF( ) {
+        return this.qefSolverType switch {
+            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
+            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
+            _                    => throw new Exception( "Unknown solver type specified" )
+        };
+    }
+
+    // the vertex that the edge the four leaves around an edge have in common is associated with, in one of those leaves
+    private Vertex lookupEdgeVertex( Octree<Voxel>[] nodes, int nodeIndex, Axis axis, Position position ) {
+        return nodes[nodeIndex].data.edgeVertices[OctreeContouringTables<Voxel>.lookupEdgeIndexWithinEdgeNodes( nodeIndex, axis, position )];
+    }
+
+    // visits the pairs of leaves on either side of the face that two nodes have in common
+    private void findLeavesWithinFacePair( Octree<Voxel>[] nodes, Axis axis, Position position, Action<Octree<Voxel>[]> visitor ) {
+        UnityEngine.Debug.Assert( nodes.Length == 2 );
+
+        if( nodes[0].data.type == VoxelType.Internal || nodes[1].data.type == VoxelType.Internal ) {
+            foreach( var facePair in OctreeContouringTables<Voxel>.lookupFacePairsWithinFacePairs( nodes, axis, position ) ) {
+                this.findLeavesWithinFacePair( facePair, axis, position, visitor );
+            }
+        }
+        else {
+            visitor( nodes );
+        }
     }
 
     private void contourCell( Octree<Voxel> node, Position position, List<Vector3> vertices, List<Vector3> normals, List<Triangle> triangles ) {
@@ -680,33 +789,24 @@ public class ManifoldDualContouring : Voxelizer {
 
         var edge = OctreeContouringTables<Voxel>.lookupEdgeWithinEdgeNodes( nodes, axis, position );
 
-        if( nodes.All( ( node ) => node.data.hasFeaturePoint ) && edge.intersectsContour( ) ) {
+        if( edge.intersectsContour( ) ) {
 
-            var voxels = new Voxel[4] {
-                nodes[0].data,
-                nodes[1].data,
-                nodes[2].data,
-                nodes[3].data
+            // the polygon around an edge connects the vertices that the edge is associated with in the four leaves
+            // around it, or rather the vertices that take their place on the contour
+            var contourVertices = new Vertex[4] {
+                this.lookupEdgeVertex( nodes, 0, axis, position ).findContourVertex( ),
+                this.lookupEdgeVertex( nodes, 1, axis, position ).findContourVertex( ),
+                this.lookupEdgeVertex( nodes, 2, axis, position ).findContourVertex( ),
+                this.lookupEdgeVertex( nodes, 3, axis, position ).findContourVertex( )
             };
 
-            // find the collapsible node furthest up the tree for each voxel in the cluster
-            for( var nodeIndex = 0; nodeIndex < nodes.Length; ++nodeIndex ) {
-                var parent = nodes[nodeIndex].data.parent;
-                while( parent != null ) {
-                    if( parent.collapsible ) {
-                        voxels[nodeIndex] = parent;
-                    }
-                    parent = parent.parent;
-                }
-            }
-
             // generate vertex and normal
-            foreach( var voxel in voxels ) {
-                if( voxel.index == -1 ) {
-                    voxel.index = vertices.Count;
+            foreach( var vertex in contourVertices ) {
+                if( vertex.index == -1 ) {
+                    vertex.index = vertices.Count;
 
-                    vertices.Add ( voxel.vertex );
-                    normals.Add  ( voxel.normal );
+                    vertices.Add ( vertex.vertex );
+                    normals.Add  ( vertex.normal );
                 }
             }
 
@@ -721,27 +821,27 @@ public class ManifoldDualContouring : Voxelizer {
             // ensure quad is indexed facing outward
             if( edge.corners[0].materialIndex == MaterialIndex.Void ) {
                 indices = new int[] {
-                    voxels[0].index,
-                    voxels[1].index,
-                    voxels[2].index,
-                    voxels[3].index,
-                    voxels[2].index,
-                    voxels[1].index
+                    contourVertices[0].index,
+                    contourVertices[1].index,
+                    contourVertices[2].index,
+                    contourVertices[3].index,
+                    contourVertices[2].index,
+                    contourVertices[1].index
                 };
             }
             else {
                 indices = new int[] {
-                    voxels[1].index,
-                    voxels[2].index,
-                    voxels[3].index,
-                    voxels[2].index,
-                    voxels[1].index,
-                    voxels[0].index
+                    contourVertices[1].index,
+                    contourVertices[2].index,
+                    contourVertices[3].index,
+                    contourVertices[2].index,
+                    contourVertices[1].index,
+                    contourVertices[0].index
                 };
             }
 
-            // voxels of the same cluster share a vertex, so clustering can collapse the quad to a triangle, an edge or
-            // a point. Whatever is left of it are the triangles that do not use a vertex twice
+            // vertices of the same cluster are one vertex on the contour, so clustering can collapse the quad to a
+            // triangle, an edge or a point. Whatever is left of it are the triangles that do not use a vertex twice
             for( var triangleIndex = 0; triangleIndex < indices.Length; triangleIndex += 3 ) {
                 var a = indices[triangleIndex];
                 var b = indices[triangleIndex + 1];

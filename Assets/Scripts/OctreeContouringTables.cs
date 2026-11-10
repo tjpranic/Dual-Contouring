@@ -422,6 +422,42 @@ public class OctreeContouringTables<Voxel> where Voxel : SurfaceExtractor.Voxel 
     private static readonly int[] commonEdgeY = { 7,  6, 5,  4 };
     private static readonly int[] commonEdgeZ = { 11, 9, 10, 8 };
 
+    // the indices of the edges around the face that the two nodes of a face pair have in common, as each of them numbers
+    // those edges. The same place in either list is the same edge
+    private static readonly int[][] commonFaceEdgesX = { new int[] { 5, 7,  9, 11 }, new int[] { 4, 6, 8, 10 } };
+    private static readonly int[][] commonFaceEdgesY = { new int[] { 2, 3, 10, 11 }, new int[] { 0, 1, 8,  9 } };
+    private static readonly int[][] commonFaceEdgesZ = { new int[] { 1, 3,  6,  7 }, new int[] { 0, 2, 4,  5 } };
+
+    // the indices that the edges around the face two nodes of the same size have in common have in the node at the given
+    // place
+    public static int[] lookupEdgeIndicesWithinFacePair( int nodeIndex, Axis axis, Position position ) {
+        return position switch {
+            Position.Root or
+            Position.NegativeXNegativeYNegativeZ => axis switch {
+                Axis.X => commonFaceEdgesX[nodeIndex],
+                Axis.Y => commonFaceEdgesY[nodeIndex],
+                Axis.Z => commonFaceEdgesZ[nodeIndex],
+                _      => throw new Exception( "Unknown axis specified" ),
+            },
+            _ => throw new NotImplementedException( ),
+        };
+    }
+
+    // the index that the edge the four nodes around an edge have in common has in the node at the given place, where
+    // that node is one of the smallest of the four
+    public static int lookupEdgeIndexWithinEdgeNodes( int nodeIndex, Axis axis, Position position ) {
+        return position switch {
+            Position.Root or
+            Position.NegativeXNegativeYNegativeZ => axis switch {
+                Axis.X => commonEdgeX[nodeIndex],
+                Axis.Y => commonEdgeY[nodeIndex],
+                Axis.Z => commonEdgeZ[nodeIndex],
+                _      => throw new Exception( "Unknown axis specified" ),
+            },
+            _ => throw new NotImplementedException( ),
+        };
+    }
+
     public static SurfaceExtractor.Edge lookupEdgeWithinEdgeNodes( Octree<Voxel>[] nodes, Axis axis, Position position ) {
         // the minimal edge is an edge of the smallest of the four nodes. A larger node has a longer edge in that place
         // or, when the minimal edge lies in one of its faces and it takes up two of the four places, no edge at all
