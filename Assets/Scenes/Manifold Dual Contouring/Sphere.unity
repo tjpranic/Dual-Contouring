@@ -209,9 +209,9 @@ MonoBehaviour:
   _vertexNormals: 0
   debugFlags: 30
   debugAlwaysOnTop: 0
-  debugLineThickness: 1.5
-  debugCornerRadius: 2
-  debugMinimizingVertexRadius: 3
+  debugLineThickness: 0.5
+  debugCornerRadius: 1
+  debugMinimizingVertexRadius: 2
   debugSurfaceNormalLength: 0.5
   debugCellColor: {r: 1, g: 1, b: 1, a: 0.125}
   debugCornerColor: {r: 1, g: 1, b: 1, a: 0.125}
