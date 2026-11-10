@@ -1,0 +1,13 @@
+{
+    "mcpServers": {
+        "unity": {
+            "type": "stdio",
+            "command": "/opt/homebrew/bin/unity",
+            "args": [
+                "mcp",
+                "--project-path",
+                "/Users/thomas/Projects/Dual-Contouring"
+            ]
+        }
+    }
+}
