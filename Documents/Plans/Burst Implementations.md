@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** steps 0–4 done and reviewed 2026-11-11, tolerances accepted. Step 5 done 2026-11-11 and awaiting review.
+**Status:** complete. All six steps, 0 to 5, were done and reviewed on 2026-11-11. Uniform, Adaptive and Manifold dual contouring each have a Burst implementation next to the managed one.
 
 ## Goal
 
