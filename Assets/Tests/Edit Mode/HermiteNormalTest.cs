@@ -75,7 +75,7 @@ public class HermiteNormalTest : ContouringTest {
     // is the nearest one inside the cube, or the intersection lies within the face outside it. The others are left out,
     // and every normal left should be exactly the turned normal of its face
     [Test]
-    public void normalsOfRotatedCubeAreTheNormalsOfItsFaces( [Values( ImplementationType.Managed )] ImplementationType implementation ) {
+    public void normalsOfRotatedCubeAreTheNormalsOfItsFaces( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
         // turned, it reaches at most sqrt(3) * 0.25 = 0.433 from its center, inside the grid
         var extent   = 0.25f;
         var rotation = Quaternion.Euler( 30.0f, -60.0f, 75.0f );

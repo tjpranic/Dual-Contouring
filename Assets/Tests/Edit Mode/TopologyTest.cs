@@ -39,6 +39,15 @@ public abstract class TopologyTest : ContouringTest {
         cuboid( new Vector3( 0.02f, 0.0f, 0.0f ), new Vector3( 0.15f, 0.1f, 0.4f ), Combination.Union, MaterialIndex.Material1 )
     };
 
+    // turned shapes: a cube turned about a diagonal, an ellipsoid turned about all three axes cut out of it, and a box of
+    // a second material turned about one axis set into it. Faces, edges and the boundary between the materials all cross
+    // the grid at an angle
+    protected static readonly Shape[] turnedShapes = {
+        cube      ( new Vector3( -0.05f, 0.013f, -0.021f ), 0.25f ).rotated( Quaternion.AngleAxis( 45.0f, Vector3.one ) ),
+        ellipsoid ( new Vector3(  0.15f, 0.1f,    0.05f  ), new Vector3( 0.2f,  0.12f, 0.08f ), Combination.Subtraction ).rotated( Quaternion.Euler( 30.0f, -60.0f, 75.0f ) ),
+        cuboid    ( new Vector3(  0.1f, -0.2f,    0.1f   ), new Vector3( 0.25f, 0.06f, 0.1f  ), Combination.Union, MaterialIndex.Material1 ).rotated( Quaternion.AngleAxis( 30.0f, Vector3.up ) )
+    };
+
     protected static Shape[] shapesOf( Model model ) {
         return model switch {
             // sits off the grid lines so no corner or edge of the grid lands exactly on the surface

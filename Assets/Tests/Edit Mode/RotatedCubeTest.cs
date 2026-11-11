@@ -291,3 +291,11 @@ public class ManagedRotatedCubeTest : RotatedCubeTest {
     }
 
 }
+
+public class BurstRotatedCubeTest : RotatedCubeTest {
+
+    public BurstRotatedCubeTest( ) {
+        this.implementation = ImplementationType.Burst;
+    }
+
+}

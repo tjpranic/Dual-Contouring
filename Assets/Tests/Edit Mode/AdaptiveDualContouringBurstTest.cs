@@ -84,6 +84,11 @@ public class AdaptiveDualContouringBurstTest : TopologyTest {
     }
 
     [Test]
+    public void contourIsTheManagedOneOnTurnedShapes( [Values] QEFSolverType solver, [Values] Simplification simplification ) {
+        this.assertSameContour( 5, solver, turnedShapes, simplification );
+    }
+
+    [Test]
     public void contourIsTheManagedOneWithAVertexAtTheOrigin( ) {
         this.assertSameContour( 4, QEFSolverType.SVD, cubeWithCornerAtOrigin, Simplification.None ); // 8^3 leaves
     }

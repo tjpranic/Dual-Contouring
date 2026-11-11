@@ -84,6 +84,11 @@ public class ManifoldDualContouringBurstTest : TopologyTest {
         this.assertSameContour( 5, solver, slabWithBand, clustering );
     }
 
+    [Test]
+    public void contourIsTheManagedOneOnTurnedShapes( [Values] QEFSolverType solver, [Values] Clustering clustering ) {
+        this.assertSameContour( 5, solver, turnedShapes, clustering );
+    }
+
     // two surfaces that share the cells above the leaves and cluster independently
     [Test]
     public void contourIsTheManagedOneWhereSeparateSurfacesShareACell( [Values] QEFSolverType solver, [Values] Clustering clustering ) {

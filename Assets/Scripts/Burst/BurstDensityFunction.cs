@@ -16,12 +16,25 @@ public struct BurstDensityFunction {
     public float3               origin;
     public float3               extents;
 
+    // the shape's frame, copied from DensityFunction.Frame: the rows of the inverse rotation, and whether there is a
+    // rotation to undo
+    public float3 xAxis;
+    public float3 yAxis;
+    public float3 zAxis;
+    public bool   rotated;
+
     public BurstDensityFunction( DensityFunction densityFunction ) {
+        var frame = new DensityFunction.Frame( densityFunction );
+
         this.type          = densityFunction.type;
         this.combination   = densityFunction.combination;
         this.materialIndex = densityFunction.materialIndex;
-        this.origin        = densityFunction.origin;
+        this.origin        = frame.origin;
         this.extents       = densityFunction.extents;
+        this.xAxis         = frame.xAxis;
+        this.yAxis         = frame.yAxis;
+        this.zAxis         = frame.zAxis;
+        this.rotated       = frame.rotated;
     }
 
     // the density functions in the same order, for jobs to read. The caller disposes of the array
@@ -29,17 +42,34 @@ public struct BurstDensityFunction {
         return new NativeArray<BurstDensityFunction>( densityFunctions.Select( ( densityFunction ) => new BurstDensityFunction( densityFunction ) ).ToArray( ), allocator );
     }
 
+    // DensityFunction.Frame.local
+    public readonly float3 local( float3 position ) {
+        var offset = position - this.origin;
+
+        if( !this.rotated ) {
+            return offset;
+        }
+
+        return new float3(
+            ( this.xAxis.x * offset.x ) + ( this.xAxis.y * offset.y ) + ( this.xAxis.z * offset.z ),
+            ( this.yAxis.x * offset.x ) + ( this.yAxis.y * offset.y ) + ( this.yAxis.z * offset.z ),
+            ( this.zAxis.x * offset.x ) + ( this.zAxis.y * offset.y ) + ( this.zAxis.z * offset.z )
+        );
+    }
+
     public readonly float sample( float3 position ) {
+        var local = this.local( position );
+
         return this.type switch {
-            DensityFunction.Type.Cuboid    => sampleCuboid    ( position, this.origin, this.extents ),
-            DensityFunction.Type.Ellipsoid => sampleEllipsoid ( position, this.origin, this.extents ),
+            DensityFunction.Type.Cuboid    => sampleCuboid    ( local, this.extents ),
+            DensityFunction.Type.Ellipsoid => sampleEllipsoid ( local, this.extents ),
             _                              => float.NaN
         };
     }
 
     // Cuboid.sample
-    public static float sampleCuboid( float3 position, float3 origin, float3 extents ) {
-        var q = math.abs( position - origin ) - extents;
+    public static float sampleCuboid( float3 position, float3 extents ) {
+        var q = math.abs( position ) - extents;
 
         var outside = new float3(
             BurstSurfaceExtractor.max( q.x, 0.0f ),
@@ -51,16 +81,14 @@ public struct BurstDensityFunction {
     }
 
     // Ellipsoid.sample
-    public static float sampleEllipsoid( float3 position, float3 origin, float3 extents ) {
-        var offset = position - origin;
-
+    public static float sampleEllipsoid( float3 position, float3 extents ) {
         // Unity's == for vectors: closer than 1e-5 counts as equal
-        if( ( offset.x * offset.x ) + ( offset.y * offset.y ) + ( offset.z * offset.z ) < 1e-5f * 1e-5f ) {
+        if( ( position.x * position.x ) + ( position.y * position.y ) + ( position.z * position.z ) < 1e-5f * 1e-5f ) {
             return -1.0f;
         }
 
-        var k0 = BurstSurfaceExtractor.magnitude( offset / extents );
-        var k1 = BurstSurfaceExtractor.magnitude( offset / ( extents * extents ) );
+        var k0 = BurstSurfaceExtractor.magnitude( position / extents );
+        var k1 = BurstSurfaceExtractor.magnitude( position / ( extents * extents ) );
 
         return k0 * ( k0 - 1.0f ) / k1;
     }

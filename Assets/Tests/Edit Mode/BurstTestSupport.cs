@@ -107,6 +107,17 @@ public static class BurstTestSupport {
         ).ToArray( );
     }
 
+    // a turn by any angle about any axis
+    public static Quaternion randomRotation( System.Random random ) {
+        return Quaternion.AngleAxis( range( random, -180.0f, 180.0f ), direction( random ) );
+    }
+
+    // the shapes, each turned by a rotation of its own. A test draws the rotations from a generator of their own, so that
+    // everything else it draws stays the same as without them
+    public static FixedDensityFunction[] randomlyRotated( FixedDensityFunction[] shapes, System.Random random ) {
+        return shapes.Select( ( shape ) => shape.rotated( randomRotation( random ) ) ).ToArray( );
+    }
+
     public static NativeArray<BurstDensityFunction> toNative( FixedDensityFunction[] shapes ) {
         return BurstDensityFunction.snapshot( shapes, Allocator.TempJob );
     }

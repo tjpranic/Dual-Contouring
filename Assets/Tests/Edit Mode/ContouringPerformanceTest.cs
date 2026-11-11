@@ -28,6 +28,11 @@ public class ContouringPerformanceTest : TopologyTest {
     // the three overlapping balls of the "Simplification" scenes, curved with creases where the balls meet
     private static readonly Shape[] model = shapesOf( Model.ThreeBalls );
 
+    // the same balls, each turned by a rotation of its own: the same surface, with every sample taken through a rotation
+    private static readonly Shape[] turnedModel = model.Select(
+        ( shape, index ) => shape.rotated( Quaternion.AngleAxis( 30.0f + ( 20.0f * index ), new Vector3( 1.0f, 2.0f, 3.0f ) ) )
+    ).ToArray( );
+
     // the error threshold of the SVD scenes that simplify
     private const float errorThreshold = 2e-4f;
 
@@ -62,7 +67,7 @@ public class ContouringPerformanceTest : TopologyTest {
     }
 
     // a uniform grid has 2^resolution cells across, an octree 2^(resolution - 1) leaves
-    private Voxelizer create( Algorithm algorithm, ImplementationType implementation, int cellsExponent ) {
+    private Voxelizer create( Algorithm algorithm, ImplementationType implementation, int cellsExponent, Shape[] model ) {
         switch( algorithm ) {
             case Algorithm.Uniform: {
                 return this.createUniformVoxelizer( cellsExponent, implementation, QEFSolverType.SVD, model );
@@ -102,7 +107,8 @@ public class ContouringPerformanceTest : TopologyTest {
     public IEnumerator voxelize(
         [Values] Algorithm algorithm,
         [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation,
-        [Values( 4, 5, 6, 7, 8 )] int cellsExponent
+        [Values( 4, 5, 6, 7, 8 )] int cellsExponent,
+        [Values( false, true )] bool turned
     ) {
         if( algorithm != Algorithm.Uniform && cellsExponent > 7 ) {
             Assert.Ignore( "an octree is at most 2^7 leaves across" );
@@ -111,7 +117,7 @@ public class ContouringPerformanceTest : TopologyTest {
             Assert.Ignore( $"grids above 2^{largestGridOf( algorithm, implementation )} cells across take too long for this implementation" );
         }
 
-        var voxelizer = this.create( algorithm, implementation, cellsExponent );
+        var voxelizer = this.create( algorithm, implementation, cellsExponent, turned ? turnedModel : model );
         var volumes   = voxelizer.GetComponentsInChildren<Volume>( );
 
         // what is measured is contouring. The managed implementations build their debug information either way, the
@@ -203,7 +209,7 @@ public class ContouringPerformanceTest : TopologyTest {
         var cells = 1 << cellsExponent;
 
         UnityEngine.Debug.Log(
-            $"[performance] {algorithm} {implementation} {cells}^3: {vertices} vertices, {triangles} triangles, median of {measurements} in ms: " +
+            $"[performance] {algorithm} {implementation} {cells}^3{( turned ? " turned" : "" )}: {vertices} vertices, {triangles} triangles, median of {measurements} in ms: " +
             string.Join( ", ", samples.Select( ( group ) => $"{group.Key} {median( group.Value ):0.0}" ) )
         );
     }

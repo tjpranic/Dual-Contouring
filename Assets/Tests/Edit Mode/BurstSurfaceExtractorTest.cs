@@ -14,7 +14,8 @@ using FixedDensityFunction      = BurstTestSupport.FixedDensityFunction;
 
 // the Burst port of the density functions and of SurfaceExtractor does the same float operations in the same order as
 // the managed code. Mono keeps the intermediate results of an expression at a higher precision than Burst, so the two
-// agree to the last bits, which is what these tests hold the Burst code to on random shapes, points and edges
+// agree to the last bits, which is what these tests hold the Burst code to on random shapes, points and edges, turned
+// and not
 public class BurstSurfaceExtractorTest {
 
     // relative to the size of the value: a few units in the last place of a float
@@ -149,6 +150,61 @@ public class BurstSurfaceExtractorTest {
 
     }
 
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct UnrotatedJob : IJob {
+
+        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
+        [ReadOnly] public NativeArray<float3>               points;
+
+        public NativeArray<float> densities;
+        public NativeArray<float> asBefore;
+        public NativeArray<bool>  managed;
+
+        // the formulas as they were before shapes could rotate
+        private static float cuboidAsBefore( float3 position, float3 origin, float3 extents ) {
+            var q = math.abs( position - origin ) - extents;
+
+            var outside = new float3(
+                BurstSurfaceExtractor.max( q.x, 0.0f ),
+                BurstSurfaceExtractor.max( q.y, 0.0f ),
+                BurstSurfaceExtractor.max( q.z, 0.0f )
+            );
+
+            return BurstSurfaceExtractor.magnitude( outside ) + BurstSurfaceExtractor.min( BurstSurfaceExtractor.max( q.x, BurstSurfaceExtractor.max( q.y, q.z ) ), 0.0f );
+        }
+
+        private static float ellipsoidAsBefore( float3 position, float3 origin, float3 extents ) {
+            var offset = position - origin;
+
+            if( ( offset.x * offset.x ) + ( offset.y * offset.y ) + ( offset.z * offset.z ) < 1e-5f * 1e-5f ) {
+                return -1.0f;
+            }
+
+            var k0 = BurstSurfaceExtractor.magnitude( offset / extents );
+            var k1 = BurstSurfaceExtractor.magnitude( offset / ( extents * extents ) );
+
+            return k0 * ( k0 - 1.0f ) / k1;
+        }
+
+        public void Execute( ) {
+            this.managed[0] = BurstTestSupport.runningManaged( );
+
+            for( var function = 0; function < this.densityFunctions.Length; ++function ) {
+                var densityFunction = this.densityFunctions[function];
+
+                for( var point = 0; point < this.points.Length; ++point ) {
+                    var index = ( function * this.points.Length ) + point;
+
+                    this.densities[index] = densityFunction.sample( this.points[point] );
+                    this.asBefore[index]  = densityFunction.type == DensityFunction.Type.Cuboid
+                        ? cuboidAsBefore    ( this.points[point], densityFunction.origin, densityFunction.extents )
+                        : ellipsoidAsBefore ( this.points[point], densityFunction.origin, densityFunction.extents );
+                }
+            }
+        }
+
+    }
+
     private static Vector3[] toVectors( NativeArray<float3> vectors ) {
         return vectors.Select( ( vector ) => ( Vector3 )vector ).ToArray( );
     }
@@ -167,15 +223,21 @@ public class BurstSurfaceExtractorTest {
         ).ToArray( );
     }
 
+    // turned, the same shapes, points and edges are compared again, with every shape turned by a rotation of its own
     [Test]
-    public void densitiesMaterialsAndNormalsAreTheManagedOnes( ) {
-        var random = new System.Random( 1 );
+    public void densitiesMaterialsAndNormalsAreTheManagedOnes( [Values( false, true )] bool turned ) {
+        var random    = new System.Random( 1 );
+        var rotations = new System.Random( 101 );
 
         var nearSurfaces = 0;
 
         for( var set = 0; set < shapeSets; ++set ) {
             var shapes = BurstTestSupport.randomShapes( random, 1 + random.Next( 5 ) );
             var points = pointsFor( random, shapes );
+
+            if( turned ) {
+                shapes = BurstTestSupport.randomlyRotated( shapes, rotations );
+            }
 
             using var densityFunctions = BurstTestSupport.toNative( shapes );
             using var nativePoints     = new NativeArray<float3>( points.Select( ( point ) => ( float3 )point ).ToArray( ), Allocator.TempJob );
@@ -249,8 +311,9 @@ public class BurstSurfaceExtractorTest {
     }
 
     [Test]
-    public void intersectionsBoundariesAndCorrectionsAreTheManagedOnes( ) {
-        var random = new System.Random( 2 );
+    public void intersectionsBoundariesAndCorrectionsAreTheManagedOnes( [Values( false, true )] bool turned ) {
+        var random    = new System.Random( 2 );
+        var rotations = new System.Random( 102 );
 
         var crossings  = 0;
         var boundaries = 0;
@@ -264,6 +327,10 @@ public class BurstSurfaceExtractorTest {
                 new FixedDensityFunction( DensityFunction.Type.Cuboid,    origin,                                                                    BurstTestSupport.range( random, Vector3.one * 0.15f, Vector3.one * 0.3f ), DensityFunction.Combination.Union, MaterialIndex.Material0 ),
                 new FixedDensityFunction( DensityFunction.Type.Ellipsoid, origin + BurstTestSupport.range( random, -Vector3.one * 0.1f, Vector3.one * 0.1f ), BurstTestSupport.range( random, Vector3.one * 0.1f, Vector3.one * 0.25f ), DensityFunction.Combination.Union, MaterialIndex.Material1 )
             }.Concat( BurstTestSupport.randomShapes( random, random.Next( 3 ) ) ).ToArray( );
+
+            if( turned ) {
+                shapes = BurstTestSupport.randomlyRotated( shapes, rotations );
+            }
 
             // edges of a grid of 16^3 cells, along every axis
             var starts            = Enumerable.Range( 0, edgesPerSet ).Select( ( _ ) => BurstTestSupport.range( random, -Vector3.one * 0.5f, Vector3.one * 0.5f ) ).ToArray( );
@@ -352,6 +419,38 @@ public class BurstSurfaceExtractorTest {
 
         Assert.Greater( crossings,  100, "few edges crossed the surface" );
         Assert.Greater( boundaries, 10,  "few edges crossed a material boundary" );
+    }
+
+    // shapes without a rotation, and with a zero quaternion as a density function that never sets one gives, sample bit
+    // for bit as they did before shapes could rotate
+    [Test]
+    public void withoutRotationDensitiesAreExactlyAsBefore( ) {
+        var random = new System.Random( 3 );
+        var shapes = BurstTestSupport.randomShapes( random, 8 );
+
+        shapes = shapes.Concat( shapes.Select( ( shape ) => shape.rotated( default ) ) ).ToArray( );
+
+        var points = pointsFor( random, shapes );
+
+        using var densityFunctions = BurstTestSupport.toNative( shapes );
+        using var nativePoints     = new NativeArray<float3>( points.Select( ( point ) => ( float3 )point ).ToArray( ), Allocator.TempJob );
+        using var densities        = new NativeArray<float>( shapes.Length * points.Length, Allocator.TempJob );
+        using var asBefore         = new NativeArray<float>( shapes.Length * points.Length, Allocator.TempJob );
+        using var managed          = new NativeArray<bool>( 1, Allocator.TempJob );
+
+        Assert.IsTrue( densityFunctions.All( ( densityFunction ) => !densityFunction.rotated ), "a shape counts as rotated" );
+
+        new UnrotatedJob {
+            densityFunctions = densityFunctions,
+            points           = nativePoints,
+            densities        = densities,
+            asBefore         = asBefore,
+            managed          = managed
+        }.Run( );
+
+        BurstTestSupport.assertRanUnderBurst( managed );
+
+        BurstTestSupport.assertSame( "densities", asBefore.ToArray( ), densities.ToArray( ) );
     }
 
     [Test]

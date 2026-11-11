@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for making Cuboid and Ellipsoid honour their rotation in the Managed, Burst and GPU implementations.
 
-**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 and 1 are done. Until steps 2 and 3, Burst and the GPU still contour shapes unrotated.
+**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 2 are done. Until step 3, the GPU still contours shapes unrotated. Unrotated Burst contours are 3 to 5% slower; the user still has to decide whether that is acceptable (see Measurements).
 
 ## Goal
 
@@ -89,7 +89,17 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - A cube turned 45° about one axis looks the same turned the other way, so those cases still passed.
      - The snapshot test only compares snapshots with their volumes, so it still passed.
    - **Verification:** edit mode 802 of 802, play mode 21 of 21. The 416 `Start` hashes are identical, and the open scene is clean.
-2. **Burst (small).** `BurstDensityFunction`. Parity tests, Burst contour tests, performance check.
+2. **Burst (small).** `BurstDensityFunction`. Parity tests, Burst contour tests, performance check. **Done 2026-11-12:**
+   - **`BurstDensityFunction`** copies the rows and `rotated` from `DensityFunction.Frame`. Its `local( position )` is `Frame.local` written out the same way, and `sampleCuboid` and `sampleEllipsoid` take a position in the shape's own frame.
+   - **Parity, random shapes:** the two parity tests of `BurstSurfaceExtractorTest` run a second time with every shape turned. The rotations come from a generator of their own (`BurstTestSupport.randomlyRotated`), so the unturned run has exactly the shapes it had. The tolerances already in use hold.
+   - **Parity, whole meshes:** a turned model, `TopologyTest.turnedShapes`, is contoured by Managed and Burst for all three algorithms, every solver and every amount of simplification or clustering (16 cases).
+     - The model is a cube turned about a diagonal, an ellipsoid turned about all three axes cut out of it, and a turned box of a second material.
+     - Both give the same mesh within `BurstParity`'s tolerances.
+   - **Identity:** `withoutRotationDensitiesAreExactlyAsBefore` compares unrotated Burst densities with the old formulas compiled by Burst, bit for bit, including zero quaternions.
+   - **Contours:** `BurstRotatedCubeTest` (24) passes, and so does the turned cube of `HermiteNormalTest` for Burst.
+   - **The tests catch a mistake:** with Burst made to ignore the rotation again, every turned parity test, 18 of the 24 cube tests and the Burst normals test failed.
+   - **Performance:** see Measurements.
+   - **Verification:** edit mode 846 of 846, play mode 21 of 21, and the 416 `Start` hashes are identical.
 3. **GPU (small).** `DensityFunction.Data` and the shader struct and sample functions. GPU tests.
 4. **Interactive editor (small).** Conversion, signature, outlines, warnings. Unity's rotate tool then works on shapes, with a live remesh for Burst and GPU.
 5. **Documentation (small).** README, and this plan marked complete.
@@ -111,6 +121,42 @@ Each step compiles, passes every test, and is reviewed before the next one start
 | Manifold | 128³ | 29.7 | 5.7 | 12.6 |
 
 `SolveVertices` is in the table because it samples too: it finds the intersections along the edges and takes the normals there.
+
+### Burst with rotation (step 2, 2026-11-12)
+
+**Comparing against step 0 is not good enough.** On the same code, contours vary from session to session by up to 13% (Uniform 128³: 25.3, 28.4, 25.0 and 25.0 ms). So the old and new sampling were timed in the same session, alternately, twice each, and this was done in four sessions.
+- **The old variant:** the file from before step 2, with an unused `rotated` field so the new tests still compile.
+- **Checking the swap:** a probe confirmed which variant was compiled before each timing. An early attempt had silently timed the new code throughout, because Unity had not compiled the swapped file.
+
+**Unrotated model, Voxelize in ms, old against new, one A/B session.** Every session showed the same pattern.
+
+| Algorithm | Cells | Old | New | Change | Change over all four sessions |
+|---|---|---|---|---|---|
+| Uniform | 128³ | 23.3, 23.7 | 24.4, 24.7 | +4.5% | +4 to +7% |
+| Uniform | 256³ | 148.1, 152.6 | 155.1, 157.7 | +4.0% | +3 to +7% |
+| Adaptive | 128³ | 28.5, 28.8 | 29.8, 28.8 | +2.3% | +2 to +5% |
+| Manifold | 128³ | 29.3, 28.4 | 29.8, 29.7 | +3.1% | +3 to +4% |
+
+By stage, SampleCorners is 3 to 5% slower, and SolveVertices, which samples 12 times per edge for the intersection and the normal, 6 to 9%.
+
+**Where the cost comes from**, from the variants timed the same way:
+- **Not the larger struct.** It grew from 36 to 76 bytes. The new struct sampled without the rotation branch was as fast as the old one.
+- **Not inlining.** Forcing `sample` and `local` inline made no difference.
+- **Worse alternatives.** Moving the rotation into a function that is never inlined, or folding the rotation into the type switch as four kinds, were slower for both unrotated and turned shapes: +7 to +12% unrotated.
+- **What is left** is the branch on `rotated` in every sample, as written.
+
+So the plan's aim of staying within 5% is met only at the edge: 3 to 5% usually, 7% in the worst session. Making it free would mean compiling every sampling job twice, with and without rotation, and choosing per contour. That touches every Burst job of the three algorithms and is not done.
+
+**Turned model** (the same three balls, each turned), from one run:
+
+| Algorithm | Cells | Unrotated | Turned | Change |
+|---|---|---|---|---|
+| Uniform | 128³ | 24.8 | 27.1 | +9% |
+| Uniform | 256³ | 159.4 | 173.9 | +9% |
+| Adaptive | 128³ | 31.5 | 33.5 | +6% |
+| Manifold | 128³ | 29.5 | 32.7 | +11% |
+
+SampleCorners is about 25% slower on turned shapes. Turned balls give the same meshes, except that Adaptive and Manifold at 128³ collapse slightly differently (2604 against 2586 vertices, 2371 against 2359). Turning a ball changes its densities in the last bits, and simplification decides some nodes right at the threshold.
 
 ## Out of scope
 
