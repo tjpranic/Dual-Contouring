@@ -2,11 +2,13 @@
 using NUnit.Framework;
 using UnityEngine;
 
-using Combination   = DensityFunction.Combination;
-using MaterialIndex = SurfaceExtractor.MaterialIndex;
-using QEFSolverType = QEFSolver.Type;
+using Combination        = DensityFunction.Combination;
+using MaterialIndex      = SurfaceExtractor.MaterialIndex;
+using ImplementationType = SurfaceExtractor.Implementation.Type;
+using QEFSolverType      = QEFSolver.Type;
 
-public class AdaptiveDualContouringTopologyTest : TopologyTest {
+// the tests of the octree and its simplification, which run for each implementation in the fixtures at the end
+public abstract class AdaptiveDualContouringTopologyTest : TopologyTest {
 
     // both are thinner than the 1 / 8 wide cells that simplification collapses first, and lie inside one row of them
     public enum ThinFeature {
@@ -183,6 +185,22 @@ public class AdaptiveDualContouringTopologyTest : TopologyTest {
 
         Assert.AreEqual( new[] { 1, 1 }, unsimplified, "the slab and the strip should each be a single region to begin with" );
         Assert.AreEqual( unsimplified,   simplified,   "pieces per material after simplification" );
+    }
+
+}
+
+public class ManagedAdaptiveDualContouringTopologyTest : AdaptiveDualContouringTopologyTest {
+
+    public ManagedAdaptiveDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.Managed;
+    }
+
+}
+
+public class BurstAdaptiveDualContouringTopologyTest : AdaptiveDualContouringTopologyTest {
+
+    public BurstAdaptiveDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.Burst;
     }
 
 }

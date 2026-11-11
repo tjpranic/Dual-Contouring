@@ -38,6 +38,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Adaptive, ImplementationType.Managed ) => new[] { "BuildOctree", "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh", "DebugInformation" },
             ( Algorithm.Manifold, ImplementationType.Managed ) => new[] { "BuildOctree", "SampleCorners", "SolveVertices", "Cluster", "Validate", "MarkCollapsed", "Contour", "BuildMesh", "DebugInformation" },
             ( Algorithm.Uniform,  ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
+            ( Algorithm.Adaptive, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh" },
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
 
@@ -53,12 +54,13 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Adaptive, ImplementationType.Managed ) => 7,
             ( Algorithm.Manifold, ImplementationType.Managed ) => 7,
             ( Algorithm.Uniform,  ImplementationType.Burst )   => 8,
+            ( Algorithm.Adaptive, ImplementationType.Burst )   => 7,
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
     }
 
     private static bool exists( Algorithm algorithm, ImplementationType implementation ) {
-        return implementation == ImplementationType.Managed || ( algorithm == Algorithm.Uniform && implementation == ImplementationType.Burst );
+        return implementation == ImplementationType.Managed || ( algorithm != Algorithm.Manifold && implementation == ImplementationType.Burst );
     }
 
     // a uniform grid has 2^resolution cells across, an octree 2^(resolution - 1) leaves

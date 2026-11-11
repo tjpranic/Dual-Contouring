@@ -17,125 +17,7 @@ using QEFSolverType             = QEFSolver.Type;
 
 public partial class UniformDualContouring {
 
-    // where the corners, cells and edges of a grid of n^3 cells are in the arrays of the Burst implementation. Corner (i,
-    // j, k) is a point of the grid of (n + 1)^3, cell (x, y, z) the cell whose minimum is corner (x, y, z). Cells are in
-    // the order the managed implementation goes through them, x outermost. An edge is numbered within its axis by the
-    // corner it starts at, and the edges of the three axes follow each other
-    private readonly struct BurstGrid {
-
-        public readonly int resolution;
-
-        public BurstGrid( int resolution ) {
-            this.resolution = resolution;
-        }
-
-        public int cornerCount {
-            get { return ( this.resolution + 1 ) * ( this.resolution + 1 ) * ( this.resolution + 1 ); }
-        }
-
-        public int cellCount {
-            get { return this.resolution * this.resolution * this.resolution; }
-        }
-
-        // edges along each axis: n of them along the axis times n + 1 across each of the other two
-        public int edgesPerAxis {
-            get { return this.resolution * ( this.resolution + 1 ) * ( this.resolution + 1 ); }
-        }
-
-        public int cornerIndex( int3 corner ) {
-            return ( ( ( corner.x * ( this.resolution + 1 ) ) + corner.y ) * ( this.resolution + 1 ) ) + corner.z;
-        }
-
-        public int3 cornerOf( int index ) {
-            var points = this.resolution + 1;
-            return new int3( index / ( points * points ), ( index / points ) % points, index % points );
-        }
-
-        public int cellIndex( int3 cell ) {
-            return ( ( ( cell.x * this.resolution ) + cell.y ) * this.resolution ) + cell.z;
-        }
-
-        public int3 cellOf( int index ) {
-            return new int3( index / ( this.resolution * this.resolution ), ( index / this.resolution ) % this.resolution, index % this.resolution );
-        }
-
-        // the corners of the grid are exactly where the corners of the managed voxels are: n is a power of two
-        public float3 positionOf( int3 corner ) {
-            return ( new float3( corner ) / this.resolution ) - 0.5f;
-        }
-
-        public float3 centerOf( int3 cell ) {
-            return ( ( new float3( cell ) + 0.5f ) / this.resolution ) - 0.5f;
-        }
-
-        // the corner of the grid that the given corner of a cell is
-        public int3 cornerOfCell( int3 cell, int corner ) {
-            return cell + new int3( BurstTables.lookupCornerOffset( corner, 0 ), BurstTables.lookupCornerOffset( corner, 1 ), BurstTables.lookupCornerOffset( corner, 2 ) );
-        }
-
-        // the edge of the grid that the given edge of a cell is
-        public int edgeOfCell( int3 cell, int edge ) {
-            var axis  = edge / 4;
-            var start = this.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) );
-            var size  = new int3( this.resolution + 1 );
-
-            size[axis] = this.resolution;
-
-            return ( axis * this.edgesPerAxis ) + ( ( ( ( start.x * size.y ) + start.y ) * size.z ) + start.z );
-        }
-
-        public void cornersOfEdge( int edge, out int3 start, out int3 end ) {
-            var axis  = edge / this.edgesPerAxis;
-            var index = edge % this.edgesPerAxis;
-            var size  = new int3( this.resolution + 1 );
-
-            size[axis] = this.resolution;
-
-            start = new int3( index / ( size.y * size.z ), ( index / size.z ) % size.y, index % size.z );
-            end   = start;
-
-            end[axis] += 1;
-        }
-
-    }
-
-    // the settings of a contour, for the jobs to read
-    private struct BurstSettings {
-
-        public int                       resolution;
-        public int                       minimizerIterations;
-        public int                       binarySearchIterations;
-        public int                       surfaceCorrectionIterations;
-        public QEFSolverType             qefSolverType;
-        public IntersectionApproximation intersectionApproximation;
-
-    }
-
-    // the density and material at every corner of the grid
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
-    private struct SampleCornersJob : IJobParallelFor {
-
-        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
-
-        public BurstGrid grid;
-
-        [WriteOnly] public NativeArray<float>         densities;
-        [WriteOnly] public NativeArray<MaterialIndex> materials;
-
-        public void Execute( int index ) {
-            var position = this.grid.positionOf( this.grid.cornerOf( index ) );
-
-            this.densities[index] = BurstSurfaceExtractor.calculateDensityAndMaterial( position, this.densityFunctions, out var materialIndex );
-            this.materials[index] = materialIndex;
-        }
-
-    }
-
-    // the vertex of every cell the contour passes through, as the managed implementation finds it: the hermite data of
-    // the edges of the cell in the order of the edge layout, the vertex placed from the QEF of those samples, and the
-    // average of the normals of the contour samples. Each cell works out the hermite data of its own edges, so an edge
-    // that the contour crosses is worked out by each of the four cells around it, as it is in the managed implementation
-    // too. That keeps the data of the edges, almost all of which the contour does not cross, out of memory
+    // the vertex of every cell the contour passes through
     [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
     private struct SolveCellsJob : IJobParallelFor {
 
@@ -151,82 +33,20 @@ public partial class UniformDualContouring {
         [WriteOnly] public NativeArray<bool>   hasVertex;
 
         public void Execute( int index ) {
-            var cell = this.grid.cellOf( index );
+            this.hasVertex[index] = BurstCells.solve(
+                this.grid,
+                this.grid.cellOf( index ),
+                this.settings,
+                this.densityFunctions,
+                this.densities,
+                this.materials,
+                out _,
+                out var vertex,
+                out var normal
+            );
 
-            var solidCorners = 0;
-            for( var corner = 0; corner < 8; ++corner ) {
-                if( this.materials[this.grid.cornerIndex( this.grid.cornerOfCell( cell, corner ) )] != MaterialIndex.Void ) {
-                    solidCorners |= 1 << corner;
-                }
-            }
-
-            this.vertices[index]  = float3.zero;
-            this.normals[index]   = float3.zero;
-            this.hasVertex[index] = false;
-
-            // cell is either fully inside or outside the volume, skip
-            if( solidCorners == 0 || solidCorners == 255 ) {
-                return;
-            }
-
-            var qef           = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations );
-            var averageNormal = float3.zero;
-
-            for( var edge = 0; edge < 12; ++edge ) {
-                var start = this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) );
-                var end   = this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 1 ) );
-
-                var startIndex = this.grid.cornerIndex( start );
-                var endIndex   = this.grid.cornerIndex( end );
-
-                var startMaterial = this.materials[startIndex];
-                var endMaterial   = this.materials[endIndex];
-
-                if( BurstSurfaceExtractor.intersectsContour( startMaterial, endMaterial ) ) {
-                    var intersection = BurstSurfaceExtractor.approximateIntersection(
-                        this.grid.positionOf( start ),
-                        this.densities[startIndex],
-                        this.grid.positionOf( end ),
-                        this.densities[endIndex],
-                        this.densityFunctions,
-                        BurstSurfaceExtractor.AnyMaterial,
-                        this.settings.intersectionApproximation,
-                        this.settings.binarySearchIterations
-                    );
-                    var normal = BurstSurfaceExtractor.calculateNormal( intersection, this.densityFunctions, BurstSurfaceExtractor.AnyMaterial );
-
-                    qef.add( intersection, normal );
-
-                    averageNormal += normal;
-                }
-                else if( BurstSurfaceExtractor.crossesMaterialBoundary( startMaterial, endMaterial ) ) {
-                    // the boundary between two materials draws the vertex to where they meet on the contour. Its
-                    // normal is not one of the contour, and stays out of the normal of the vertex
-                    BurstSurfaceExtractor.calculateMaterialBoundary(
-                        this.grid.positionOf( start ),
-                        startMaterial,
-                        this.grid.positionOf( end ),
-                        endMaterial,
-                        this.densityFunctions,
-                        this.settings.intersectionApproximation,
-                        this.settings.binarySearchIterations,
-                        out var intersection,
-                        out var normal
-                    );
-
-                    qef.add( intersection, normal );
-                }
-            }
-
-            if( qef.intersectionCount > 0 ) {
-                qef.placeVertex( BurstTables.lookupVertexCount( solidCorners ), this.grid.centerOf( cell ), out var vertex, out _ );
-
-                var vertexNormal = BurstSurfaceExtractor.normalize( averageNormal );
-
-                this.vertices[index]  = BurstSurfaceExtractor.surfaceCorrection( vertex, vertexNormal, this.densityFunctions, this.settings.surfaceCorrectionIterations );
-                this.normals[index]   = vertexNormal;
-                this.hasVertex[index] = true;
-            }
+            this.vertices[index] = vertex;
+            this.normals[index]  = normal;
         }
 
     }
@@ -568,7 +388,7 @@ public partial class UniformDualContouring {
             using var hasVertex = new NativeArray<bool>          ( grid.cellCount,   Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
             using( sampleCornersMarker.Auto( ) ) {
-                new SampleCornersJob {
+                new BurstSampleCornersJob {
                     densityFunctions = functions,
                     grid             = grid,
                     densities        = densities,

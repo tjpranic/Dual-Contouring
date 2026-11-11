@@ -35,6 +35,9 @@ public abstract class ContouringTest {
     private readonly List<Object>    created    = new( );
     private readonly List<Voxelizer> voxelizers = new( );
 
+    // the implementation the voxelizers of a fixture use, which a fixture that runs for several of them sets
+    protected ImplementationType implementation = ImplementationType.Managed;
+
     protected static Shape ellipsoid( Vector3 origin, Vector3 extents, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) {
         return new( DensityFunction.Type.Ellipsoid, origin, extents, combination, materialIndex );
     }
@@ -80,6 +83,8 @@ public abstract class ContouringTest {
         // the tests look at the corners, edges and voxels of the contours, which the Burst implementations only copy out
         // when asked to
         voxelizer.keepDebugInformation = true;
+
+        voxelizer.implementationType = this.implementation;
 
         voxelizer.resolution    = resolution;
         voxelizer.qefSolverType = solver;

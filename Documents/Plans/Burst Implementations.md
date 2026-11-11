@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** steps 0 and 1 done and reviewed 2026-11-11, tolerances accepted. Step 2 done 2026-11-11 and awaiting review. Steps 3–5 not started.
+**Status:** steps 0–2 done and reviewed 2026-11-11, tolerances accepted. Step 3 done 2026-11-11 and awaiting review. Steps 4–5 not started.
 
 ## Goal
 
@@ -101,21 +101,15 @@ As built in step 2, in `Assets/Scripts/Burst/UniformDualContouring.Burst.cs`:
 
 ### Adaptive (medium to large)
 
-1. **Leaf pass:** reuses Uniform's corner, edge and cell jobs on the leaf grid, keeping each leaf's QEF and error.
-   - The managed code also solves a QEF from every internal node's own coarse edges. Nothing reads it afterwards:
-     - simplification overwrites it;
-     - contouring only reaches nodes that are not internal;
-     - the debug data leaves internal nodes out.
-   - The Burst version skips that QEF. A test confirms this before the code relies on it.
-2. **Simplification:** one parallel job per level, bottom-up, following the managed climb:
-   - A node collapses only when all eight children are already non-internal.
-   - Children with no QEF give an empty Pseudo leaf.
-   - The topology check, when enabled, comes before the error threshold.
-   - "`children = null`" becomes "type Pseudo". The children's data stays in place and is ignored by contouring.
-3. **Contouring:**
-   - A literal port of `contourCell`, `contourFace` and `contourEdge`, run as one job with an explicit stack.
-   - The minimal edge is taken from the smallest node. Vertices are indexed by first use, and the half of a quad that repeats a vertex is dropped.
-   - The traversal is O(nodes) and cheap next to sampling, so it is only parallelised over subtrees if profiling says so.
+As built in step 3, in `Assets/Scripts/Burst/AdaptiveDualContouring.Burst.cs`. The grid, settings, corner job and cell solve that Uniform and Adaptive share moved to `Assets/Scripts/Burst/BurstGrid.cs`.
+
+1. **Octree:** a grid of nodes per level in one array. Node (x, y, z) of a level has children (2x + i, 2y + j, 2z + k) on the next, in the managed child order. Every node starts internal; a collapsed node becomes Pseudo, and the nodes below it are ignored from then on.
+2. **Leaves:** the corner and cell code shared with Uniform, on the leaf grid. Each leaf keeps the QEF as `placeVertex` left it, since solving it sets the feature dimension that combining reads.
+   - The managed code also solves a QEF for every internal node from its own corners. Nothing reads that QEF, so Burst skips it.
+   - The parity tests show the result is unchanged: the same nodes collapse into the same vertices, and the debug voxels list the same nodes.
+3. **Simplification:** one parallel job per level, bottom-up, each node combining its children in order. A node without surface becomes Pseudo; otherwise come the topology test, then `placeVertex`, then the threshold.
+4. **Contouring:** a literal port of `contourCell`, `contourFace` and `contourEdge` in one job, recursive, which Burst compiles. The plan first said an explicit stack; recursion keeps the managed order with no extra bookkeeping.
+5. **Debug data:** one job walks the nodes in the managed list order. It collects the non-internal nodes, their corners and their edges, each the first time it is seen. An edge gets material-boundary hermite data when the first node that has it is one the contour passes through, which is exactly what the managed implementation shows.
 
 ### Manifold (large)
 
@@ -206,7 +200,14 @@ Each step is done tests first and reviewed before the next one starts.
    - Code: `Assets/Scripts/Burst/UniformDualContouring.Burst.cs`, with `UniformDualContouring` made partial, and `Voxelizer.keepDebugInformation`.
    - Scenes: `Assets/Scenes/Uniform Dual Contouring/CPU/Burst/`, 8 copies of the managed scenes with `_implementation: 2`. Each one contours to the same vertex, triangle and voxel counts as its managed scene.
    - Tests: `UniformDualContouringBurstTest`, 18 parity tests (meshes identical triangle for triangle, vertices and hermite data within the tolerances), including 256³ with 32-bit indices. The Uniform topology, hermite normal and sub-mesh tests run for Burst too. Edit mode 239/239, play mode 20/20.
-3. **Adaptive (medium to large).** The same, with 9 scenes. Done on the same terms.
+3. **Adaptive (medium to large). Done 2026-11-11.** The same as step 2, with 9 scenes, done on the same terms.
+   - Code: `Assets/Scripts/Burst/AdaptiveDualContouring.Burst.cs` and the shared `Assets/Scripts/Burst/BurstGrid.cs`; `AdaptiveDualContouring` is now partial.
+   - Scenes: `Assets/Scenes/Adaptive Dual Contouring/Burst/`, 9 copies with `_implementation: 2`. Each one contours to the same triangles and voxel count as its managed scene.
+   - Tests:
+     - `AdaptiveDualContouringTopologyTest` is now an abstract base, and its 59 tests run as `ManagedAdaptiveDualContouringTopologyTest` and `BurstAdaptiveDualContouringTopologyTest`. Parameterized `[TestFixture]`s weren't picked up by the test runner.
+     - `AdaptiveDualContouringBurstTest` has 53 parity tests: every model, both solvers, no, light and heavy simplification, with and without the topology test, four grid sizes, 128³ leaves, and debug data on request. The parity checks are shared in `BurstParity`.
+     - Edit mode 363/363, play mode 20/20.
+   - The parity vertex tolerance went from 1e-3 to 5e-3 leaf cells. A collapsed node's vertex comes from the QEFs of all its leaves added up, and the farthest apart seen was 0.002 leaves at 32³.
 4. **Manifold (large).** The same, with 11 scenes. Done on the same terms.
 5. **Tuning.**
    - Float mode, batch sizes, and a parallel traversal if profiling calls for it.
@@ -268,6 +269,20 @@ Same model and settings as the baseline. Times are medians of 3 runs after a war
 - **Mesh post-processing:** at 256³, splitting vertices takes 22.7 ms and `RecalculateBounds` with `OptimizeReorderVertexBuffer` 18.1 ms. Both are now a sizeable part of the total.
 - **Contour stage:** the single-threaded pass is a quarter of the time at 128³ and 256³, which makes it the first candidate for step 5.
 
+### Burst Adaptive (step 3)
+
+Same model and settings as the baseline: simplification at 2e-4, topology-safe.
+
+| Leaves | Vertices | Triangles | Voxelize | Sample corners | Solve vertices | Simplify | Contour | Build mesh | Managed voxelize | Speed-up |
+|-------:|---------:|----------:|---------:|---------------:|---------------:|---------:|--------:|-----------:|-----------------:|---------:|
+| 16³    | 628      | 1,252     | 0.8      | 0.1            | 0.2            | 0.1      | 0.4     | 0.0        | 119.7            | ~150×    |
+| 32³    | 852      | 1,700     | 1.8      | 0.2            | 0.7            | 0.3      | 0.5     | 0.1        | 757.9            | ~420×    |
+| 64³    | 1,056    | 2,148     | 6.7      | 0.8            | 3.6            | 1.0      | 0.6     | 0.1        | 5,449.8          | ~810×    |
+| 128³   | 2,586    | 5,224     | 44.4     | 6.5            | 20.4           | 5.0      | 1.6     | 0.1        | 47,104.2         | ~1,060×  |
+
+- Up to 64³ the counts equal the managed ones.
+- At 128³, managed has 2,594 vertices and 5,240 triangles: a handful of nodes collapse in one implementation and not the other. That's the precision limit of the error test, explained in the findings below, not a difference in the algorithm.
+
 ### What the baseline shows
 
 - **Sampling corners is 45–69% of the time** in every algorithm. Every voxel samples its own 8 corners, and in the octrees every internal node samples its corners too. Each sample goes through LINQ and interface calls.
@@ -281,6 +296,12 @@ Same model and settings as the baseline. Times are medians of 3 runs after a war
 - **The other two step 0 fixes have no before-and-after timing.**
   - Adaptive and Manifold used to evaluate the density functions once per function at every corner. `DensitySamplingTest` counted 2.46× (Adaptive) and 2.57× (Manifold) as many samples per volume with three volumes as with one.
   - The cost of `Volume.origin` and `Volume.extents` searching the hierarchy on every sample was not measured on its own.
+- **Found in step 3, not fixed: the error test of simplification is at the limit of float precision on large nodes.**
+  - The error is xᵀAx − 2xᵀb + c, where the terms nearly cancel. For a node 8 leaves across, with 380 samples, c (BtB) was 70.4 against a threshold of 2e-4. Float rounding of the sum is then a few times 10⁻⁶, several percent of the threshold.
+  - Example at 128³ leaves on the three balls: a node whose error in double precision is 2.033e-4, 1.7% above the threshold, was collapsed by the managed code. Its mirror image, with the same samples, was kept by managed and collapsed by Burst.
+  - At 128³ a few dozen nodes fall in that band at any threshold, so the two implementations differ by a few nodes at 1e-4 and 2e-4 alike. At 32³ there are about 150 candidates, and none fell in the band.
+  - It would go away in both implementations if the QEF sums were kept relative to a local origin, such as the node's center, which keeps c small. That changes the numerics of the algorithm, so it is left for a decision.
+- **Found in step 3, expected:** plain dual contouring of the three balls has edges shared by more than two triangles from 64³ cells on, 40 at 64³ and 56 at 128³, in Uniform and in unsimplified Adaptive, managed and Burst alike. Where the balls meet in creases, a cell holds two sheets of surface and has only one vertex for both. That is what the manifold variant is for. The large-grid closedness tests use the sphere.
 - **Found in step 2, fixed 2026-11-11 at the user's request:** the debug corners and edges were slow to tell apart.
   - `Edge.GetHashCode` XORed the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid got the same hash: 31 hashes for the 104,544 edges of a 32³ grid. `Distinct()` over them took about 30 s.
   - `Vector3.GetHashCode`, which the corners used, shifts the coordinate hashes by two bits and XORs them. On the few mantissa bits of grid coordinates that gave 3,447 hashes for 35,937 corners.

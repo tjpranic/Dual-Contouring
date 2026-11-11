@@ -16,7 +16,13 @@ public class DebugInformationHashTest : TopologyTest {
         UniformManaged,
         UniformBurst,
         Adaptive,
+        AdaptiveBurst,
         Manifold
+    }
+
+    private static Voxelizer burst( Voxelizer voxelizer ) {
+        voxelizer.implementationType = ImplementationType.Burst;
+        return voxelizer;
     }
 
     // 16^3 cells or leaves either way
@@ -27,6 +33,7 @@ public class DebugInformationHashTest : TopologyTest {
             Algorithm.UniformManaged => this.createUniformVoxelizer( 4, ImplementationType.Managed, QEFSolverType.SVD, shapes ),
             Algorithm.UniformBurst   => this.createUniformVoxelizer( 4, ImplementationType.Burst,   QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive       => this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ),
+            Algorithm.AdaptiveBurst  => burst( this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
             Algorithm.Manifold       => this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ),
             _                        => throw new Exception( "Unknown algorithm specified" )
         };

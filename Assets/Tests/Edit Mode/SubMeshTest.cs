@@ -18,6 +18,7 @@ public class SubMeshTest : ContouringTest {
         UniformGPU,
         UniformBurst,
         Adaptive,
+        AdaptiveBurst,
         Manifold
     }
 
@@ -33,6 +34,11 @@ public class SubMeshTest : ContouringTest {
         cube( new Vector3(  0.25f, 0.013f, 0.017f ), 0.15f, Combination.Union, MaterialIndex.Material0 )
     };
 
+    private static Voxelizer burst( Voxelizer voxelizer ) {
+        voxelizer.implementationType = ImplementationType.Burst;
+        return voxelizer;
+    }
+
     // 16^3 cells or leaves either way
     private Voxelizer create( Algorithm algorithm, Shape[] shapes ) {
         return algorithm switch {
@@ -40,6 +46,7 @@ public class SubMeshTest : ContouringTest {
             Algorithm.UniformGPU     => this.createUniformVoxelizer( 4, ImplementationType.GPU,     QEFSolverType.SVD, shapes ),
             Algorithm.UniformBurst   => this.createUniformVoxelizer( 4, ImplementationType.Burst,   QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive       => this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ),
+            Algorithm.AdaptiveBurst  => burst( this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
             Algorithm.Manifold       => this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ),
             _                        => throw new Exception( "Unknown algorithm specified" )
         };
