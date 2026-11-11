@@ -1,0 +1,204 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using NUnit.Framework;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+using UnityEngine;
+
+using Tables        = OctreeContouringTables<AdaptiveDualContouring.Voxel>;
+using Axis          = OctreeContouringTables<AdaptiveDualContouring.Voxel>.Axis;
+using Position      = OctreeContouringTables<AdaptiveDualContouring.Voxel>.Position;
+using Node          = Octree<AdaptiveDualContouring.Voxel>;
+using MaterialIndex = SurfaceExtractor.MaterialIndex;
+using VoxelType     = SurfaceExtractor.Voxel.Type;
+
+// the constant tables of the Burst code against the managed tables and layouts they were taken from, read from inside a
+// job so that they are known to work in Burst compiled code as well
+public class BurstTablesTest {
+
+    // every table, entry by entry, in the order the managed lookups below go through them
+    [BurstCompile( CompileSynchronously = true )]
+    private struct ReadTablesJob : IJob {
+
+        public NativeList<int>   entries;
+        public NativeArray<bool> managed;
+
+        public void Execute( ) {
+            this.managed[0] = BurstTestSupport.runningManaged( );
+
+            for( var corner = 0; corner < 8; ++corner ) {
+                for( var axis = 0; axis < 3; ++axis ) {
+                    this.entries.Add( BurstTables.lookupCornerOffset( corner, axis ) );
+                }
+            }
+            for( var edge = 0; edge < 12; ++edge ) {
+                for( var end = 0; end < 2; ++end ) {
+                    this.entries.Add( BurstTables.lookupEdgeCorner( edge, end ) );
+                }
+            }
+            for( var solidCorners = 0; solidCorners < 256; ++solidCorners ) {
+                this.entries.Add( BurstTables.lookupVertexCount( solidCorners ) );
+                for( var edge = 0; edge < 12; ++edge ) {
+                    this.entries.Add( BurstTables.lookupEdgeVertex( solidCorners, edge ) );
+                }
+            }
+            for( var axis = 0; axis < 3; ++axis ) {
+                for( var group = 0; group < 2; ++group ) {
+                    for( var place = 0; place < 4; ++place ) {
+                        this.entries.Add( BurstTables.lookupEdgeNodeWithinNode( axis, group, place ) );
+                    }
+                }
+                for( var pair = 0; pair < 4; ++pair ) {
+                    for( var side = 0; side < 2; ++side ) {
+                        this.entries.Add( BurstTables.lookupFacePairWithinNode( axis, pair, side ) );
+                    }
+                }
+                for( var pair = 0; pair < 4; ++pair ) {
+                    for( var side = 0; side < 2; ++side ) {
+                        this.entries.Add( BurstTables.lookupFacePairWithinFacePair( axis, pair, side ) );
+                    }
+                }
+                for( var edge = 0; edge < 4; ++edge ) {
+                    for( var place = 0; place < 4; ++place ) {
+                        this.entries.Add( BurstTables.lookupEdgeNodeWithinFacePairNode( axis, edge, place ) );
+                        this.entries.Add( BurstTables.lookupEdgeNodeWithinFacePairChild( axis, edge, place ) );
+                    }
+                    this.entries.Add( BurstTables.lookupEdgeNodeWithinFacePairAxis( axis, edge ) );
+                }
+                for( var group = 0; group < 2; ++group ) {
+                    for( var place = 0; place < 4; ++place ) {
+                        this.entries.Add( BurstTables.lookupEdgeNodeWithinEdgeNodes( axis, group, place ) );
+                    }
+                }
+                for( var place = 0; place < 4; ++place ) {
+                    this.entries.Add( BurstTables.lookupEdgeIndexWithinEdgeNodes( axis, place ) );
+                }
+                for( var side = 0; side < 2; ++side ) {
+                    for( var edge = 0; edge < 4; ++edge ) {
+                        this.entries.Add( BurstTables.lookupEdgeIndexWithinFacePair( axis, side, edge ) );
+                    }
+                }
+            }
+        }
+
+    }
+
+    // the same entries from the managed code: the corner and edge layouts of a voxel, DualMarchingCubes, and the
+    // octree contouring tables applied to an octree whose nodes can be told apart
+    private static List<int> managedEntries( ) {
+        var entries = new List<int>( );
+
+        // a unit cell with its minimum at the origin puts every corner at its offset
+        var cell = new AdaptiveDualContouring.Voxel( VoxelType.Leaf, 0, Vector3.one * 0.5f, Vector3.one );
+
+        foreach( var corner in cell.corners ) {
+            entries.Add( ( int )corner.position.x );
+            entries.Add( ( int )corner.position.y );
+            entries.Add( ( int )corner.position.z );
+        }
+        foreach( var edge in cell.edges ) {
+            entries.Add( Array.IndexOf( cell.corners, edge.corners[0] ) );
+            entries.Add( Array.IndexOf( cell.corners, edge.corners[1] ) );
+        }
+
+        for( var solidCorners = 0; solidCorners < 256; ++solidCorners ) {
+            var vertices = DualMarchingCubes.lookupVertexEdges( solidCorners );
+
+            entries.Add( vertices.Length );
+            for( var edge = 0; edge < 12; ++edge ) {
+                entries.Add( Array.FindIndex( vertices, ( edges ) => edges.Contains( edge ) ) );
+            }
+        }
+
+        var octree = Node.build(
+            new AdaptiveDualContouring.Voxel( VoxelType.Internal, 0, Vector3.zero, Vector3.one ),
+            ( parent ) => parent.depth == 2 ? null : Enumerable.Range( 0, 8 ).Select(
+                ( _ ) => new AdaptiveDualContouring.Voxel( parent.depth < 1 ? VoxelType.Internal : VoxelType.Leaf, parent.depth + 1, Vector3.zero, Vector3.one )
+            ).ToArray( )
+        );
+
+        int childOf( Node parent, Node node ) {
+            var index = Array.IndexOf( parent.children, node );
+            Assert.GreaterOrEqual( index, 0, "a node that is not a child of the node it should be" );
+            return index;
+        }
+
+        // which of the given nodes the given one is a child of
+        int nodeOf( Node[] nodes, Node node ) {
+            var index = Array.FindIndex( nodes, ( candidate ) => candidate.children.Contains( node ) );
+            Assert.GreaterOrEqual( index, 0, "a node that is not a child of any of the given nodes" );
+            return index;
+        }
+
+        var two  = new[] { octree.children[0], octree.children[1] };
+        var four = new[] { octree.children[0], octree.children[1], octree.children[2], octree.children[3] };
+
+        foreach( var axis in new[] { Axis.X, Axis.Y, Axis.Z } ) {
+            foreach( var group in Tables.lookupEdgeNodesWithinNode( octree, axis, Position.Root ) ) {
+                entries.AddRange( group.Select( ( node ) => childOf( octree, node ) ) );
+            }
+            foreach( var pair in Tables.lookupFacePairsWithinNode( octree, axis, Position.Root ) ) {
+                entries.AddRange( pair.Select( ( node ) => childOf( octree, node ) ) );
+            }
+            foreach( var pair in Tables.lookupFacePairsWithinFacePairs( two, axis, Position.Root ) ) {
+                Assert.AreEqual( 0, nodeOf( two, pair[0] ), "the first of a face pair comes from the first node" );
+                Assert.AreEqual( 1, nodeOf( two, pair[1] ), "the second of a face pair comes from the second node" );
+
+                entries.Add( childOf( two[0], pair[0] ) );
+                entries.Add( childOf( two[1], pair[1] ) );
+            }
+            foreach( var ( group, newAxis ) in Tables.lookupEdgeNodesWithinFacePairs( two, axis, Position.Root ) ) {
+                foreach( var node in group ) {
+                    var index = nodeOf( two, node );
+
+                    entries.Add( index );
+                    entries.Add( childOf( two[index], node ) );
+                }
+                entries.Add( ( int )newAxis );
+            }
+            foreach( var group in Tables.lookupEdgeNodesWithinEdgeNodes( four, axis, Position.Root ) ) {
+                for( var place = 0; place < 4; ++place ) {
+                    Assert.AreEqual( place, nodeOf( four, group[place] ), "the n-th node around an edge comes from the n-th node" );
+
+                    entries.Add( childOf( four[place], group[place] ) );
+                }
+            }
+            for( var place = 0; place < 4; ++place ) {
+                entries.Add( Tables.lookupEdgeIndexWithinEdgeNodes( place, axis, Position.Root ) );
+            }
+            for( var side = 0; side < 2; ++side ) {
+                entries.AddRange( Tables.lookupEdgeIndicesWithinFacePair( side, axis, Position.Root ) );
+            }
+        }
+
+        return entries;
+    }
+
+    [Test]
+    public void tablesAreTheManagedOnes( ) {
+        using var entries = new NativeList<int>( Allocator.TempJob );
+        using var managed = new NativeArray<bool>( 1, Allocator.TempJob );
+
+        new ReadTablesJob { entries = entries, managed = managed }.Run( );
+
+        BurstTestSupport.assertRanUnderBurst( managed );
+
+        CollectionAssert.AreEqual( managedEntries( ), entries.AsArray( ).ToArray( ) );
+    }
+
+    [Test]
+    public void solidCornersAreTheBitsOfTheCornersThatAreNotEmpty( ) {
+        var random = new System.Random( 4 );
+
+        for( var test = 0; test < 1000; ++test ) {
+            var corners = Enumerable.Range( 0, 8 ).Select( ( _ ) => BurstTestSupport.materials[random.Next( BurstTestSupport.materials.Length )] ).ToArray( );
+
+            var expected = Enumerable.Range( 0, 8 ).Sum( ( corner ) => corners[corner] != MaterialIndex.Void ? 1 << corner : 0 );
+
+            Assert.AreEqual( expected, BurstTables.solidCornersOf( corners[0], corners[1], corners[2], corners[3], corners[4], corners[5], corners[6], corners[7] ) );
+        }
+    }
+
+}

@@ -6,7 +6,10 @@
         "UnityEditor.TestRunner",
         "GameAssembly",
         "ShapesRuntime",
-        "Unity.PerformanceTesting"
+        "Unity.PerformanceTesting",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
     ],
     "includePlatforms": [
         "Editor"

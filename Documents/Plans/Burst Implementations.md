@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** step 0 done 2026-11-11 and awaiting review. Steps 1–5 not started.
+**Status:** step 0 done and reviewed 2026-11-11. Step 1 done 2026-11-11 and awaiting review. Steps 2–5 not started.
 
 ## Goal
 
@@ -68,7 +68,7 @@ Uniform keeps its GPU implementation. GPU implementations of Adaptive and Manifo
   - The SVD solver becomes a struct with the 6 floats of the symmetric matrix, AtB, BtB, the mass point, the sample count and the feature dimension. `solve` takes the struct by `ref`, because it records the feature dimension that `combine` reads later.
   - The Simple solver's step `v -= Σ(n·v − d) n / N` equals `(AtA·v − AtB) / N`, and its error equals the SVD error formula, so the Burst Simple solver uses the same fixed-size accumulator. The math is the same as the managed `List<Plane>` version, but the rounding is different.
 - **Tables:**
-  - **Dual marching cubes:** built once into a persistent native array. For each of the 256 configurations it holds the vertex count, and for each of the 12 edges the index of the vertex that edge belongs to.
+  - **Dual marching cubes:** constant data in `BurstTables`, generated from `DualMarchingCubes`. For each of the 256 configurations it holds the vertex count, and for each of the 12 edges the index of the vertex that edge belongs to. Burst reads static readonly arrays of constants directly, so there is no native container to keep alive. (The plan first said a persistent native array.)
   - **Octree contouring:** `OctreeContouringTables` becomes child-index tables. Only the `Root` position is ever used.
   - **Topology:** `OctreeTopology.isQuasiManifold` and `collapsePreservesTopology` are ported with fixed-size local arrays.
 - **Mesh output:**
@@ -168,14 +168,29 @@ Uniform keeps its GPU implementation. GPU implementations of Adaptive and Manifo
   - Adaptive: node type and vertex per (level, index).
   - Manifold: equal vertex and triangle counts, the same topology, and matching vertex positions.
 - **Leak test:** voxelize twice, destroy the voxelizer, and expect no native leak warnings.
-- **Core unit tests:** the Burst density, normal, intersection, QEF and table functions are compared with the managed functions on random and edge-case inputs.
+- **Core unit tests:** the Burst density, normal, intersection, QEF and table functions are compared with the managed functions on random and edge-case inputs. Each test runs the Burst code in a Burst-compiled job and fails if the job ran as managed code instead.
+- **Why parity needs a tolerance (found in step 1):**
+  - Mono keeps the intermediate results of an expression at a higher precision than float, and rounds only when a value is stored. In the editor, `a * a + c` with a = 1 + 2⁻¹² and c = −(1 + 2⁻¹¹) gives 2⁻²⁴, where float arithmetic gives 0. `Vector3.Magnitude` matches the square root of the double sum, not of the float sum.
+  - Burst in `FloatMode.Strict` rounds every operation to float and fuses nothing.
+  - The same operations in the same order therefore differ in the last bits. About a quarter of the densities differ by one unit in the last place.
+  - Bit-exact parity would mean emulating where Mono rounds, so the tests use tolerances instead:
+
+    | Result | Tolerance |
+    |---|---|
+    | Densities | relative 1e-6 |
+    | Normals near a surface | 1e-3 |
+    | Intersections and surface corrections | 1e-5 |
+    | QEF vertices and errors | relative 1e-5 |
+    | Materials away from surfaces, mass points, tables, topology and meshes | exact |
+
+  - Normals take differences of densities 2e-4 apart. Far from a surface the densities are large and so are their last bits, which is why normals are compared near a surface, where the algorithms take them.
 - **Where tests run:** the standalone dotnet harness that runs the managed sources outside Unity cannot run Burst or Jobs code. Burst code is verified only in the editor. Test runs block the editor, and play-mode runs enter play mode.
 
 ## Steps
 
 Each step is done tests first and reviewed before the next one starts.
 
-0. **Groundwork (small).**
+0. **Groundwork (small). Done 2026-11-11.**
    - Add Burst, Collections and the performance testing package to the manifest, and Unity.Burst and Unity.Collections to the asmdef.
    - Rename the enum and add the dispatch. Burst throws `NotImplementedException` for now.
    - Move `OnDestroy` to `Voxelizer` and make test teardown call it for every voxelizer.
@@ -184,7 +199,9 @@ Each step is done tests first and reviewed before the next one starts.
    - Add the profiler markers and performance tests, and record the baseline in the measurements section below.
    - Move the 28 CPU scenes into `Managed/`.
    - Done when the edit-mode and play-mode suites are green (171 and 20 tests at the last full run) and the baseline is recorded.
-1. **Burst core (medium).** Density, QEFs, tables, the mesh writer and debug data. Done when the core unit tests are green.
+1. **Burst core (medium). Done 2026-11-11.** Density, QEFs, tables, the mesh writer and debug data. Done when the core unit tests are green.
+   - Code in `Assets/Scripts/Burst/`: `BurstDensityFunction`, `BurstSurfaceExtractor`, `BurstQEF`, `BurstTables`, `BurstOctreeTopology`, `BurstMesh`, `BurstDebugInformation`.
+   - Tests: `BurstSurfaceExtractorTest`, `BurstQEFTest`, `BurstTablesTest`, `BurstOctreeTopologyTest`, `BurstMeshTest` and `BurstDebugInformationTest`, with shared helpers in `BurstTestSupport`. Edit mode 207/207, play mode 20/20.
 2. **Uniform (medium).** The Burst implementation, the 8 Burst scenes, parity tests and the benchmark. Done when the Uniform fixtures and parity tests are green for Burst and the benchmark is recorded.
 3. **Adaptive (medium to large).** The same, with 9 scenes. Done on the same terms.
 4. **Manifold (large).** The same, with 11 scenes. Done on the same terms.
