@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-using Implementation            = SurfaceExtractor.Implementation;
-using ImplementationType        = SurfaceExtractor.Implementation.Type;
-using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
-using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
+using Implementation     = SurfaceExtractor.Implementation;
+using ImplementationType = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization    = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization    = SurfaceExtractor.Implementation.GPU.Voxelization;
 
 public partial class ManifoldDualContouring : Voxelizer {
 

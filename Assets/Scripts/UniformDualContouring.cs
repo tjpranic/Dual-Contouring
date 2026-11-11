@@ -3,12 +3,12 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 
-using MaterialIndex             = SurfaceExtractor.MaterialIndex;
-using VoxelType                 = SurfaceExtractor.Voxel.Type;
-using Implementation            = SurfaceExtractor.Implementation;
-using ImplementationType        = SurfaceExtractor.Implementation.Type;
-using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
-using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
+using MaterialIndex      = SurfaceExtractor.MaterialIndex;
+using VoxelType          = SurfaceExtractor.Voxel.Type;
+using Implementation     = SurfaceExtractor.Implementation;
+using ImplementationType = SurfaceExtractor.Implementation.Type;
+using CPUVoxelization    = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization    = SurfaceExtractor.Implementation.GPU.Voxelization;
 
 public partial class UniformDualContouring : Voxelizer {
 

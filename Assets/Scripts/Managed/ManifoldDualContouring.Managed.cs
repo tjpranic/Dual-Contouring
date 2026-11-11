@@ -7,11 +7,11 @@ using UnityEngine;
 using Axis     = OctreeContouringTables<ManifoldDualContouring.Voxel>.Axis;
 using Position = OctreeContouringTables<ManifoldDualContouring.Voxel>.Position;
 
-using MaterialIndex             = SurfaceExtractor.MaterialIndex;
-using VoxelType                 = SurfaceExtractor.Voxel.Type;
-using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
-using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
-using QEFSolverType             = QEFSolver.Type;
+using MaterialIndex   = SurfaceExtractor.MaterialIndex;
+using VoxelType       = SurfaceExtractor.Voxel.Type;
+using CPUVoxelization = SurfaceExtractor.Implementation.CPU.Voxelization;
+using GPUVoxelization = SurfaceExtractor.Implementation.GPU.Voxelization;
+using QEFSolverType   = QEFSolver.Type;
 
 public partial class ManifoldDualContouring {
 
