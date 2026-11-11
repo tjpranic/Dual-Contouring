@@ -49,6 +49,10 @@ public class InteractiveEditorTest {
 
     private readonly List<Object> created = new( );
 
+    // the editors' clock, in seconds, and whether Unity counts as the active application, both the test's own
+    private double time        = 0.0;
+    private bool   unityActive = true;
+
     [TearDown]
     public void tearDown( ) {
         // destroying the editor clears its contour and releases the compute buffers
@@ -65,7 +69,20 @@ public class InteractiveEditorTest {
 
         gameObject.transform.localScale = Vector3.one * scale;
 
-        return gameObject.AddComponent<InteractiveEditor>( );
+        var editor = gameObject.AddComponent<InteractiveEditor>( );
+
+        editor.clock             = ( ) => this.time;
+        editor.applicationActive = ( ) => this.unityActive;
+
+        return editor;
+    }
+
+    // editor updates at the given times
+    private void tickAt( InteractiveEditor editor, params double[] times ) {
+        foreach( var time in times ) {
+            this.time = time;
+            editor.tick( );
+        }
     }
 
     private static Transform createGroup( Transform parent, Vector3 position, float scale ) {
@@ -409,8 +426,11 @@ public class InteractiveEditorTest {
         editor.enabled = false;
         editor.enabled = true;
 
+        this.tickAt( editor, 1.0, 2.0 );
+
         Assert.IsTrue( shown( editor ) == null );
         Assert.IsNull( editor.lastContour );
+        Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
     }
 
     [Test]
@@ -421,6 +441,9 @@ public class InteractiveEditorTest {
 
         editor.enabled = false;
         editor.enabled = true;
+
+        // without waiting for changes to settle
+        this.tickAt( editor, 1.0 );
 
         Assert.IsTrue( shown( editor ) != null );
         Assert.Greater( shown( editor ).vertexCount, 0 );
@@ -503,6 +526,261 @@ public class InteractiveEditorTest {
 
         Assert.IsTrue( uniformMesh == null, "the mesh of the uniform contour is still there" );
         Assert.AreEqual( 1, editor.GetComponents<MeshFilter>( ).Length );
+    }
+
+    // an editor at scale 5 with a cube, and a group holding a ball, for the signature tests
+    public sealed class Parts {
+        public InteractiveEditor editor;
+        public Volume            shape;
+        public Transform         group;
+        public Volume            grouped;
+    }
+
+    private Parts createParts( ) {
+        var editor = this.createEditor( 5.0f );
+        var group  = createGroup( editor.transform, new Vector3( 0.125f, 0.0f, 0.0f ), 1.0f );
+
+        return new Parts {
+            editor  = editor,
+            shape   = addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f ),
+            group   = group,
+            grouped = addShape<Ellipsoid>( group, Vector3.zero, Vector3.one * 0.25f )
+        };
+    }
+
+    private static T selected<T>( Parts parts, Algorithm algorithm ) where T : Voxelizer {
+        parts.editor.select( algorithm );
+        return parts.editor.voxelizer as T;
+    }
+
+    // each a setup, then a change, of everything a contour depends on
+    private static readonly Dictionary<string, ( Action<Parts> setup, Action<Parts> change )> contourInputs = new( ) {
+        ["shape position"]          = ( null, ( p ) => p.shape.transform.localPosition += new Vector3( 0.0625f, 0.0f, 0.0f ) ),
+        ["shape scale"]             = ( null, ( p ) => p.shape.transform.localScale    *= 0.5f ),
+        ["shape operation"]         = ( null, ( p ) => p.shape.combination   = Combination.Subtraction ),
+        ["shape material"]          = ( null, ( p ) => p.shape.materialIndex = MaterialIndex.Material1 ),
+        ["shape type"]              = ( null, ( p ) => { var shape = p.shape.gameObject; Object.DestroyImmediate( p.shape ); shape.AddComponent<Ellipsoid>( ).materialIndex = MaterialIndex.Material0; } ),
+        ["shape order"]             = ( null, ( p ) => p.shape.transform.SetAsFirstSibling( ) ),
+        ["shape added"]             = ( null, ( p ) => addShape<Cuboid>( p.editor.transform, Vector3.zero, Vector3.one * 0.125f ) ),
+        ["shape removed"]           = ( null, ( p ) => Object.DestroyImmediate( p.shape.gameObject ) ),
+        ["shape deactivated"]       = ( null, ( p ) => p.shape.gameObject.SetActive( false ) ),
+        ["shape disabled"]          = ( null, ( p ) => p.shape.enabled = false ),
+        ["group position"]          = ( null, ( p ) => p.group.localPosition += new Vector3( 0.0f, 0.0625f, 0.0f ) ),
+        ["group scale"]             = ( null, ( p ) => p.group.localScale    *= 2.0f ),
+        ["group rotation"]          = ( ( p ) => p.grouped.transform.localPosition = new Vector3( 0.125f, 0.0f, 0.0f ), ( p ) => p.group.localRotation = Quaternion.Euler( 0.0f, 90.0f, 0.0f ) ),
+        ["algorithm"]               = ( null, ( p ) => p.editor.select( Algorithm.Manifold ) ),
+        ["resolution"]              = ( null, ( p ) => p.editor.voxelizer.resolution                  += 1 ),
+        ["minimizer iterations"]    = ( null, ( p ) => p.editor.voxelizer.minimizerIterations         += 1 ),
+        ["binary search iterations"]= ( null, ( p ) => p.editor.voxelizer.binarySearchIterations      += 1 ),
+        ["surface correction"]      = ( null, ( p ) => p.editor.voxelizer.surfaceCorrectionIterations += 1 ),
+        ["implementation"]          = ( null, ( p ) => p.editor.voxelizer.implementationType          = ImplementationType.Burst ),
+        ["solver"]                  = ( null, ( p ) => p.editor.voxelizer.qefSolverType               = QEFSolverType.Simple ),
+        ["intersection"]            = ( null, ( p ) => p.editor.voxelizer.intersectionApproximation   = Approximation.LinearInterpolation ),
+        ["vertex normals"]          = ( null, ( p ) => p.editor.voxelizer.vertexNormals               = VertexNormals.Split ),
+        ["debug flags"]             = ( null, ( p ) => p.editor.voxelizer.debugFlags                  = Voxelizer.Debug.Corners ),
+        ["adaptive simplification"] = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).simplification = true ),
+        ["adaptive threshold"]      = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).errorThreshold = 0.5f ),
+        ["adaptive topology safe"]  = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).topologySafe   = false ),
+        ["manifold threshold"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorThreshold  = 0.5f ),
+        ["manifold criterion"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).enforceManifold = false )
+    };
+
+    // and of what a contour does not depend on
+    private static readonly Dictionary<string, ( Action<Parts> setup, Action<Parts> change )> otherChanges = new( ) {
+        ["shape name"]                   = ( null, ( p ) => p.shape.name = "Renamed" ),
+        ["editor position"]              = ( null, ( p ) => p.editor.transform.localPosition = new Vector3( 1.0f, 2.0f, 3.0f ) ),
+        ["editor rotation"]              = ( null, ( p ) => p.editor.transform.localRotation = Quaternion.Euler( 10.0f, 20.0f, 30.0f ) ),
+        ["editor scale"]                 = ( null, ( p ) => p.editor.transform.localScale    = Vector3.one * 2.0f ),
+        ["shape rotation"]               = ( null, ( p ) => p.shape.transform.localRotation  = Quaternion.Euler( 0.0f, 45.0f, 0.0f ) ),
+        ["debounce"]                     = ( null, ( p ) => p.editor.debounce = 1.0f ),
+        ["debug colour"]                 = ( null, ( p ) => p.editor.voxelizer.debugEdgeColor     = Color.magenta ),
+        ["debug line thickness"]         = ( null, ( p ) => p.editor.voxelizer.debugLineThickness = 4.0f ),
+        ["renderer materials"]           = ( null, ( p ) => p.editor.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[3] ),
+        ["unselected voxelizer setting"] = ( null, ( p ) => ( p.editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring ).errorThreshold = 0.5f ),
+        ["unselected voxelizer resolution"] = ( null, ( p ) => p.editor.voxelizerOf( Algorithm.Manifold ).resolution = 7 )
+    };
+
+    public static IEnumerable<string> contourInputNames => contourInputs.Keys;
+    public static IEnumerable<string> otherChangeNames  => otherChanges.Keys;
+
+    [Test]
+    public void theSignatureChangesWith( [ValueSource( nameof( contourInputNames ) )] string input ) {
+        var parts = this.createParts( );
+        var ( setup, change ) = contourInputs[input];
+
+        setup?.Invoke( parts );
+
+        var before = parts.editor.signature( );
+
+        change( parts );
+
+        Assert.AreNotEqual( before, parts.editor.signature( ) );
+    }
+
+    [Test]
+    public void theSignatureStaysTheSameWith( [ValueSource( nameof( otherChangeNames ) )] string change ) {
+        var parts = this.createParts( );
+        var ( setup, apply ) = otherChanges[change];
+
+        setup?.Invoke( parts );
+
+        var before = parts.editor.signature( );
+
+        apply( parts );
+
+        Assert.AreEqual( before, parts.editor.signature( ) );
+    }
+
+    // a shape moved and moved back, as by an undo, is up to date again
+    [Test]
+    public void aChangeUndoneIsUpToDate( ) {
+        var parts  = this.createParts( );
+        var before = parts.editor.signature( );
+
+        parts.shape.transform.localPosition += new Vector3( 0.0625f, 0.0f, 0.0f );
+
+        Assert.AreNotEqual( before, parts.editor.signature( ) );
+
+        parts.shape.transform.localPosition -= new Vector3( 0.0625f, 0.0f, 0.0f );
+
+        Assert.AreEqual( before, parts.editor.signature( ) );
+    }
+
+    [Test]
+    public void aChangeContoursByItself( [ValueSource( nameof( automaticVariants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( 5.0f ), variant );
+
+        addStarterModel( editor.transform );
+
+        this.time = 0.0;
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        this.tickAt( editor, 1.0 );
+
+        Assert.AreSame( mesh, shown( editor ), "contoured with nothing changed" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+        editor.transform.GetChild( 0 ).localScale *= 0.75f;
+
+        // contoured at once when the last contour was fast, otherwise once the change has settled
+        this.tickAt( editor, 2.0, 2.0 + editor.debounce );
+
+        Assert.IsTrue( mesh == null, "the earlier mesh is still there" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    [Test]
+    public void selectingAnAlgorithmContoursByItself( ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var uniformMesh = shown( editor );
+
+        editor.select( Algorithm.Manifold );
+
+        this.tickAt( editor, 1.0, 1.0 + editor.debounce );
+
+        Assert.IsTrue( uniformMesh == null, "the uniform mesh is still there" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    [Test]
+    public void managedOnlyContoursWhenAsked( [Values] Algorithm algorithm ) {
+        var editor = configure( this.createEditor( 5.0f ), new( algorithm, ImplementationType.Managed ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        editor.transform.GetChild( 0 ).localScale *= 0.75f;
+
+        this.tickAt( editor, 1.0, 2.0, 100.0 );
+
+        Assert.AreSame( mesh, shown( editor ) );
+        Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
+
+        editor.contour( );
+
+        this.tickAt( editor, 101.0 );
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    [Test]
+    public void nothingByItselfWhileUnityIsInTheBackground( ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        editor.transform.GetChild( 0 ).localScale *= 0.75f;
+
+        this.unityActive = false;
+        this.tickAt( editor, 1.0, 2.0, 100.0 );
+
+        Assert.AreSame( mesh, shown( editor ) );
+        Assert.AreEqual( RemeshScheduler.State.Background, editor.state );
+
+        this.unityActive = true;
+        this.tickAt( editor, 101.0 );
+
+        Assert.IsTrue( mesh == null, "not contoured once Unity was active again" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // so a script recompile, after which the mesh is still shown, costs no contour
+    [Test]
+    public void enablingWithAMeshShownIsUpToDate( ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        editor.enabled = false;
+        editor.enabled = true;
+
+        this.tickAt( editor, 50.0, 60.0 );
+
+        Assert.AreSame( mesh, shown( editor ) );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // a material added to the renderer only needs a sub-mesh of its own, not a contour
+    [Test]
+    public void aMaterialAddedToTheRendererGetsASubMeshWithoutAContour( ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, ImplementationType.Managed ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        Assert.AreEqual( 2, mesh.subMeshCount );
+
+        var material = new Material( Shader.Find( "Universal Render Pipeline/Lit" ) );
+        this.created.Add( material );
+
+        editor.GetComponent<MeshRenderer>( ).sharedMaterials = new[] { material, material, material };
+
+        this.tickAt( editor, 1.0 );
+
+        Assert.AreSame( mesh, shown( editor ) );
+        Assert.AreEqual( 3, mesh.subMeshCount );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
     }
 
 }

@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for an editor in which shapes are added and combined with CSG operations, and the contour follows every change, in edit mode.
 
-**Status:** step 0 (measurement) done 2026-11-11, and the two questions it raised were answered (decisions 6 and 7). Steps 1 (re-runnable voxelizer) and 2 (editor component and scene) done 2026-11-11; step 2 awaits review.
+**Status:** step 0 (measurement) done 2026-11-11, and the two questions it raised were answered (decisions 6 and 7). Steps 1 (re-runnable voxelizer), 2 (editor component and scene) and 3 (automatic remeshing) done 2026-11-11; step 3 awaits review.
 
 ## Goal
 
@@ -107,9 +107,9 @@ New, `ExecuteAlways`, in `Assets/Scripts/InteractiveEditor.cs`. It does not cont
 
 One mechanism covers every source in finding 6: the editor compares what it would contour now with what the current mesh was built from.
 
-- **Signature:** a hash of the selected algorithm, the selected voxelizer's contour settings, and for each active shape in order its type, position, size, operation and material.
-- **Polling:** worked out on every editor tick. It costs a handful of reads per shape.
-- **What it ignores:** names, debug colours and sizes, the renderer's materials, and the root's own transform, which moves the mesh without changing it.
+- **Signature:** a string of the selected algorithm, the selected voxelizer's contour settings, and for each active shape in order its type, position, size, operation and material. Strings are compared whole, so there are no hash collisions.
+- **Polling:** worked out on every editor update. It costs about 25 µs with the starter model's four shapes.
+- **What it ignores:** names, debug colours and sizes, the renderer's materials, the debounce, a shape's own rotation (until `Shape Rotation.md`), the voxelizers that aren't selected, and the root's own transform, which moves the mesh without changing it. A material added to the renderer gets an empty sub-mesh on the next update, without a contour.
 - **Debug flags** are part of the signature, because the Burst implementations only copy debug data out when a flag is on.
 - **Managed variants** use the same signature, only to show that the mesh is out of date.
 
@@ -120,7 +120,7 @@ A small class with no Unity dependencies, so tests can drive it with a fake cloc
 - **Managed:** never contours by itself. "Contour" is the only trigger.
 - **Burst and GPU:**
   - **Debounce:** contour once the signature has been stable for the interval, 100 ms by default.
-  - **During a drag:** while the signature keeps changing, contour again if the last contour took at most 50 ms, and no sooner than that contour's own time after it ended, so the editor spends at most half its time contouring.
+  - **Fast variants:** if the last contour took at most 50 ms, contour on a change without waiting for it to settle, and no sooner than that contour's own time after it ended, so the editor spends at most half its time contouring. A drag of a handle or slider then updates live, and a single change shows at once. The debounce only applies to slower variants.
     - Live by the measurements: Burst up to 128³ (25–34 ms), and GPU up to 64³ (28–30 ms, with its buffers kept since step 1).
     - Waiting for the pause: Burst Uniform at 256³ (160–194 ms) and GPU at 128³ (137–140 ms).
   - **Slow remeshes:** after a remesh over a second, automatic remeshing pauses until a remesh is under a second again (decision 7).
@@ -191,8 +191,28 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - The mesh is the same object after a script reload.
      - Play mode: the editor contours once and the voxelizers are disabled. After leaving play mode they are enabled, the scene is unmodified, and Burst contours again, because the edit-mode mesh does not survive play mode. A Managed variant shows nothing after play mode until "Contour" is pressed.
      - A test run reopens the open scene when it ends, which also costs one contour for Burst and GPU.
-3. **Automatic remeshing (medium).** Signature, polling, scheduler.
-   - Tests: the signature changes for each input that should change it and for none that should not; scheduler cases with a fake clock (a burst of changes gives one contour, continuous change keeps contouring when fast and waits for the pause when slow, Managed never contours by itself, nothing automatic while Unity is in the background, "Contour" always runs); undo and redo trigger a remesh.
+3. **Automatic remeshing (medium). Done 2026-11-11.** Signature, polling, scheduler.
+   - **`RemeshScheduler`** (`Assets/Scripts/RemeshScheduler.cs`, no Unity dependency) decides from the time, the signature, whether the variant is automatic and whether Unity is active. Its states are `UpToDate`, `Due`, `Waiting`, `Manual` (Managed), `Paused` (decision 7) and `Background`. A contour tells it the time it ended and how long it took; times taken in the background are not used.
+   - **`InteractiveEditor`:**
+     - `signature()` builds the signature.
+     - `tick()` asks the scheduler and contours when it says `Due`. It runs from `EditorApplication.update`, registered in `OnEnable` and removed in `OnDisable`, and also in play mode inside the editor.
+     - The time and "Unity is active" come from `EditorApplication.timeSinceStartup` and `InternalEditorUtility.isApplicationActive`. Tests replace them through `clock` and `applicationActive`.
+     - A new **Debounce** setting, 0.1 s by default.
+   - **On enable:** a mesh that is shown counts as up to date, which is how a script recompile costs no contour. With nothing shown, a Burst or GPU variant contours at its first update, without waiting for the debounce. The scheduler starts afresh, so a pause from a slow contour ends with a recompile.
+   - **Inspector:** the Debounce field, and a status line for each state (up to date; waiting for changes to settle; out of date, Managed; paused, with the time of the contour that paused it; waiting for Unity to be active). The inspector repaints continuously so the status follows the editor's updates.
+   - **Tests:**
+     - `RemeshSchedulerTest` (15) on a clock of its own. It covers debouncing, a burst of changes, changing back, live contouring for fast contours, waiting for slow ones, the inclusive 50 ms limit, Managed, the background, pausing and resuming, the exclusive 1 s limit, background timings, and the debounce setting. Times at the limits are binary fractions so the differences come out exact.
+     - `InteractiveEditorTest` (51 more, 101 in all):
+       - 28 contour inputs that change the signature and 11 other changes that don't;
+       - a change undone is up to date;
+       - each Burst and GPU variant contours a change by itself;
+       - selecting an algorithm contours;
+       - Managed only contours when asked;
+       - nothing happens in the background, then a contour once Unity is active;
+       - enabling with a mesh shown is up to date;
+       - a material added to the renderer gets a sub-mesh without a contour.
+   - **By hand in the scene:** moving the ball contoured by itself, and moving it back contoured again to the same vertex count, within two seconds each and without marking the scene modified.
+   - **Verified:** edit mode 734/734, play mode 21/21, and the 416 `Start` hashes are identical to the baseline.
 4. **Authoring (medium).** Inspector list and buttons, outlines, grid box, warnings, status line, debug overlay in edit mode.
    - Tests: add, remove and reorder through the same functions the inspector calls, each undoable; each warning condition.
    - The inspector layout and the scene view drawing are checked by eye, by the user.

@@ -352,6 +352,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::InteractiveEditor
   _algorithm: 0
+  _debounce: 0.1
 --- !u!114 &954588968
 MonoBehaviour:
   m_ObjectHideFlags: 2
@@ -365,14 +366,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::ManifoldDualContouring
   useCullingMasks: 0
-  _resolution: 2
+  _resolution: 7
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 0
-  _implementation: 0
+  _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
-  _vertexNormals: 0
+  _vertexNormals: 1
   debugFlags: 0
   debugAlwaysOnTop: 0
   debugLineThickness: 1.5
@@ -401,14 +402,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::AdaptiveDualContouring
   useCullingMasks: 0
-  _resolution: 2
+  _resolution: 7
   _minimizerIterations: 6
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 0
-  _implementation: 0
+  _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
-  _vertexNormals: 0
+  _vertexNormals: 1
   debugFlags: 0
   debugAlwaysOnTop: 0
   debugLineThickness: 1.5
