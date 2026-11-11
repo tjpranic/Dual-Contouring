@@ -366,10 +366,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::ManifoldDualContouring
   useCullingMasks: 0
-  _resolution: 7
-  _minimizerIterations: 6
+  _resolution: 6
+  _minimizerIterations: 4
   _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 0
+  _surfaceCorrectionIterations: 3
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -402,10 +402,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::AdaptiveDualContouring
   useCullingMasks: 0
-  _resolution: 7
-  _minimizerIterations: 6
+  _resolution: 6
+  _minimizerIterations: 4
   _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 0
+  _surfaceCorrectionIterations: 3
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -439,10 +439,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::UniformDualContouring
   useCullingMasks: 0
-  _resolution: 6
-  _minimizerIterations: 6
+  _resolution: 5
+  _minimizerIterations: 4
   _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 0
+  _surfaceCorrectionIterations: 3
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -611,13 +611,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1411728166}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalRotation: {x: 0, y: 0.42261827, z: 0, w: 0.9063079}
   m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 0.6, y: 0.6, z: 0.6}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 954588973}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 50, z: 0}
 --- !u!114 &1411728168
 MonoBehaviour:
   m_ObjectHideFlags: 0

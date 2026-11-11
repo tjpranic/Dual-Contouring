@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for making Cuboid and Ellipsoid honour their rotation in the Managed, Burst and GPU implementations.
 
-**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 3 are done: every implementation contours rotated shapes, and the interactive editor still passes no rotation. The user decided two things on 2026-11-12, both under Measurements and finding 7:
+**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 4 are done: every implementation contours rotated shapes, and so does the interactive editor. Step 5, the documentation, is left. The user decided two things on 2026-11-12, both under Measurements and finding 7:
 - They accepted that unrotated Burst contours are 3 to 5% slower.
 - The GPU takes every shape through the rotation, and its unrotated meshes are a unit or two in the last place off from before.
 
@@ -59,6 +59,13 @@ A rotated shape is contoured rotated, by every algorithm and every implementatio
   - For a direct child that is its local rotation, and the result is exact under any root scale.
   - Inside groups the rotations compose. One case cannot be expressed: a rotated shape under a group with unequal scale on its axes is sheared. The inspector warns about it.
   - The signature includes the rotation, the outlines are drawn rotated, and the "rotated shape" warning is removed.
+  - **As built in step 4,** going up through each group:
+    - a shape not turned within the group takes the group's scale along its own axes;
+    - under a group scaled the same on every axis, the shape's size is scaled and its rotation turned;
+    - otherwise its three axes are scaled by the group. While they stay square to each other, within a cosine of 1e-4, the shape is still a box or an ellipsoid of their lengths. That holds for quarter turns, turns about the uneven axis and mirrored groups.
+    - When the axes are not square, the shape counts as sheared. It is given square axes, made from its x axis and the part of its y axis square to it.
+
+    All three cases end with the group's own rotation applied after the shape's. The position now always goes through the group's rotation; before step 4, a rotation within Unity's `==` of the identity, about 0.16°, was left out.
 
 ## Tests
 
@@ -128,7 +135,24 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - The 384 Managed and Burst lines of the `Start` hashes are identical.
      - The 32 GPU lines changed, as finding 7 describes, with the same vertex counts. They are the baseline from here on.
    - **Speed:** see Measurements.
-4. **Interactive editor (small).** Conversion, signature, outlines, warnings. Unity's rotate tool then works on shapes, with a live remesh for Burst and GPU.
+4. **Interactive editor (small).** Conversion, signature, outlines, warnings. Unity's rotate tool then works on shapes, with a live remesh for Burst and GPU. **Done 2026-11-12:**
+   - **Conversion:** `placementOf` gives a position, rotation, size and whether the shape is sheared, as the design describes. The editor's `Shape` gets the rotation.
+   - **Signature:** it holds the nine numbers of each shape's frame instead of the quaternion. Those are what every implementation contours with, and a quaternion and its negation, the same turn, give the same signature.
+   - **Outlines** are drawn turned.
+   - **Warnings:**
+     - The "turned" warning is gone.
+     - A new one names a shape that a group would shear, and says that it is contoured with square sides, as its outline shows.
+     - "Outside the grid" now uses how far a turned shape reaches along each axis: the box around it, for an ellipsoid the exact one.
+   - **Tests, in `InteractiveEditorTest`** (145, 26 more than before):
+     - **Conversion against Unity:** the corners Unity's transforms put a shape's box at are those of the box the editor contours. This covers a turned direct child, whose rotation is exactly its local rotation; turns of nested groups adding up; and the four cases of an unevenly scaled group that keep a box.
+     - **Shear:** in both ways, a turned shape and a turned group.
+     - **Fine:** turned shapes and shapes in turned groups get no warning.
+     - **The grid:** a turned bar, upright or lying across, against the outside-the-grid warning.
+     - **Signature:** the shape's rotation and a group's rotation with the shape at its centre change it; a negated quaternion does not.
+     - **Contours:** for all seven variants, at scale 1 turned shapes contour as the volumes do; and a cube turned 45° reaches out to half its diagonal.
+   - **The tests catch a mistake:** with a group's rotation applied before the shape's instead of after, three conversion tests failed.
+   - **Live:** a hidden probe editor with a Burst cube was turned from outside. Unity's own editor updates remeshed it each time, to a reach of 0.354 at 45° and 0.321 at 20°.
+   - **Verification:** edit mode 878 of 878, play mode 21 of 21. The 416 `Start` hashes are identical to the baseline from the end of step 3.
 5. **Documentation (small).** README, and this plan marked complete.
 
 ## Measurements
@@ -205,4 +229,7 @@ At 64³ the difference is within the noise. At 128³ the new shader is consisten
 
 - **New primitives.**
 - **Sheared shapes.** A shape is an origin, a rotation and extents; a full affine transform per shape would change the sample formulas.
+  - A sheared ellipsoid is still an ellipsoid, so the editor could give it exactly. Its axes and extents would come from the singular value decomposition of its scaled axes.
+  - A sheared box is a parallelepiped, and cannot be given exactly.
+  - The editor warns about both instead.
 - **Rotating the grid.** The root's own rotation already turns the whole mesh.

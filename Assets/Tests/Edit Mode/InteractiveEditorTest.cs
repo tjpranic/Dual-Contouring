@@ -296,6 +296,84 @@ public class InteractiveEditorTest {
         Assert.AreEqual( new Vector3( 0.25f, 0.25f, 0.125f ), editor.shapes( ).Single( ).extents );
     }
 
+    // the corners of the unit cube around a shape's origin
+    private static readonly Vector3[] unitCorners = Enumerable.Range( 0, 8 ).Select(
+        ( corner ) => new Vector3( ( corner & 1 ) == 0 ? -0.5f : 0.5f, ( corner & 2 ) == 0 ? -0.5f : 0.5f, ( corner & 4 ) == 0 ? -0.5f : 0.5f )
+    ).ToArray( );
+
+    // the shape is contoured where Unity shows it: the corners of its box, through its transform and the groups above
+    // it, are those of the box the editor contours. A box mirrored along its own axes is the same box, so the corners
+    // are compared as a set
+    private static void assertWhereUnityShowsIt( InteractiveEditor editor, Volume volume ) {
+        Assert.IsTrue( editor.tryGetShape( volume, out var shape ), "the shape is not contoured" );
+
+        var contoured = unitCorners.Select( ( corner ) => shape.origin + ( shape.rotation * Vector3.Scale( corner, shape.extents * 2 ) ) ).ToArray( );
+
+        foreach( var corner in unitCorners ) {
+            var shown   = editor.transform.InverseTransformPoint( volume.transform.TransformPoint( corner ) );
+            var nearest = contoured.Min( ( other ) => Vector3.Distance( other, shown ) );
+
+            Assert.That( nearest, Is.LessThan( 1e-5f ), $"the corner Unity shows at {shown.ToString( "F5" )}" );
+        }
+    }
+
+    // for a shape right below the editor that is its local rotation, at any scale of the editor
+    [Test]
+    public void aTurnedShapeIsTurnedByItsRotation( ) {
+        var editor = this.createEditor( 5.0f );
+        var volume = addShape<Cuboid>( editor.transform, new Vector3( 0.125f, -0.0625f, 0.0f ), new Vector3( 0.5f, 0.25f, 0.125f ) );
+
+        volume.transform.localRotation = Quaternion.Euler( 30.0f, -60.0f, 75.0f );
+
+        Assert.IsTrue( editor.tryGetShape( volume, out var shape ) );
+        Assert.AreEqual( volume.transform.localRotation, shape.rotation );
+
+        assertWhereUnityShowsIt( editor, volume );
+    }
+
+    [Test]
+    public void theTurnsOfGroupsAddUp( ) {
+        var editor = this.createEditor( 5.0f );
+        var outer  = createGroup( editor.transform, new Vector3( 0.125f, 0.0f, 0.0f ), 2.0f );
+        var inner  = createGroup( outer,            new Vector3( 0.0f, 0.0625f, 0.0f ), 0.25f );
+
+        outer.localRotation = Quaternion.Euler( 20.0f, 0.0f, 0.0f );
+        inner.localRotation = Quaternion.Euler( 0.0f, 90.0f, 0.0f );
+
+        var volume = addShape<Ellipsoid>( inner, new Vector3( 0.25f, 0.0f, 0.125f ), new Vector3( 1.0f, 0.5f, 0.25f ) );
+
+        volume.transform.localRotation = Quaternion.Euler( 0.0f, 0.0f, 30.0f );
+
+        assertWhereUnityShowsIt( editor, volume );
+    }
+
+    // a group's uneven scale lies along the axes of a shape that is not turned within it, or turned by quarter turns,
+    // and along those of a shape turned about the axis the scale is uneven along. Each stays a box. A mirrored group
+    // too
+    [Test]
+    public void aGroupScaledUnevenlyStretchesAShapeAlongItsAxes(
+        [Values( "unturned", "quarter turn", "turned about the uneven axis", "mirrored" )] string turn
+    ) {
+        var editor = this.createEditor( 5.0f );
+        var group  = createGroup( editor.transform, new Vector3( 0.0f, 0.125f, 0.0f ), 1.0f );
+
+        group.localRotation = Quaternion.Euler( 0.0f, 30.0f, 0.0f );
+        group.localScale    = turn == "mirrored" ? new Vector3( -1.0f, 1.0f, 1.0f ) : new Vector3( 1.0f, 1.0f, 2.0f );
+
+        var volume = addShape<Cuboid>( group, new Vector3( 0.125f, 0.0f, 0.0f ), new Vector3( 0.5f, 0.25f, 0.125f ) );
+
+        volume.transform.localRotation = turn switch {
+            "unturned"                     => Quaternion.identity,
+            "quarter turn"                 => Quaternion.Euler( 0.0f, 90.0f, 0.0f ),
+            "turned about the uneven axis" => Quaternion.Euler( 0.0f, 0.0f, 40.0f ),
+            _                              => Quaternion.Euler( 30.0f, -60.0f, 75.0f )
+        };
+
+        assertWhereUnityShowsIt( editor, volume );
+
+        CollectionAssert.IsEmpty( editor.warnings( ).Where( ( warning ) => warning.Contains( "slant" ) ), "the shape counts as sheared" );
+    }
+
     [Test]
     public void shapesAreInHierarchyOrder( ) {
         var editor = this.createEditor( );
@@ -354,6 +432,52 @@ public class InteractiveEditorTest {
         finally {
             Object.DestroyImmediate( mesh );
         }
+    }
+
+    // and with turned shapes, whose rotation the volumes read off their transforms as well
+    [Test]
+    public void atScaleOneTheContourOfTurnedShapesIsThatOfTheVolumes( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( ), variant );
+
+        addStarterModel( editor.transform );
+
+        var volumes = editor.volumes( );
+
+        volumes[0].transform.localRotation = Quaternion.Euler( 20.0f, 30.0f, 40.0f );
+        volumes[2].transform.localRotation = Quaternion.Euler( 0.0f, 45.0f, 0.0f );
+        volumes[2].transform.localScale    = new Vector3( 0.6f, 0.4f, 0.3f );
+
+        editor.contour( );
+
+        var mesh = Object.Instantiate( shown( editor ) );
+
+        try {
+            editor.voxelizer.contour( drawFromGPU: false );
+
+            MeshComparison.assertSameTriangles( shown( editor ), mesh );
+        }
+        finally {
+            Object.DestroyImmediate( mesh );
+        }
+    }
+
+    // a cube turned a quarter of a right angle about the vertical reaches out to its corners, half its diagonal, along
+    // the two other axes. Its vertices go onto those corners, to within a binary search of a cell. It sits off the grid
+    // planes, so that its top and bottom faces do not lie on them
+    [Test]
+    public void aTurnedCubeIsContouredTurned( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( 5.0f ), variant );
+
+        addShape<Cuboid>( editor.transform, new Vector3( 0.013f, -0.021f, 0.017f ), Vector3.one * 0.5f ).transform.localRotation = Quaternion.Euler( 0.0f, 45.0f, 0.0f );
+
+        editor.contour( );
+
+        var reach = shown( editor ).bounds.extents;
+        var half  = 0.25f * Mathf.Sqrt( 2.0f );
+
+        Assert.That( reach.x, Is.EqualTo( half  ).Within( 0.002f ), "x" );
+        Assert.That( reach.y, Is.EqualTo( 0.25f ).Within( 0.002f ), "y" );
+        Assert.That( reach.z, Is.EqualTo( half  ).Within( 0.002f ), "z" );
     }
 
     [Test]
@@ -556,6 +680,7 @@ public class InteractiveEditorTest {
     // each a setup, then a change, of everything a contour depends on
     private static readonly Dictionary<string, ( Action<Parts> setup, Action<Parts> change )> contourInputs = new( ) {
         ["shape position"]          = ( null, ( p ) => p.shape.transform.localPosition += new Vector3( 0.0625f, 0.0f, 0.0f ) ),
+        ["shape rotation"]          = ( null, ( p ) => p.shape.transform.localRotation  = Quaternion.Euler( 0.0f, 45.0f, 0.0f ) ),
         ["shape scale"]             = ( null, ( p ) => p.shape.transform.localScale    *= 0.5f ),
         ["shape operation"]         = ( null, ( p ) => p.shape.combination   = Combination.Subtraction ),
         ["shape material"]          = ( null, ( p ) => p.shape.materialIndex = MaterialIndex.Material1 ),
@@ -568,6 +693,7 @@ public class InteractiveEditorTest {
         ["group position"]          = ( null, ( p ) => p.group.localPosition += new Vector3( 0.0f, 0.0625f, 0.0f ) ),
         ["group scale"]             = ( null, ( p ) => p.group.localScale    *= 2.0f ),
         ["group rotation"]          = ( ( p ) => p.grouped.transform.localPosition = new Vector3( 0.125f, 0.0f, 0.0f ), ( p ) => p.group.localRotation = Quaternion.Euler( 0.0f, 90.0f, 0.0f ) ),
+        ["group rotation, shape at its centre"] = ( null, ( p ) => p.group.localRotation = Quaternion.Euler( 0.0f, 30.0f, 0.0f ) ),
         ["algorithm"]               = ( null, ( p ) => p.editor.select( Algorithm.Manifold ) ),
         ["resolution"]              = ( null, ( p ) => p.editor.voxelizer.resolution                  += 1 ),
         ["minimizer iterations"]    = ( null, ( p ) => p.editor.voxelizer.minimizerIterations         += 1 ),
@@ -591,7 +717,7 @@ public class InteractiveEditorTest {
         ["editor position"]              = ( null, ( p ) => p.editor.transform.localPosition = new Vector3( 1.0f, 2.0f, 3.0f ) ),
         ["editor rotation"]              = ( null, ( p ) => p.editor.transform.localRotation = Quaternion.Euler( 10.0f, 20.0f, 30.0f ) ),
         ["editor scale"]                 = ( null, ( p ) => p.editor.transform.localScale    = Vector3.one * 2.0f ),
-        ["shape rotation"]               = ( null, ( p ) => p.shape.transform.localRotation  = Quaternion.Euler( 0.0f, 45.0f, 0.0f ) ),
+        ["the same turn, negated"]       = ( ( p ) => p.shape.transform.localRotation = Quaternion.Euler( 0.0f, 45.0f, 0.0f ), ( p ) => { var q = p.shape.transform.localRotation; p.shape.transform.localRotation = new Quaternion( -q.x, -q.y, -q.z, -q.w ); } ),
         ["debounce"]                     = ( null, ( p ) => p.editor.debounce = 1.0f ),
         ["debug colour"]                 = ( null, ( p ) => p.editor.voxelizer.debugEdgeColor     = Color.magenta ),
         ["debug line thickness"]         = ( null, ( p ) => p.editor.voxelizer.debugLineThickness = 4.0f ),
@@ -902,26 +1028,76 @@ public class InteractiveEditorTest {
     }
 
     [Test]
-    public void aRotatedShapeIsWarnedAbout( ) {
+    public void aTurnedShapeIsFine( ) {
         var editor = this.createEditor( );
 
         this.giveMaterials( editor, 1 );
         addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f ).transform.localRotation = Quaternion.Euler( 0.0f, 30.0f, 0.0f );
 
-        assertOneWarningAbout( editor, "Cuboid", "turned" );
+        CollectionAssert.IsEmpty( editor.warnings( ) );
     }
 
     [Test]
-    public void aShapeInARotatedGroupIsWarnedAbout( ) {
+    public void aShapeInATurnedGroupIsFine( ) {
         var editor = this.createEditor( );
-        var group  = createGroup( editor.transform, Vector3.zero, 1.0f );
+        var group  = createGroup( editor.transform, Vector3.zero, 0.5f );
 
         group.localRotation = Quaternion.Euler( 30.0f, 0.0f, 0.0f );
 
         this.giveMaterials( editor, 1 );
-        addShape<Ellipsoid>( group, Vector3.zero, Vector3.one * 0.5f );
+        addShape<Ellipsoid>( group, Vector3.zero, Vector3.one * 0.5f ).transform.localRotation = Quaternion.Euler( 0.0f, 0.0f, 45.0f );
 
-        assertOneWarningAbout( editor, "Ellipsoid", "turned" );
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    // a box turned inside a group that is scaled unevenly along other axes than it is turned about would have slanted
+    // sides. So would one in a turned group inside a group scaled unevenly
+    [Test]
+    public void aShapeAGroupWouldShearIsWarnedAbout( [Values( "turned shape", "turned group" )] string turned ) {
+        var editor = this.createEditor( );
+        var outer  = createGroup( editor.transform, Vector3.zero, 1.0f );
+        var inner  = createGroup( outer,            Vector3.zero, 1.0f );
+
+        outer.localScale = new Vector3( 1.0f, 1.0f, 2.0f );
+
+        this.giveMaterials( editor, 1 );
+
+        var volume = addShape<Cuboid>( inner, Vector3.zero, Vector3.one * 0.25f );
+
+        if( turned == "turned shape" ) {
+            volume.transform.localRotation = Quaternion.Euler( 0.0f, 30.0f, 0.0f );
+        }
+        else {
+            inner.localRotation = Quaternion.Euler( 30.0f, 0.0f, 0.0f );
+        }
+
+        assertOneWarningAbout( editor, "Cuboid", "slant" );
+
+        // its outline is the box it is contoured as instead, with square sides
+        Assert.IsTrue( editor.tryGetShape( volume, out var shape ) );
+        Assert.That( Quaternion.Dot( shape.rotation, shape.rotation ), Is.EqualTo( 1.0f ).Within( 1e-5f ), "the rotation is not a rotation" );
+    }
+
+    // a long box lying across below the grid is outside it, the same box turned upright reaches into it
+    [Test]
+    public void aTurnedShapeIsOutsideTheGridAsFarAsItReaches( [Values] DensityFunction.Type type ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+
+        var volume = type == DensityFunction.Type.Cuboid
+            ? addShape<Cuboid>    ( editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) )
+            : addShape<Ellipsoid> ( editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) );
+
+        volume.name = "Bar";
+
+        volume.transform.localRotation = Quaternion.Euler( 90.0f, 0.0f, 0.0f );
+
+        assertOneWarningAbout( editor, "Bar", "outside the grid" );
+
+        volume.transform.localRotation = Quaternion.Euler( 0.0f, 0.0f, 90.0f );
+
+        CollectionAssert.IsEmpty( editor.warnings( ), "turned upright" );
     }
 
     // the rotation of the editor itself turns the whole mesh, which is fine

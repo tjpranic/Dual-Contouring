@@ -231,10 +231,9 @@ public class InteractiveEditor : MonoBehaviour {
             return false;
         }
 
-        var ( position, size ) = this.placementOf( volume.transform );
+        var placement = this.placementOf( volume.transform );
 
-        // the editor does not read rotations yet
-        shape = new Shape( volume.type, position, Quaternion.identity, size.absolute( ) / 2, volume.combination, volume.materialIndex );
+        shape = new Shape( volume.type, placement.position, placement.rotation, placement.size.absolute( ) / 2, volume.combination, volume.materialIndex );
         return true;
     }
 
@@ -297,8 +296,8 @@ public class InteractiveEditor : MonoBehaviour {
                 warnings.Add( $"{name} lies entirely outside the grid, so it changes nothing. The grid is the box drawn around the editor." );
             }
 
-            if( this.isTurned( volume.transform ) ) {
-                warnings.Add( $"{name} is turned, by its own rotation or a group's. Shapes are contoured without their rotation for now, as their outlines show." );
+            if( this.placementOf( volume.transform ).sheared ) {
+                warnings.Add( $"{name} is turned inside a group that is scaled unevenly, which would slant its sides. It is contoured with square sides instead, as its outline shows. Scale the group evenly, or scale the shape itself." );
             }
         }
 
@@ -315,42 +314,101 @@ public class InteractiveEditor : MonoBehaviour {
         return bit;
     }
 
-    // the grid spans -0.5 to 0.5 along each axis of this object
+    // the grid spans -0.5 to 0.5 along each axis of this object. A turned shape reaches as far along an axis as the box
+    // around it does
     private static bool outsideTheGrid( Shape shape ) {
+        var reach = reachOf( shape );
+
         for( var axis = 0; axis < 3; ++axis ) {
-            if( Mathf.Abs( shape.origin[axis] ) - shape.extents[axis] >= 0.5f ) {
+            if( Mathf.Abs( shape.origin[axis] ) - reach[axis] >= 0.5f ) {
                 return true;
             }
         }
         return false;
     }
 
-    // whether the shape or a group between it and this object is rotated
-    private bool isTurned( Transform shape ) {
-        for( var item = shape; item != null && item != this.transform; item = item.parent ) {
-            if( item.localRotation != Quaternion.identity ) {
-                return true;
-            }
-        }
-        return false;
+    // how far the shape reaches from its origin along each axis of this object: half the size of the box around it
+    private static Vector3 reachOf( Shape shape ) {
+        var x = shape.rotation * new Vector3( shape.extents.x, 0.0f, 0.0f );
+        var y = shape.rotation * new Vector3( 0.0f, shape.extents.y, 0.0f );
+        var z = shape.rotation * new Vector3( 0.0f, 0.0f, shape.extents.z );
+
+        // a box reaches as far as its corners, an ellipsoid as far as the point of its surface furthest out
+        return shape.type == DensityFunction.Type.Cuboid
+            ? x.absolute( ) + y.absolute( ) + z.absolute( )
+            : new Vector3(
+                Mathf.Sqrt( ( x.x * x.x ) + ( y.x * y.x ) + ( z.x * z.x ) ),
+                Mathf.Sqrt( ( x.y * x.y ) + ( y.y * y.y ) + ( z.y * z.y ) ),
+                Mathf.Sqrt( ( x.z * x.z ) + ( y.z * y.z ) + ( z.z * z.z ) )
+            );
     }
 
-    // where a transform below this object is and how large, in the object space of this object. It goes up through the
-    // groups in between the way Unity does, without going through world space, so that a direct child gives exactly
-    // its local position and scale. Shapes are axis aligned: their own rotation is not read, and a rotated group only
-    // turns where the shapes in it are
-    private ( Vector3 position, Vector3 size ) placementOf( Transform shape ) {
+    // how far from square the axes of a shape can be before it counts as sheared: a cosine of the angle between two of
+    // them, about 0.006 degrees off a right angle. A quarter turn worked out in floats is much closer than that
+    private const float shearTolerance = 1e-4f;
+
+    // where a transform below this object is, how it is turned and how large, in the object space of this object. It
+    // goes up through the groups in between the way Unity does, without going through world space, so that a direct
+    // child gives exactly its local position, rotation and scale. A group scaled the same on every axis, or a shape that
+    // is not turned within its group, keeps the shape exactly a box or an ellipsoid along its own axes. Otherwise the
+    // group's scale stretches the shape along axes of its own and can slant its sides: then sheared is true, and the
+    // shape is given square axes as close to the slanted ones as there are
+    private ( Vector3 position, Quaternion rotation, Vector3 size, bool sheared ) placementOf( Transform shape ) {
         var position = shape.localPosition;
+        var rotation = shape.localRotation;
         var size     = shape.localScale;
+        var sheared  = false;
 
         for( var parent = shape.parent; parent != null && parent != this.transform; parent = parent.parent ) {
-            var scaled = Vector3.Scale( parent.localScale, position );
+            var scale = parent.localScale;
 
-            position = parent.localPosition + ( parent.localRotation == Quaternion.identity ? scaled : parent.localRotation * scaled );
-            size     = Vector3.Scale( parent.localScale, size );
+            position = parent.localPosition + ( parent.localRotation * Vector3.Scale( scale, position ) );
+
+            // Equals compares exactly, == only to within about a tenth of a degree
+            if( rotation.Equals( Quaternion.identity ) ) {
+                size = Vector3.Scale( scale, size );
+            }
+            else if( scale.x == scale.y && scale.y == scale.z ) {
+                size *= scale.x;
+            }
+            else {
+                ( rotation, size, sheared ) = scaleTurned( rotation, size, scale, sheared );
+            }
+
+            rotation = parent.localRotation * rotation;
         }
 
-        return ( position, size );
+        return ( position, rotation, size, sheared );
+    }
+
+    // a shape turned by its rotation and scaled by an uneven scale along the axes it is turned in. Each of the shape's
+    // axes ends up scaled by the group, and when they are still square to each other the shape is still a box or an
+    // ellipsoid, of their lengths. A turn by quarter turns, or a scale that is even along the axes the turn mixes, keeps
+    // them square
+    private static ( Quaternion rotation, Vector3 size, bool sheared ) scaleTurned( Quaternion rotation, Vector3 size, Vector3 scale, bool sheared ) {
+        var x = Vector3.Scale( scale, rotation * new Vector3( size.x, 0.0f, 0.0f ) );
+        var y = Vector3.Scale( scale, rotation * new Vector3( 0.0f, size.y, 0.0f ) );
+        var z = Vector3.Scale( scale, rotation * new Vector3( 0.0f, 0.0f, size.z ) );
+
+        var scaled = new Vector3( x.magnitude, y.magnitude, z.magnitude );
+
+        // a shape without size along an axis has no direction there to keep, and is warned about by itself
+        if( scaled.x == 0.0f || scaled.y == 0.0f || scaled.z == 0.0f ) {
+            return ( rotation, scaled, sheared );
+        }
+
+        var xAxis = x / scaled.x;
+        var yAxis = y / scaled.y;
+        var zAxis = z / scaled.z;
+
+        sheared |= Mathf.Abs( Vector3.Dot( xAxis, yAxis ) ) > shearTolerance || Mathf.Abs( Vector3.Dot( yAxis, zAxis ) ) > shearTolerance || Mathf.Abs( Vector3.Dot( zAxis, xAxis ) ) > shearTolerance;
+
+        // square axes from the x axis and the y axis, made square to it. A mirrored set of axes turns the same way:
+        // boxes and ellipsoids are the same shape mirrored along their own axes
+        var squareY = ( yAxis - ( Vector3.Dot( yAxis, xAxis ) * xAxis ) ).normalized;
+        var squareZ = Vector3.Cross( xAxis, squareY );
+
+        return ( Quaternion.LookRotation( squareZ, squareY ), scaled, sheared );
     }
 
     // what a contour of the shapes would be made from: the selected algorithm, the settings of its voxelizer that change
@@ -392,11 +450,24 @@ public class InteractiveEditor : MonoBehaviour {
         }
 
         foreach( var shape in shapes ) {
+            // the rotation as every implementation undoes it, in the rows of its frame. Two quaternions of opposite sign
+            // give the same rows, and turn the shape the same way
+            var frame = new DensityFunction.Frame( shape );
+
             text.Append( '|' );
             append( shape.type );
             append( shape.origin.x );
             append( shape.origin.y );
             append( shape.origin.z );
+            append( frame.xAxis.x );
+            append( frame.xAxis.y );
+            append( frame.xAxis.z );
+            append( frame.yAxis.x );
+            append( frame.yAxis.y );
+            append( frame.yAxis.z );
+            append( frame.zAxis.x );
+            append( frame.zAxis.y );
+            append( frame.zAxis.z );
             append( shape.extents.x );
             append( shape.extents.y );
             append( shape.extents.z );
@@ -865,8 +936,8 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
 
 }
 
-// the outline of each shape of an interactive editor, where and as large as it is contoured, so subtracted and
-// intersected shapes can be seen and clicked. Shapes of other voxelizers, in the example scenes, are left alone
+// the outline of each shape of an interactive editor, where, as turned and as large as it is contoured, so subtracted
+// and intersected shapes can be seen and clicked. Shapes of other voxelizers, in the example scenes, are left alone
 public static class InteractiveEditorGizmos {
 
     public static Color colourOf( Combination combination ) {
@@ -900,7 +971,7 @@ public static class InteractiveEditorGizmos {
         colour.a = ( gizmoType & UnityEditor.GizmoType.Selected ) != 0 ? 1.0f : 0.5f;
 
         Gizmos.color  = colour;
-        Gizmos.matrix = editor.transform.localToWorldMatrix * Matrix4x4.TRS( shape.origin, Quaternion.identity, shape.extents * 2 );
+        Gizmos.matrix = editor.transform.localToWorldMatrix * Matrix4x4.TRS( shape.origin, Quaternion.Normalize( shape.rotation ), shape.extents * 2 );
 
         if( shape.type == DensityFunction.Type.Cuboid ) {
             Gizmos.DrawWireCube( Vector3.zero, Vector3.one );
