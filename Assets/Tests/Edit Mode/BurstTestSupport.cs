@@ -36,20 +36,37 @@ public static class BurstTestSupport {
 
         public DensityFunction.Type type          { get; }
         public Vector3              origin        { get; }
+        public Quaternion           rotation      { get; }
         public Vector3              extents       { get; }
         public Combination          combination   { get; set; }
         public MaterialIndex        materialIndex { get; set; }
 
-        public FixedDensityFunction( DensityFunction.Type type, Vector3 origin, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
+        private readonly DensityFunction.Frame frame;
+
+        public FixedDensityFunction( DensityFunction.Type type, Vector3 origin, Vector3 extents, Combination combination, MaterialIndex materialIndex )
+            : this( type, origin, Quaternion.identity, extents, combination, materialIndex ) {
+        }
+
+        public FixedDensityFunction( DensityFunction.Type type, Vector3 origin, Quaternion rotation, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
             this.type          = type;
             this.origin        = origin;
+            this.rotation      = rotation;
             this.extents       = extents;
             this.combination   = combination;
             this.materialIndex = materialIndex;
+
+            this.frame = new DensityFunction.Frame( origin, rotation );
+        }
+
+        // the same shape with the given rotation
+        public FixedDensityFunction rotated( Quaternion rotation ) {
+            return new( this.type, this.origin, rotation, this.extents, this.combination, this.materialIndex );
         }
 
         public float sample( Vector3 position ) {
-            return this.type == DensityFunction.Type.Cuboid ? Cuboid.sample( position, this.origin, this.extents ) : Ellipsoid.sample( position, this.origin, this.extents );
+            var local = this.frame.local( position );
+
+            return this.type == DensityFunction.Type.Cuboid ? Cuboid.sample( local, this.extents ) : Ellipsoid.sample( local, this.extents );
         }
 
     }

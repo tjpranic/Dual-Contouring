@@ -7,28 +7,37 @@ using MaterialIndex = SurfaceExtractor.MaterialIndex;
 
 public partial interface DensityFunction {
 
-    // a density function as it stands, with its origin and extents worked out once. A volume works them out from its
-    // transform and its voxelizer's on every sample, which costs far more than the sample itself
+    // a density function as it stands, with its origin, rotation and extents worked out once, and its frame with them.
+    // A volume works them out from its transform and its voxelizer's on every sample, which costs far more than the
+    // sample itself
     public sealed class Snapshot : DensityFunction {
 
         public DensityFunction.Type type          { get; }
         public Vector3              origin        { get; }
+        public Quaternion           rotation      { get; }
         public Vector3              extents       { get; }
         public Combination          combination   { get; set; }
         public MaterialIndex        materialIndex { get; set; }
 
+        private readonly Frame frame;
+
         public Snapshot( DensityFunction densityFunction ) {
             this.type          = densityFunction.type;
             this.origin        = densityFunction.origin;
+            this.rotation      = densityFunction.rotation;
             this.extents       = densityFunction.extents;
             this.combination   = densityFunction.combination;
             this.materialIndex = densityFunction.materialIndex;
+
+            this.frame = new Frame( this.origin, this.rotation );
         }
 
         public float sample( Vector3 position ) {
+            var local = this.frame.local( position );
+
             return this.type switch {
-                DensityFunction.Type.Cuboid    => Cuboid.sample    ( position, this.origin, this.extents ),
-                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( position, this.origin, this.extents ),
+                DensityFunction.Type.Cuboid    => Cuboid.sample    ( local, this.extents ),
+                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( local, this.extents ),
                 _                              => throw new Exception( "Unknown density function type specified" )
             };
         }

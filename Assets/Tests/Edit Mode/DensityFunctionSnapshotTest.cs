@@ -6,14 +6,17 @@ using Combination   = DensityFunction.Combination;
 using MaterialIndex = SurfaceExtractor.MaterialIndex;
 using QEFSolverType = QEFSolver.Type;
 
-// the managed implementations contour snapshots of the volumes, which work out their origin and extents once instead of
-// on every sample. A snapshot has to sample exactly like its volume, or the contour would change
+// the managed implementations contour snapshots of the volumes, which work out their origin, rotation and extents once
+// instead of on every sample. A snapshot has to sample exactly like its volume, or the contour would change
 public class DensityFunctionSnapshotTest : ContouringTest {
 
+    // each shape unrotated and rotated, so that both ways of sampling are compared
     private static readonly Shape[] shapes = {
         cuboid    ( new Vector3(  0.1f,  -0.2f, 0.05f ), new Vector3( 0.3f, 0.2f,  0.25f ), Combination.Union,        MaterialIndex.Material0 ),
         ellipsoid ( new Vector3( -0.15f,  0.1f, 0.2f  ), new Vector3( 0.2f, 0.35f, 0.15f ), Combination.Subtraction,  MaterialIndex.Material1 ),
-        sphere    ( new Vector3(  0.05f,  0.0f, -0.1f ), 0.4f,                              Combination.Intersection, MaterialIndex.Material2 )
+        sphere    ( new Vector3(  0.05f,  0.0f, -0.1f ), 0.4f,                              Combination.Intersection, MaterialIndex.Material2 ),
+        cuboid    ( new Vector3(  0.1f,  -0.2f, 0.05f ), new Vector3( 0.3f, 0.2f,  0.25f ), Combination.Union,        MaterialIndex.Material0 ).rotated( Quaternion.Euler( 30.0f, -60.0f, 75.0f ) ),
+        ellipsoid ( new Vector3( -0.15f,  0.1f, 0.2f  ), new Vector3( 0.2f, 0.35f, 0.15f ), Combination.Subtraction,  MaterialIndex.Material1 ).rotated( Quaternion.AngleAxis( 45.0f, Vector3.one ) )
     };
 
     [Test]
@@ -50,6 +53,7 @@ public class DensityFunctionSnapshotTest : ContouringTest {
 
             Assert.AreEqual( volume.type,          snapshot.type,          "type" );
             Assert.AreEqual( volume.origin,        snapshot.origin,        "origin" );
+            Assert.AreEqual( volume.rotation,      snapshot.rotation,      "rotation" );
             Assert.AreEqual( volume.extents,       snapshot.extents,       "extents" );
             Assert.AreEqual( volume.combination,   snapshot.combination,   "combination" );
             Assert.AreEqual( volume.materialIndex, snapshot.materialIndex, "material" );

@@ -31,22 +31,30 @@ public class InteractiveEditor : MonoBehaviour {
 
         public DensityFunction.Type type          { get; }
         public Vector3              origin        { get; }
+        public Quaternion           rotation      { get; }
         public Vector3              extents       { get; }
         public Combination          combination   { get; set; }
         public MaterialIndex        materialIndex { get; set; }
 
-        public Shape( DensityFunction.Type type, Vector3 origin, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
+        private readonly DensityFunction.Frame frame;
+
+        public Shape( DensityFunction.Type type, Vector3 origin, Quaternion rotation, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
             this.type          = type;
             this.origin        = origin;
+            this.rotation      = rotation;
             this.extents       = extents;
             this.combination   = combination;
             this.materialIndex = materialIndex;
+
+            this.frame = new DensityFunction.Frame( origin, rotation );
         }
 
         public float sample( Vector3 position ) {
+            var local = this.frame.local( position );
+
             return this.type switch {
-                DensityFunction.Type.Cuboid    => Cuboid.sample    ( position, this.origin, this.extents ),
-                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( position, this.origin, this.extents ),
+                DensityFunction.Type.Cuboid    => Cuboid.sample    ( local, this.extents ),
+                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( local, this.extents ),
                 _                              => throw new Exception( "Unknown density function type specified" )
             };
         }
@@ -225,7 +233,8 @@ public class InteractiveEditor : MonoBehaviour {
 
         var ( position, size ) = this.placementOf( volume.transform );
 
-        shape = new Shape( volume.type, position, size.absolute( ) / 2, volume.combination, volume.materialIndex );
+        // the editor does not read rotations yet
+        shape = new Shape( volume.type, position, Quaternion.identity, size.absolute( ) / 2, volume.combination, volume.materialIndex );
         return true;
     }
 

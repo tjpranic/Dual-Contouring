@@ -18,16 +18,27 @@ public abstract class ContouringTest {
 
         public readonly DensityFunction.Type type;
         public readonly Vector3              origin;
+        public readonly Quaternion           rotation;
         public readonly Vector3              extents;
         public readonly Combination          combination;
         public readonly MaterialIndex        materialIndex;
 
-        public Shape( DensityFunction.Type type, Vector3 origin, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
+        public Shape( DensityFunction.Type type, Vector3 origin, Vector3 extents, Combination combination, MaterialIndex materialIndex )
+            : this( type, origin, Quaternion.identity, extents, combination, materialIndex ) {
+        }
+
+        public Shape( DensityFunction.Type type, Vector3 origin, Quaternion rotation, Vector3 extents, Combination combination, MaterialIndex materialIndex ) {
             this.type          = type;
             this.origin        = origin;
+            this.rotation      = rotation;
             this.extents       = extents;
             this.combination   = combination;
             this.materialIndex = materialIndex;
+        }
+
+        // the same shape with the given rotation
+        public Shape rotated( Quaternion rotation ) {
+            return new( this.type, this.origin, rotation, this.extents, this.combination, this.materialIndex );
         }
 
     }
@@ -95,9 +106,10 @@ public abstract class ContouringTest {
         foreach( var shape in shapes ) {
             var child = new GameObject( shape.type.ToString( ) ) { hideFlags = HideFlags.HideAndDontSave };
 
-            // a volume reads its origin and extents off its transform, relative to the scale of the voxelizer
+            // a volume reads its origin, rotation and extents off its transform, relative to the scale of the voxelizer
             child.transform.SetParent( gameObject.transform, false );
             child.transform.localPosition = shape.origin;
+            child.transform.localRotation = shape.rotation;
             child.transform.localScale    = shape.extents * 2;
 
             Volume volume = shape.type switch {

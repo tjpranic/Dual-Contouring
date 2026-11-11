@@ -26,6 +26,15 @@ public abstract class Volume : MonoBehaviour, DensityFunction {
         }
     }
 
+    // read the same way as the origin, off the local transform. Dividing by the voxelizer's scale keeps the angles of a
+    // turned volume only when that scale is the same on every axis. Under any other scale the volume would be sheared,
+    // which a rotation cannot describe, so the rotation is taken as it is
+    public Quaternion rotation {
+        get {
+            return this.transform.localRotation;
+        }
+    }
+
     [SerializeField( )]
     private Combination _combination = Combination.Union;
     public Combination combination {

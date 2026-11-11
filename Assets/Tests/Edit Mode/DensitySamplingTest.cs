@@ -28,6 +28,7 @@ public class DensitySamplingTest : ContouringTest {
 
         public DensityFunction.Type        type          { get { return DensityFunction.Type.Ellipsoid; } }
         public Vector3                     origin        { get { return new Vector3( 0.013f, -0.021f, 0.017f ); } }
+        public Quaternion                  rotation      { get { return Quaternion.identity; } }
         public Vector3                     extents       { get { return Vector3.one * radius; } }
         public DensityFunction.Combination combination   { get; set; } = DensityFunction.Combination.Union;
         public MaterialIndex               materialIndex { get; set; } = MaterialIndex.Material0;
