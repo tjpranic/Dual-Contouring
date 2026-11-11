@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for moving the managed implementation of each dual contouring algorithm out of its component file, the way the Burst implementations already are.
 
-**Status:** steps 0 and 1 done on 2026-11-11, step 2 next. The decisions were made on 2026-11-11.
+**Status:** steps 0 to 2 done on 2026-11-11, step 3 next. The decisions were made on 2026-11-11.
 
 ## Goal
 
@@ -98,7 +98,14 @@ Each step compiles, passes every test, gives identical output, and is reviewed b
    - Uniform: `ManagedImplementation` moves to `Managed/UniformDualContouring.Managed.cs`, the way `BurstImplementation` sits in `Burst/UniformDualContouring.Burst.cs`.
    - Adaptive: the debug classes, the `octree` field, the profiler markers, `voxelizeManaged`, `contourCell`, `contourFace`, `contourEdge` and `generateIndices` move to `Managed/AdaptiveDualContouring.Managed.cs`, the way `voxelizeBurst` sits in its Burst file. The `Axis` and `Position` aliases go with them.
    - Manifold: the same, plus `Vertex`, `Triangle` and the lookup helpers, to `Managed/ManifoldDualContouring.Managed.cs`.
-2. **Shared files (small).** `SurfaceExtractor`, `QEFSolver` and `DensityFunction` become partial interfaces, and their managed members move to `Managed/`.
+2. **Shared files (small). Done 2026-11-11.** `SurfaceExtractor`, `QEFSolver` and `DensityFunction` become partial interfaces, and their managed members move to `Managed/`.
+   - **Result:**
+     - `SurfaceExtractor.cs` went from 342 to 173 lines; `calculateMaterial` to `findHighestMaterialBit` moved to `Managed/SurfaceExtractor.Managed.cs`.
+     - `QEFSolver.cs` went from 48 to 7 lines and keeps only `QEFSolver.Type`.
+     - `DensityFunction.cs` went from 85 to 46 lines; `Snapshot` and `snapshot( )` moved. `Data` stays there until step 3.
+     - The moved-lines check found 249 lines moved unchanged, with only headers besides.
+     - The compile gave 0 errors and 0 warnings. Tests: edit mode 513/513, play mode 20/20. All 1,134 probe configurations match the baseline. No asset changed.
+     - No call site changed.
 3. **GPU (small).** `GPUImplementation` and `convert` move to `GPU/UniformDualContouring.GPU.cs`, and `DensityFunction.Data` to `GPU/DensityFunction.GPU.cs`.
 4. **Documents (small).** `README.md` gets a short code layout section naming the three folders and the rule. This plan is marked complete.
 
