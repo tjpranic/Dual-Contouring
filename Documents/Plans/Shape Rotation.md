@@ -2,11 +2,13 @@
 
 Plan written 2026-11-11 for making Cuboid and Ellipsoid honour their rotation in the Managed, Burst and GPU implementations.
 
-**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 2 are done. Until step 3, the GPU still contours shapes unrotated. Unrotated Burst contours are 3 to 5% slower; the user still has to decide whether that is acceptable (see Measurements).
+**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 3 are done: every implementation contours rotated shapes, and the interactive editor still passes no rotation. The user decided two things on 2026-11-12, both under Measurements and finding 7:
+- They accepted that unrotated Burst contours are 3 to 5% slower.
+- The GPU takes every shape through the rotation, and its unrotated meshes are a unit or two in the last place off from before.
 
 ## Goal
 
-A rotated shape is contoured rotated, by every algorithm and every implementation. Shapes without rotation give exactly the meshes they give today.
+A rotated shape is contoured rotated, by every algorithm and every implementation. Shapes without rotation give the meshes they give today: exactly with Managed and Burst, and on the GPU to within a unit or two in the last place (finding 7).
 
 ## What exists today
 
@@ -29,17 +31,29 @@ A rotated shape is contoured rotated, by every algorithm and every implementatio
    - Uniform and Adaptive Dual Contouring give such a cell one vertex. It lands off the cube, 0.01 to 0.015 at 16³, the two pieces meet in it, and the surface is closed but not manifold there.
    - On the cube turned 45° about a diagonal, this happens in 4 cells, the same 4 for both algorithms. Manifold Dual Contouring gives each piece a vertex of its own and is manifold.
    - This is the limit of one vertex per cell that the Manifold paper sets out to fix, not an error in the rotation. Unrotated cubes never produce such cells: their edges run along the grid's axes, so the inside corners of a cell always stay connected.
+7. **On the GPU, unrotated shapes come out a unit or two in the last place off from before.** Found in step 3.
+   - **The size of it,** on the four example models at 16³ against the shader from before step 3:
+     - densities differ by up to 2 units in the last place, at a quarter to a third of the corners;
+     - vertices move by up to 1.2e-6, two hundred-thousandths of a cell;
+     - every model keeps the same cells with vertices and the same vertex counts.
+     - The 32 GPU lines of the `Start` hashes change; those of Managed and Burst do not.
+   - **The cause** is the shader compiler, which arranges float operations as it sees fit. The rotation itself leaves an unrotated offset exact: its axes are exactly the grid's.
+     - The old shader with only the new struct gave exactly the old output, so the layout is not the cause.
+     - Every version with the rotation in the sampling code gave the same differences, the old sample functions kept verbatim behind a branch included.
+     - Only a version that gave unrotated shapes a path of their own, with no code shared with the rotated one, gave exactly the old output.
+   - **Decision:** the user decided on 2026-11-12 that the GPU has the rotated path only, and that the difference is accepted and noted here. The GPU is held to the CPU within 0.05 of a cell anyway, and was never bit for bit the same as the CPU.
 
 ## Design
 
 - **Interface:** `DensityFunction` gains `rotation`, the shape's rotation in voxelizer object space.
 - **Sampling:** the position is taken into the shape's own frame, by undoing the rotation about the origin, and the existing formula is applied there. The formulas themselves do not change.
-- **Unrotated shapes take today's path.** Each snapshot notes once whether its rotation is identity, and if so samples exactly as now. Existing meshes stay bit for bit the same, and unrotated shapes cost nothing extra.
+- **Unrotated shapes take today's path, in Managed and Burst.** Each snapshot notes once whether its rotation is identity, and if so samples exactly as now. Existing meshes stay bit for bit the same, and unrotated shapes cost nothing extra.
+- **The GPU takes every shape through the rotation.** An unrotated shape's rows are exactly the grid's axes, so its offset is unchanged, but the compiled shader is not the same as before (finding 7).
 - **Stored form:** each implementation's snapshot works the inverse rotation out once per contour and keeps it as three rows, so a rotated sample costs nine multiplications. The rows are written out the same way in C#, Burst and the shader.
   - The rows are worked out in one place, a small shared type in `DensityFunction.cs`, on the CPU. The managed snapshot, the Burst struct and the GPU upload all copy them from there, so the three implementations undo a rotation with the same numbers.
   - The rotation is normalised first. A zero quaternion, which a density function that never sets one would return, counts as no rotation.
   - Whether a shape is rotated is decided from the rows: it is not when they are exactly the three axes. Unity's `==` on quaternions is approximate, so it is not used.
-  - The GPU struct keeps that flag as a `uint`. A C# `bool` is copied as one byte but counted as four in the stride.
+  - The GPU struct has no flag, as the shader rotates every shape. A flag there would have to be a `uint`: a C# `bool` is copied as one byte but counted as four in the stride.
 - **Volumes:** `Volume.rotation` is the transform's local rotation, in line with how `origin` reads the local position.
 - **Interactive editor:** its shape conversion passes the rotation on, relative to the root.
   - For a direct child that is its local rotation, and the result is exact under any root scale.
@@ -52,7 +66,7 @@ A rotated shape is contoured rotated, by every algorithm and every implementatio
   - a rotated shape's density at a point equals the unrotated shape's density at the point rotated back;
   - a quarter turn about an axis equals the shape with two extents swapped, to rounding;
   - a sphere is unchanged by any rotation.
-- **Identity:** densities with an identity rotation are bit-identical to today's, in Managed and Burst, and the meshes of the existing configurations hash the same before and after.
+- **Identity:** densities with an identity rotation are bit-identical to today's, in Managed and Burst, and the meshes of the existing configurations hash the same before and after. On the GPU the hashes change (finding 7). From step 3 on, the GPU lines are compared with the hashes the GPU gave at the end of step 3.
 - **Parity:**
   - Burst against Managed on rotated shapes, within the tolerances already in use. The random shapes of `BurstTestSupport` get random rotations, from a generator of their own: the existing parity tests keep exactly the shapes they have, and rotated runs are added beside them.
   - GPU against CPU vertices on a rotated model, in `UniformDualContouringGPUTest`.
@@ -100,7 +114,20 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **The tests catch a mistake:** with Burst made to ignore the rotation again, every turned parity test, 18 of the 24 cube tests and the Burst normals test failed.
    - **Performance:** see Measurements.
    - **Verification:** edit mode 846 of 846, play mode 21 of 21, and the 416 `Start` hashes are identical.
-3. **GPU (small).** `DensityFunction.Data` and the shader struct and sample functions. GPU tests.
+3. **GPU (small).** `DensityFunction.Data` and the shader struct and sample functions. GPU tests. **Done 2026-11-12:**
+   - **`DensityFunction.Data`** copies the frame's rows. It is 72 bytes, and the shader's `struct DensityFunction` declares the same fields in the same order.
+   - **The shader:** `sampleDensityFunction` takes every shape into its frame with `toFrame`, which is `Frame.local` written out the same way without the flag. `sampleCuboid` and `sampleEllipsoid` then take a position in the shape's own frame.
+   - **A path of the unrotated shapes' own** made the GPU exact (finding 7). The user decided against it, and it was taken out again.
+   - **New tests:**
+     - `UniformDualContouringGPUTest`: GPU vertices against the CPU on `turnedShapes`; and the size of `Data`, both as the stride and as the bytes copied, against the shader's layout.
+     - The turned cube of `HermiteNormalTest` for the GPU.
+     - `surfaceOfTurnedShapesIsClosed` for all three Uniform implementations.
+   - **The tests catch a mistake:** with the GPU made to ignore the rotation, the vertex test on turned shapes and the GPU normals test failed.
+   - **Verification:**
+     - Edit mode 852 of 852, play mode 21 of 21.
+     - The 384 Managed and Burst lines of the `Start` hashes are identical.
+     - The 32 GPU lines changed, as finding 7 describes, with the same vertex counts. They are the baseline from here on.
+   - **Speed:** see Measurements.
 4. **Interactive editor (small).** Conversion, signature, outlines, warnings. Unity's rotate tool then works on shapes, with a live remesh for Burst and GPU.
 5. **Documentation (small).** README, and this plan marked complete.
 
@@ -156,7 +183,23 @@ So the plan's aim of staying within 5% is met only at the edge: 3 to 5% usually,
 | Adaptive | 128³ | 31.5 | 33.5 | +6% |
 | Manifold | 128³ | 29.5 | 32.7 | +11% |
 
+The user accepted the cost on 2026-11-12.
+
 SampleCorners is about 25% slower on turned shapes. Turned balls give the same meshes, except that Adaptive and Manifold at 128³ collapse slightly differently (2604 against 2586 vertices, 2371 against 2359). Turning a ball changes its densities in the last bits, and simplification decides some nodes right at the threshold.
+
+### GPU with rotation (step 3, 2026-11-12)
+
+The probe from the interactive editor's measurements times a whole remesh on the three balls, unrotated. Each figure is the mean of 5 remeshes. The shader and `Data` from before step 3 and those after were timed alternately, twice each, in one session:
+
+| Cells | Before (ms) | After (ms) |
+|---|---|---|
+| 64³ | 25.0, 29.3 | 28.2, 23.8 |
+| 128³ | 109.1, 110.7 | 119.4, 117.6 |
+
+At 64³ the difference is within the noise. At 128³ the new shader is consistently about 8% slower.
+- **The exact version measured the same.** The version that gave unrotated shapes a path of their own and skipped the rotation for them was timed the same way: 128³ went from 116.2 and 114.5 to 125.4 and 124.1 ms. So rotating every shape costs no more than skipping it.
+- **Not looked into:** what causes the 8%, whether the rotation or the larger struct each sample reads.
+- **Not timed:** the turned model on the GPU.
 
 ## Out of scope
 

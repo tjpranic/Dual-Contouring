@@ -91,12 +91,16 @@ Voxel createVoxel( float3 center, float3 size ) {
 #define DENSITY_FUNCTION_COMBINATION_INTERSECTION 1
 #define DENSITY_FUNCTION_COMBINATION_SUBTRACTION 2
 
+// DensityFunction.Data in C#, field for field. The axes are the rows of the inverse rotation
 struct DensityFunction {
     uint   type;
     uint   combination;
     uint   materialIndex;
     float3 origin;
     float3 extents;
+    float3 xAxis;
+    float3 yAxis;
+    float3 zAxis;
 };
 
 // element-wise multiply
@@ -114,31 +118,49 @@ float3 absolute( float3 v ) {
     return float3( abs( v.x ), abs( v.y ), abs( v.z ) );
 }
 
-float sampleCuboid( float3 position, in DensityFunction densityFunction ) {
-    float3 q = absolute( position - densityFunction.origin ) - densityFunction.extents;
+// DensityFunction.Frame.local in C#: the position relative to the origin, along the shape's own axes. Every shape is
+// taken into its frame. The axes of an unrotated shape are exactly those of the grid, which leave the offset as it is
+float3 toFrame( float3 position, in DensityFunction densityFunction ) {
+    float3 offset = position - densityFunction.origin;
+
+    return float3(
+        ( densityFunction.xAxis.x * offset.x ) + ( densityFunction.xAxis.y * offset.y ) + ( densityFunction.xAxis.z * offset.z ),
+        ( densityFunction.yAxis.x * offset.x ) + ( densityFunction.yAxis.y * offset.y ) + ( densityFunction.yAxis.z * offset.z ),
+        ( densityFunction.zAxis.x * offset.x ) + ( densityFunction.zAxis.y * offset.y ) + ( densityFunction.zAxis.z * offset.z )
+    );
+}
+
+// a cuboid centred on the origin of its own frame, at a position in that frame
+float sampleCuboid( float3 position, float3 extents ) {
+    float3 q = absolute( position ) - extents;
     return length( max( q, float3( 0.0f, 0.0f, 0.0f ) ) ) + min( max( q.x, max( q.y, q.z ) ), 0.0f );
 }
 
-float sampleEllipsoid( float3 position, in DensityFunction densityFunction ) {
+// an ellipsoid centred on the origin of its own frame, at a position in that frame
+float sampleEllipsoid( float3 position, float3 extents ) {
     // avoid division by zero
-    if( length( position - densityFunction.origin ) == 0.0f ) {
+    if( length( position ) == 0.0f ) {
         return -1.0f;
     }
 
-    float k0 = length( divide( ( position - densityFunction.origin ), densityFunction.extents ) );
-    float k1 = length( divide( ( position - densityFunction.origin ), multiply( densityFunction.extents, densityFunction.extents ) ) );
+    float k0 = length( divide( position, extents ) );
+    float k1 = length( divide( position, multiply( extents, extents ) ) );
 
     return k0 * ( k0 - 1.0f ) / k1;
 }
 
 // #include "Noise.hlsl"
 
+// the shader compiler arranges float operations as it sees fit, so unrotated shapes come out a unit or two in the last
+// place apart from the shader before shapes could rotate, which sampled them without the rotation
 float sampleDensityFunction( float3 position, in DensityFunction densityFunction ) {
+    float3 inFrame = toFrame( position, densityFunction );
+
     switch( densityFunction.type ) {
         case DENSITY_FUNCTION_TYPE_CUBOID:
-            return sampleCuboid( position, densityFunction );
+            return sampleCuboid( inFrame, densityFunction.extents );
         case DENSITY_FUNCTION_TYPE_ELLIPSOID:
-            return sampleEllipsoid( position, densityFunction )/*- ( ( ( perlinNoise( position * 1.0f ) + 1 ) / 2 ) * 0.25f )*/;
+            return sampleEllipsoid( inFrame, densityFunction.extents )/*- ( ( ( perlinNoise( position * 1.0f ) + 1 ) / 2 ) * 0.25f )*/;
         default:
             return 0.0f;
     }

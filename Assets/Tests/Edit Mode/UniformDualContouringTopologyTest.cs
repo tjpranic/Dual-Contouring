@@ -31,6 +31,15 @@ public class UniformDualContouringTopologyTest : TopologyTest {
         Assert.AreEqual( 0, topology.degenerateTriangles, $"degenerate triangles in: {topology}" );
     }
 
+    // edges of turned shapes can cross a cell so that its corners show two pieces of surface, which one vertex joins:
+    // the surface stays closed, but need not be manifold there (RotatedCubeTest)
+    [Test]
+    public void surfaceOfTurnedShapesIsClosed( [Values] ImplementationType implementation ) {
+        var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, turnedShapes ); // 16^3 cells
+
+        assertClosed( this.contour( voxelizer ) );
+    }
+
     [Test]
     public void materialBoundaryIsFollowed( [Values] ImplementationType implementation ) {
         var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, slabWithBand ); // 16^3 cells

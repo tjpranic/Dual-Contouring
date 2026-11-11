@@ -33,6 +33,23 @@ public class UniformDualContouringGPUTest : TopologyTest {
         this.assertVerticesMatchCPU( slabWithBand );
     }
 
+    [Test]
+    public void verticesMatchCPUOnTurnedShapes( ) {
+        this.assertVerticesMatchCPU( turnedShapes );
+    }
+
+    // the compute shader reads density functions with the layout of DensityFunction.Data, its buffer steps through them
+    // by the size Marshal gives, and SetData copies their bytes as they are in memory. All three have to agree, which a
+    // bool, one byte in memory and four to Marshal, would break
+    [Test]
+    public void densityFunctionsAreUploadedWithTheShadersLayout( ) {
+        // uint type, combination and material index, float3 origin, extents and three axes
+        const int shaderSize = ( 3 * 4 ) + ( 5 * 12 );
+
+        Assert.AreEqual( shaderSize, System.Runtime.InteropServices.Marshal.SizeOf( typeof( DensityFunction.Data ) ), "stride" );
+        Assert.AreEqual( shaderSize, Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<DensityFunction.Data>( ), "bytes copied" );
+    }
+
     private void assertVerticesMatchCPU( Shape[] shapes ) {
         var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.Managed, QEFSolverType.SVD, shapes );
 
