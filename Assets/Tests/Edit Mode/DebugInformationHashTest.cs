@@ -17,7 +17,8 @@ public class DebugInformationHashTest : TopologyTest {
         UniformBurst,
         Adaptive,
         AdaptiveBurst,
-        Manifold
+        Manifold,
+        ManifoldBurst
     }
 
     private static Voxelizer burst( Voxelizer voxelizer ) {
@@ -35,6 +36,7 @@ public class DebugInformationHashTest : TopologyTest {
             Algorithm.Adaptive       => this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ),
             Algorithm.AdaptiveBurst  => burst( this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
             Algorithm.Manifold       => this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ),
+            Algorithm.ManifoldBurst  => burst( this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
             _                        => throw new Exception( "Unknown algorithm specified" )
         };
     }

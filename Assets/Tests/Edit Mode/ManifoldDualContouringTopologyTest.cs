@@ -2,21 +2,23 @@
 using NUnit.Framework;
 using UnityEngine;
 
-using QEFSolverType = QEFSolver.Type;
+using ImplementationType = SurfaceExtractor.Implementation.Type;
+using QEFSolverType      = QEFSolver.Type;
 
-public class ManifoldDualContouringTopologyTest : TopologyTest {
+// the tests of the vertex clustering, which run for each implementation in the fixtures at the end
+public abstract class ManifoldDualContouringTopologyTest : TopologyTest {
 
     private const int resolution = 5; // 16^3 leaves
 
     // a 0.08 thick beam that runs through the whole grid along x, centered in one row of the 1 / 8 wide cells above the
     // leaves. Every cell it passes through, at any level of the octree, holds a tube that is open at both ends
-    private static readonly Shape[] beam = {
+    internal static readonly Shape[] beam = {
         cuboid( new Vector3( 0.0f, 0.0625f, 0.0625f ), new Vector3( 1.0f, 0.04f, 0.04f ) )
     };
 
     // two boxes with a gap of 0.03 between them, around the plane x = 0.0625 where two leaves meet. No leaf holds more
     // than one piece of surface, but every larger cell along the gap holds a face of either box
-    private static readonly Shape[] twoBoxes = {
+    internal static readonly Shape[] twoBoxes = {
         cuboid( new Vector3( -0.175f, 0.0f, 0.0f ), new Vector3( 0.225f, 0.4f, 0.4f ) ), // -0.4  to 0.05 along x
         cuboid( new Vector3(  0.24f,  0.0f, 0.0f ), new Vector3( 0.16f,  0.3f, 0.3f ) )  //  0.08 to 0.4  along x
     };
@@ -24,7 +26,7 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
     // a box with a thin finger standing on it. On its way up the finger passes through the 1 / 8 wide cells above the
     // leaves as a tube, which no vertex may stand in for. Every octant of the grid holds a disk: a corner of the box,
     // and in one of them the finger on top of it
-    private static readonly Shape[] boxWithFinger = {
+    internal static readonly Shape[] boxWithFinger = {
         cuboid( new Vector3( 0.0f,    0.0f,    -0.2f ), new Vector3( 0.4f,  0.4f,  0.23f ) ),
         cuboid( new Vector3( 0.1875f, 0.1875f,  0.2f ), new Vector3( 0.04f, 0.04f, 0.2f  ) )
     };
@@ -206,6 +208,22 @@ public class ManifoldDualContouringTopologyTest : TopologyTest {
 
         Assert.AreEqual( unclustered.vertices,  clustered.vertices,  $"clustering turned {unclustered} into {clustered}" );
         Assert.AreEqual( unclustered.triangles, clustered.triangles, $"clustering turned {unclustered} into {clustered}" );
+    }
+
+}
+
+public class ManagedManifoldDualContouringTopologyTest : ManifoldDualContouringTopologyTest {
+
+    public ManagedManifoldDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.Managed;
+    }
+
+}
+
+public class BurstManifoldDualContouringTopologyTest : ManifoldDualContouringTopologyTest {
+
+    public BurstManifoldDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.Burst;
     }
 
 }

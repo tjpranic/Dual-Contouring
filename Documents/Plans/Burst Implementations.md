@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** steps 0–2 done and reviewed 2026-11-11, tolerances accepted. Step 3 done 2026-11-11 and awaiting review. Steps 4–5 not started.
+**Status:** steps 0–3 done and reviewed 2026-11-11, tolerances accepted. Step 4 done 2026-11-11 and awaiting review. Step 5 not started.
 
 ## Goal
 
@@ -113,23 +113,29 @@ As built in step 3, in `Assets/Scripts/Burst/AdaptiveDualContouring.Burst.cs`. T
 
 ### Manifold (large)
 
-1. **Leaf pass:**
-   - Vertices are counted per leaf from the dual marching cubes table, then prefix-summed.
-   - The fill pass gives each vertex its QEF, normal, 12 intersection counts, Euler characteristic (1) and face flag (true), and gives each leaf its edge-to-vertex map.
-   - Material-boundary samples go to the vertices whose edges reach a corner of the boundary edge, or to all vertices when none does.
-   - Each vertex is solved with `solve`, not `placeVertex`, followed by surface correction.
-2. **Clustering:** one parallel job per level, bottom-up.
+As built in step 4, in `Assets/Scripts/Burst/ManifoldDualContouring.Burst.cs`. The octree struct that Adaptive and Manifold share moved to `Assets/Scripts/Burst/BurstOctree.cs`.
+
+1. **Vertices:** a node can hold several, so they live in arrays of their own, and each node has a start and a count into them.
+   - The leaves' vertices come first, then those of each level above in turn.
+   - A node above the leaves gets room for as many vertices as its children have between them, which is the most clusters it can end up with. Room is added one level at a time, once the level below has been clustered, so the arrays hold about as many vertices as there are.
+   - Each vertex keeps its position, normal, QEF, parent, collapsible flag, Euler characteristic, node and 12 intersection counts.
+2. **Leaf pass:**
+   - One byte per leaf records which corners are solid. The dual marching cubes table turns that into the leaf's vertex count and into the vertex of each intersected edge, so no edge-to-vertex map is stored.
+   - Each vertex gets the QEF of its edges in edge order, then the material boundaries that reach it, or all of them where none reaches any vertex.
+   - It is solved with `solve`, not `placeVertex`, followed by surface correction.
+3. **Clustering:** one parallel job per level, bottom-up.
    - **Members:** the children's vertices, in child order.
-   - **Union-find:** runs over the leaf pairs on the node's 12 internal faces, the explicit form of `findLeavesWithinFacePair`. In the full octree these pairs form a square block of leaves per face, and the leaves' vertices are followed through parent indices.
-   - **Output:** clusters are written into per-node slot ranges, sized from the children's vertex counts and found by prefix sum. Clusters come out in the order of their first member, which keeps the output deterministic.
+   - **Union-find:** runs over the leaf pairs on the node's 12 internal faces. In the full octree these are two squares of leaves per face. A leaf vertex is followed up its parents to the member it belongs to.
+   - **Output:** clusters come out in the order of their first member, and members add to their cluster in member order. That is the managed order, whatever the union-find did in between.
    - **Per-cluster values:** intersection counts, the Euler characteristic, the face condition and the QEF solve all follow the managed code.
-   - **Parallel writes:** each node writes only the parent indices of its own children's vertices, so the writes are safe under `[NativeDisableParallelForRestriction]`.
-3. **Collapse flags:** `collapsible` per vertex and `collapsed` per cell, set per level, bottom-up and in parallel.
-4. **Contour vertices:** `findContourVertex` runs per leaf vertex, in parallel.
-5. **Contouring:**
-   - A literal traversal port, including both skips: `contourCell` on a collapsed node, and `contourFace` when both nodes are collapsed.
-   - Triangles are de-duplicated in insertion order on their three indices, to match `Distinct()`.
-6. **Validation:** the debug-build check that every child vertex has a parent in the enclosing cell becomes a test.
+   - **Collapse flags:** `collapsible` per vertex and `collapsed` per node are set in the same job. The managed code does this in a pass of its own.
+   - **Parallel writes:** each node writes only its own vertices and the parents of its children's vertices.
+4. **Contouring:** a literal port of the traversal, recursive as in Adaptive, including both skips: `contourCell` on a collapsed node, and `contourFace` when both nodes are collapsed.
+   - The contour vertex of a leaf vertex is looked up when a polygon needs it, not in a pass of its own.
+   - Triangles are de-duplicated on their three indices in insertion order, to match `Distinct()`. Only triangles with a cluster vertex go through the set: a triangle between three leaf vertices can only come from one edge.
+5. **Validation:** the managed debug-build check, that every child vertex was clustered into a vertex of the enclosing node, is a job that also runs only in debug builds, which includes the editor.
+   - The plan first said it would become a test. A test can't see the vertex tree, and as an assertion in the editor it fails any test that trips it, which is how the managed check works too.
+6. **Debug data:** one job walks the leaves in the managed order and shows each contour vertex once, as a voxel in the node it was created in. Only leaves have hermite data on their edges, as in the managed implementation.
 
 ## Scenes
 
@@ -208,7 +214,16 @@ Each step is done tests first and reviewed before the next one starts.
      - `AdaptiveDualContouringBurstTest` has 53 parity tests: every model, both solvers, no, light and heavy simplification, with and without the topology test, four grid sizes, 128³ leaves, and debug data on request. The parity checks are shared in `BurstParity`.
      - Edit mode 363/363, play mode 20/20.
    - The parity vertex tolerance went from 1e-3 to 5e-3 leaf cells. A collapsed node's vertex comes from the QEFs of all its leaves added up, and the farthest apart seen was 0.002 leaves at 32³.
-4. **Manifold (large).** The same, with 11 scenes. Done on the same terms.
+4. **Manifold (large). Done 2026-11-11.** The same, with 11 scenes, done on the same terms, with two scenes that differ as explained below.
+   - Code: `Assets/Scripts/Burst/ManifoldDualContouring.Burst.cs` and the shared `Assets/Scripts/Burst/BurstOctree.cs`; `ManifoldDualContouring` is now partial. `BurstTables` gained the edges around each face.
+   - Scenes: `Assets/Scenes/Manifold Dual Contouring/Burst/`, 11 copies with `_implementation: 2`.
+     - 9 contour to the same triangles and voxel count as their managed scene, with vertices at most 0.0013 leaves apart.
+     - "Multiple Materials" and "Sphere" don't. Both use the default error threshold of 6e-12, which is below what the error formula can resolve. See the findings.
+   - Tests:
+     - `ManifoldDualContouringTopologyTest` is now an abstract base, and its 45 tests run as `ManagedManifoldDualContouringTopologyTest` and `BurstManifoldDualContouringTopologyTest`.
+     - `ManifoldDualContouringBurstTest` has 87 parity tests: every model, both solvers, four clustering thresholds, with and without the manifold criterion, four grid sizes, the special models of the topology tests, surface correction, 128³ leaves, and debug data on request.
+     - `SubMeshTest` and `DebugInformationHashTest` include Burst Manifold. `BurstTablesTest` checks the two new lookups.
+     - Edit mode 501/501, play mode 20/20.
 5. **Tuning.**
    - Float mode, batch sizes, and a parallel traversal if profiling calls for it.
    - Update `README.md` to list the Burst implementations and their package requirements.
@@ -283,6 +298,22 @@ Same model and settings as the baseline: simplification at 2e-4, topology-safe.
 - Up to 64³ the counts equal the managed ones.
 - At 128³, managed has 2,594 vertices and 5,240 triangles: a handful of nodes collapse in one implementation and not the other. That's the precision limit of the error test, explained in the findings below, not a difference in the algorithm.
 
+### Burst Manifold (step 4)
+
+Same model and settings as the baseline: clustering at 2e-4 with the manifold criterion on.
+
+| Leaves | Vertices | Triangles | Voxelize | Sample corners | Solve vertices | Cluster | Validate | Contour | Build mesh | Managed voxelize | Speed-up |
+|-------:|---------:|----------:|---------:|---------------:|---------------:|--------:|---------:|--------:|-----------:|-----------------:|---------:|
+| 16³    | 628      | 1,252     | 1.0      | 0.1            | 0.3            | 0.3     | 0.0      | 0.3     | 0.0        | 117.9            | ~120×    |
+| 32³    | 852      | 1,700     | 2.3      | 0.2            | 0.9            | 0.5     | 0.1      | 0.6     | 0.1        | 762.9            | ~330×    |
+| 64³    | 944      | 1,884     | 7.9      | 0.8            | 3.8            | 1.9     | 0.3      | 1.0     | 0.1        | 5,280.5          | ~670×    |
+| 128³   | 2,359    | 4,714     | 42.5     | 6.8            | 20.2           | 10.0    | 1.7      | 3.9     | 0.1        | 56,792.3         | ~1,340×  |
+
+- Up to 64³ the counts equal the managed ones.
+- At 128³, managed has 2,368 vertices and 4,732 triangles. 22 clusters 8 leaves across collapse in one implementation and not the other: 12 only in Burst, 10 only in managed. The managed errors of all 22 are between 0.99 and 1.18 times the threshold. That's the same precision limit as in Adaptive.
+- The mesh at 128³ is closed and manifold with no clustering, at 2e-4 and with the threshold out of the way. On the same model, plain dual contouring has 56 non-manifold edges.
+- Collapse flags are part of the Cluster stage. Validate only runs in the editor and in development builds.
+
 ### What the baseline shows
 
 - **Sampling corners is 45–69% of the time** in every algorithm. Every voxel samples its own 8 corners, and in the octrees every internal node samples its corners too. Each sample goes through LINQ and interface calls.
@@ -301,6 +332,14 @@ Same model and settings as the baseline: simplification at 2e-4, topology-safe.
   - Example at 128³ leaves on the three balls: a node whose error in double precision is 2.033e-4, 1.7% above the threshold, was collapsed by the managed code. Its mirror image, with the same samples, was kept by managed and collapsed by Burst.
   - At 128³ a few dozen nodes fall in that band at any threshold, so the two implementations differ by a few nodes at 1e-4 and 2e-4 alike. At 32³ there are about 150 candidates, and none fell in the band.
   - It would go away in both implementations if the QEF sums were kept relative to a local origin, such as the node's center, which keeps c small. That changes the numerics of the algorithm, so it is left for a decision.
+- **Found in step 4, not fixed: an error threshold of 6e-12, the default of Manifold, is below what the error formula can resolve.**
+  - The error is xᵀAx − 2xᵀb + c in float. With c (BtB) near 1, its smallest step is about 6e-8, ten thousand times the threshold. A cluster whose true error is zero comes out as 0 or as one such step, depending on the last bits of the sums. So at 6e-12, "below the threshold" means "rounded to exactly zero".
+  - Two of the 11 Manifold scenes use 6e-12 and get a different contour from Burst than from managed. Both contours are closed and manifold.
+    - **Sphere:** each of the 8 leaves on the diagonals is alone in its cluster, with three samples and BtB 0.75. Managed computes an error of 5.96e-8 (2⁻²⁴) and keeps the leaf vertex. Burst computes 0 and uses the cluster vertex, which is not moved onto the surface, so it sits 0.058 leaves from the managed one.
+    - **Multiple Materials:** two clusters half the grid across have an error of exactly 0 in managed. The same sums give 3.8e-6 with every operation rounded to float and 9.5e-7 in double. Burst keeps them apart: 52 vertices against 40.
+  - Neither implementation is the right one here. Managed's zero in Multiple Materials is as much a matter of rounding as Burst's zero on the sphere.
+  - The other 9 scenes have thresholds from 2e-4 up, or shapes whose sums are exact, and match.
+  - Keeping the QEF sums in double would make the error meaningful down to about 1e-15 in both implementations. A local origin alone would not: it shrinks the step to about 1e-9, still above 6e-12. Either changes the numerics of the managed solvers, so it is left for a decision, together with the local origin above.
 - **Found in step 3, expected:** plain dual contouring of the three balls has edges shared by more than two triangles from 64³ cells on, 40 at 64³ and 56 at 128³, in Uniform and in unsimplified Adaptive, managed and Burst alike. Where the balls meet in creases, a cell holds two sheets of surface and has only one vertex for both. That is what the manifold variant is for. The large-grid closedness tests use the sphere.
 - **Found in step 2, fixed 2026-11-11 at the user's request:** the debug corners and edges were slow to tell apart.
   - `Edge.GetHashCode` XORed the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid got the same hash: 31 hashes for the 104,544 edges of a 32³ grid. `Distinct()` over them took about 30 s.

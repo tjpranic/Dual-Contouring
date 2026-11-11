@@ -201,4 +201,42 @@ public class BurstTablesTest {
         }
     }
 
+    // the faces of a cell, which the manifold criterion counts intersections around: each is the four edges that lie
+    // in one of the six planes that bound the cell
+    [Test]
+    public void faceEdgesAreTheEdgesInEachPlaneOfACell( ) {
+        var planes = new HashSet<( int axis, int side )>( );
+
+        for( var face = 0; face < 6; ++face ) {
+            var edges   = Enumerable.Range( 0, 4 ).Select( ( index ) => BurstTables.lookupFaceEdge( face, index ) ).ToArray( );
+            var corners = edges.SelectMany( ( edge ) => new[] { BurstTables.lookupEdgeCorner( edge, 0 ), BurstTables.lookupEdgeCorner( edge, 1 ) } ).Distinct( ).ToArray( );
+
+            Assert.AreEqual( 4, edges.Distinct( ).Count( ), $"edges of face {face}" );
+            Assert.AreEqual( 4, corners.Length, $"corners of face {face}" );
+
+            // the axis along which all four corners are on the same side
+            var shared = Enumerable.Range( 0, 3 ).Where(
+                ( axis ) => corners.Select( ( corner ) => BurstTables.lookupCornerOffset( corner, axis ) ).Distinct( ).Count( ) == 1
+            ).ToArray( );
+
+            Assert.AreEqual( 1, shared.Length, $"planes the corners of face {face} lie in" );
+
+            planes.Add( ( shared[0], BurstTables.lookupCornerOffset( corners[0], shared[0] ) ) );
+        }
+
+        Assert.AreEqual( 6, planes.Count, "faces" );
+    }
+
+    [Test]
+    public void edgesShareACornerWhereTheyMeet( ) {
+        for( var edge = 0; edge < 12; ++edge ) {
+            for( var other = 0; other < 12; ++other ) {
+                var ends      = new[] { BurstTables.lookupEdgeCorner( edge,  0 ), BurstTables.lookupEdgeCorner( edge,  1 ) };
+                var otherEnds = new[] { BurstTables.lookupEdgeCorner( other, 0 ), BurstTables.lookupEdgeCorner( other, 1 ) };
+
+                Assert.AreEqual( ends.Intersect( otherEnds ).Any( ), BurstTables.edgesShareCorner( edge, other ), $"edges {edge} and {other}" );
+            }
+        }
+    }
+
 }

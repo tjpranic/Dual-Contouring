@@ -39,6 +39,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Manifold, ImplementationType.Managed ) => new[] { "BuildOctree", "SampleCorners", "SolveVertices", "Cluster", "Validate", "MarkCollapsed", "Contour", "BuildMesh", "DebugInformation" },
             ( Algorithm.Uniform,  ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
             ( Algorithm.Adaptive, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh" },
+            ( Algorithm.Manifold, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Cluster", "Validate", "Contour", "BuildMesh" },
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
 
@@ -55,12 +56,9 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Manifold, ImplementationType.Managed ) => 7,
             ( Algorithm.Uniform,  ImplementationType.Burst )   => 8,
             ( Algorithm.Adaptive, ImplementationType.Burst )   => 7,
+            ( Algorithm.Manifold, ImplementationType.Burst )   => 7,
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
-    }
-
-    private static bool exists( Algorithm algorithm, ImplementationType implementation ) {
-        return implementation == ImplementationType.Managed || ( algorithm != Algorithm.Manifold && implementation == ImplementationType.Burst );
     }
 
     // a uniform grid has 2^resolution cells across, an octree 2^(resolution - 1) leaves
@@ -106,9 +104,6 @@ public class ContouringPerformanceTest : TopologyTest {
         [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation,
         [Values( 4, 5, 6, 7, 8 )] int cellsExponent
     ) {
-        if( !exists( algorithm, implementation ) ) {
-            Assert.Ignore( $"{algorithm} dual contouring has no {implementation} implementation yet" );
-        }
         if( algorithm != Algorithm.Uniform && cellsExponent > 7 ) {
             Assert.Ignore( "an octree is at most 2^7 leaves across" );
         }

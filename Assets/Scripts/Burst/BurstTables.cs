@@ -24,12 +24,32 @@ public static class BurstTables {
         0, 3,  1, 2,  5, 4,  6, 7  // z axis
     };
 
+    // the edges around each of the six faces of a cell
+    private static readonly int[] faceEdges = {
+        0, 1,  8,  9, // minimum y
+        0, 2,  4,  5, // minimum z
+        1, 3,  6,  7, // maximum z
+        4, 6,  8, 10, // minimum x
+        5, 7,  9, 11, // maximum x
+        2, 3, 10, 11  // maximum y
+    };
+
     public static int lookupCornerOffset( int corner, int axis ) {
         return cornerOffsets[( corner * 3 ) + axis];
     }
 
     public static int lookupEdgeCorner( int edge, int end ) {
         return edgeCorners[( edge * 2 ) + end];
+    }
+
+    public static int lookupFaceEdge( int face, int index ) {
+        return faceEdges[( face * 4 ) + index];
+    }
+
+    // whether two edges of a cell end in the same corner
+    public static bool edgesShareCorner( int edge, int other ) {
+        return lookupEdgeCorner( edge, 0 ) == lookupEdgeCorner( other, 0 ) || lookupEdgeCorner( edge, 0 ) == lookupEdgeCorner( other, 1 ) ||
+               lookupEdgeCorner( edge, 1 ) == lookupEdgeCorner( other, 0 ) || lookupEdgeCorner( edge, 1 ) == lookupEdgeCorner( other, 1 );
     }
 
     // the corners of a cell as a set of bits, bit n for corner n, of the corners that are solid

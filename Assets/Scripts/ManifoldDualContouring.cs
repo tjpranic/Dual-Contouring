@@ -18,7 +18,7 @@ using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
-public class ManifoldDualContouring : Voxelizer {
+public partial class ManifoldDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {
 
@@ -293,7 +293,7 @@ public class ManifoldDualContouring : Voxelizer {
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
         return this.implementationType switch {
             ImplementationType.Managed => this.voxelizeManaged( densityFunctions ),
-            ImplementationType.Burst   => throw new NotImplementedException( "Manifold dual contouring has no Burst implementation yet" ),
+            ImplementationType.Burst   => this.voxelizeBurst( densityFunctions ),
             ImplementationType.GPU     => throw new NotSupportedException( "Manifold dual contouring has no GPU implementation" ),
             _                          => throw new Exception( "Unknown implementation type specified" )
         };
