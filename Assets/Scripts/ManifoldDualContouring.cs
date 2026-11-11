@@ -35,6 +35,10 @@ public partial class ManifoldDualContouring : Voxelizer {
         throw new NotImplementedException( );
     }
 
+    public override Mesh readMesh( GPUVoxelization voxelization ) {
+        throw new NotImplementedException( );
+    }
+
 }
 
 [CustomEditor( typeof( ManifoldDualContouring ) )]

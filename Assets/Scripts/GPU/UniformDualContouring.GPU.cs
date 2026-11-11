@@ -59,6 +59,9 @@ public partial class UniformDualContouring {
         private ComputeBuffer countsBuffer;
         private ComputeBuffer argumentsBuffer;
 
+        // the grid the voxel, edge, corner, vertex, normal and quad buffers were made for, -1 for none
+        private int bufferResolution = -1;
+
         private readonly int buildVoxelGridKernel;
         private readonly int sampleCornerDensitiesKernel;
         private readonly int calculateMinimizingVerticesKernel;
@@ -85,7 +88,7 @@ public partial class UniformDualContouring {
             IntersectionApproximation    intersectionApproximation,
             VertexNormals                vertexNormals
         ) {
-            this.createBuffers(
+            this.prepareBuffers(
                 densityFunctions,
                 resolution,
                 minimizerIterations,
@@ -159,7 +162,11 @@ public partial class UniformDualContouring {
             this.uniformDualContouring.Dispatch  ( this.contourKernel, resolution, resolution, resolution );
         }
 
-        private void createBuffers(
+        // the buffers are kept from one contour to the next, and made anew only when the grid or the number of density
+        // functions changes. Only what the kernels read before they write is uploaded: the configuration, the density
+        // functions and the two counters. buildVoxelGrid writes every voxel, corner and edge, and the vertices, normals
+        // and quads are appended. Every contour sets the constant buffer again, because all instances share the shader
+        private void prepareBuffers(
             IEnumerable<DensityFunction> densityFunctions,
             int                          resolution,
             int                          minimizerIterations,
@@ -168,12 +175,7 @@ public partial class UniformDualContouring {
             IntersectionApproximation    intersectionApproximation,
             VertexNormals                vertexNormals
         ) {
-            this.releaseBuffers( );
-
-            var voxelCount           = resolution * resolution * resolution;
-            var edgeCount            = voxelCount * SurfaceExtractor.Voxel.EdgeCount;
-            var cornerCount          = voxelCount * SurfaceExtractor.Voxel.CornerCount;
-            var densityFunctionCount = densityFunctions.Count( );
+            var densityFunctionData = densityFunctions.Select( ( densityFunction ) => new DensityFunction.Data( densityFunction ) ).ToArray( );
 
             var configuration = new Configuration(
                 resolution,
@@ -182,72 +184,118 @@ public partial class UniformDualContouring {
                 surfaceCorrectionIterations,
                 intersectionApproximation,
                 vertexNormals,
-                densityFunctionCount
+                densityFunctionData.Length
             );
 
-            var voxelData           = new Voxel.Data[voxelCount];
-            var edgeData            = new Edge.Data[edgeCount];
-            var cornerData          = new Corner.Data[cornerCount];
-            var densityFunctionData = new DensityFunction.Data[densityFunctionCount];
-            var verticesData        = new Vector3[voxelCount * 6];
-            var normalsData         = new Vector3[voxelCount * 6];
-            var quadsData           = new Quad.Data[voxelCount];
-            var countsData          = new int[2] { 0, 0 };
-            var argumentsData       = new int[4] { 0, 1, 0, 0 };
+            if( this.configurationBuffer == null ) {
+                this.configurationBuffer = new ComputeBuffer( 1, Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
+                this.countsBuffer        = new ComputeBuffer( 2, Marshal.SizeOf( typeof( int ) ) );
+                this.argumentsBuffer     = new ComputeBuffer( 4, Marshal.SizeOf( typeof( int ) ), ComputeBufferType.IndirectArguments );
 
-            for( var densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
-                densityFunctionData[densityFunctionIndex] = new( densityFunctions.ElementAt( densityFunctionIndex ) );
+                // how many separate pieces of the contour pass through a voxel, for every combination of solid corners
+                var vertexCountsData = new int[1 << SurfaceExtractor.Voxel.CornerCount];
+
+                for( var solidCorners = 0; solidCorners < vertexCountsData.Length; ++solidCorners ) {
+                    vertexCountsData[solidCorners] = DualMarchingCubes.lookupVertexEdges( solidCorners ).Length;
+                }
+
+                this.vertexCountsBuffer = new ComputeBuffer( vertexCountsData.Length, Marshal.SizeOf( typeof( int ) ) );
+                this.vertexCountsBuffer.SetData( vertexCountsData );
             }
 
-            // how many separate pieces of the contour pass through a voxel, for every combination of solid corners
-            var vertexCountsData = new int[1 << SurfaceExtractor.Voxel.CornerCount];
+            if( resolution != this.bufferResolution ) {
+                this.releaseGridBuffers( );
 
-            for( var solidCorners = 0; solidCorners < vertexCountsData.Length; ++solidCorners ) {
-                vertexCountsData[solidCorners] = DualMarchingCubes.lookupVertexEdges( solidCorners ).Length;
+                var voxelCount = resolution * resolution * resolution;
+
+                this.voxelsBuffer   = new ComputeBuffer( voxelCount,                                     Marshal.SizeOf( typeof( Voxel.Data ) ) );
+                this.edgesBuffer    = new ComputeBuffer( voxelCount * SurfaceExtractor.Voxel.EdgeCount,   Marshal.SizeOf( typeof( Edge.Data ) ) );
+                this.cornersBuffer  = new ComputeBuffer( voxelCount * SurfaceExtractor.Voxel.CornerCount, Marshal.SizeOf( typeof( Corner.Data ) ) );
+                this.verticesBuffer = new ComputeBuffer( voxelCount * 6,                                 Marshal.SizeOf( typeof( Vector3 ) ) );
+                this.normalsBuffer  = new ComputeBuffer( voxelCount * 6,                                 Marshal.SizeOf( typeof( Vector3 ) ) );
+                this.quadsBuffer    = new ComputeBuffer( voxelCount,                                     Marshal.SizeOf( typeof( Quad.Data ) ) );
+
+                this.bufferResolution = resolution;
             }
 
-            this.configurationBuffer    = new ComputeBuffer( 1,                          Marshal.SizeOf( typeof( Configuration ) ), ComputeBufferType.Constant );
-            this.voxelsBuffer           = new ComputeBuffer( voxelData.Length,           Marshal.SizeOf( typeof( Voxel.Data ) ) );
-            this.edgesBuffer            = new ComputeBuffer( edgeData.Length,            Marshal.SizeOf( typeof( Edge.Data ) ) );
-            this.cornersBuffer          = new ComputeBuffer( cornerData.Length,          Marshal.SizeOf( typeof( Corner.Data ) ) );
-            this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionData.Length, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
-            this.vertexCountsBuffer     = new ComputeBuffer( vertexCountsData.Length,    Marshal.SizeOf( typeof( int ) ) );
-            this.verticesBuffer         = new ComputeBuffer( verticesData.Length,        Marshal.SizeOf( typeof( Vector3 ) ) );
-            this.normalsBuffer          = new ComputeBuffer( normalsData.Length,         Marshal.SizeOf( typeof( Vector3 ) ) );
-            this.quadsBuffer            = new ComputeBuffer( quadsData.Length,           Marshal.SizeOf( typeof( Quad.Data ) ) );
-            this.countsBuffer           = new ComputeBuffer( countsData.Length,          Marshal.SizeOf( typeof( int ) ) );
-            this.argumentsBuffer        = new ComputeBuffer( argumentsData.Length,       Marshal.SizeOf( typeof( int ) ), ComputeBufferType.IndirectArguments );
+            // a compute buffer holds at least one element, so with no density functions it holds one that is never read
+            var densityFunctionCapacity = Mathf.Max( 1, densityFunctionData.Length );
+
+            if( this.densityFunctionsBuffer == null || this.densityFunctionsBuffer.count != densityFunctionCapacity ) {
+                this.densityFunctionsBuffer?.Release( );
+                this.densityFunctionsBuffer = new ComputeBuffer( densityFunctionCapacity, Marshal.SizeOf( typeof( DensityFunction.Data ) ) );
+            }
 
             var configurationConstantBuffer = Shader.PropertyToID( "Configuration" );
             this.uniformDualContouring.SetConstantBuffer( configurationConstantBuffer, this.configurationBuffer, 0, Marshal.SizeOf( typeof( Configuration ) ) );
 
-            this.configurationBuffer.SetData    ( new Configuration[] { configuration } );
-            this.voxelsBuffer.SetData           ( voxelData );
-            this.edgesBuffer.SetData            ( edgeData );
-            this.cornersBuffer.SetData          ( cornerData );
-            this.densityFunctionsBuffer.SetData ( densityFunctionData );
-            this.vertexCountsBuffer.SetData     ( vertexCountsData );
-            this.verticesBuffer.SetData         ( verticesData );
-            this.normalsBuffer.SetData          ( normalsData );
-            this.quadsBuffer.SetData            ( quadsData );
-            this.countsBuffer.SetData           ( countsData );
-            this.argumentsBuffer.SetData        ( argumentsData );
+            this.configurationBuffer.SetData ( new Configuration[] { configuration } );
+            this.countsBuffer.SetData        ( new int[] { 0, 0 } );
+            this.argumentsBuffer.SetData     ( new int[] { 0, 1, 0, 0 } );
+
+            if( densityFunctionData.Length > 0 ) {
+                this.densityFunctionsBuffer.SetData( densityFunctionData );
+            }
         }
 
-        public void releaseBuffers( ) {
-            this.configurationBuffer?.Release( );
+        private void releaseGridBuffers( ) {
             this.voxelsBuffer?.Release( );
             this.edgesBuffer?.Release( );
             this.cornersBuffer?.Release( );
-            this.densityFunctionsBuffer?.Release( );
-            this.vertexCountsBuffer?.Release( );
             this.verticesBuffer?.Release( );
             this.normalsBuffer?.Release( );
             this.quadsBuffer?.Release( );
-            this.countsBuffer?.Release( );
-            this.argumentsBuffer?.Release( );
+
+            this.voxelsBuffer   = null;
+            this.edgesBuffer    = null;
+            this.cornersBuffer  = null;
+            this.verticesBuffer = null;
+            this.normalsBuffer  = null;
+            this.quadsBuffer    = null;
+
+            this.bufferResolution = -1;
         }
 
+        // the next contour makes them all anew
+        public void releaseBuffers( ) {
+            this.releaseGridBuffers( );
+
+            this.configurationBuffer?.Release( );
+            this.densityFunctionsBuffer?.Release( );
+            this.vertexCountsBuffer?.Release( );
+            this.countsBuffer?.Release( );
+            this.argumentsBuffer?.Release( );
+
+            this.configurationBuffer    = null;
+            this.densityFunctionsBuffer = null;
+            this.vertexCountsBuffer     = null;
+            this.countsBuffer           = null;
+            this.argumentsBuffer        = null;
+        }
+
+    }
+
+    // reads the two counters first, then only as many vertices, normals and quads as the contour wrote
+    public override Mesh readMesh( GPUVoxelization voxelization ) {
+        var countsData = new int[2];
+
+        voxelization.counts.GetData( countsData );
+
+        var verticesData = new Vector3[countsData[0]];
+        var normalsData  = new Vector3[countsData[0]];
+        var quadsData    = new Quad.Data[countsData[1]];
+
+        voxelization.vertices.GetData ( verticesData, 0, 0, countsData[0] );
+        voxelization.normals.GetData  ( normalsData,  0, 0, countsData[0] );
+        voxelization.quads.GetData    ( quadsData,    0, 0, countsData[1] );
+
+        var quads = quadsData.Select( ( quadData ) => new Quad( quadData ) );
+
+        return SurfaceExtractor.createMesh(
+            verticesData,
+            normalsData,
+            quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
+        );
     }
 
     public override CPUVoxelization convert( GPUVoxelization voxelization ) {

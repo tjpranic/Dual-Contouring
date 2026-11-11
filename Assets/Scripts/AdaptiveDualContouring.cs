@@ -38,6 +38,10 @@ public partial class AdaptiveDualContouring : Voxelizer {
         throw new NotImplementedException( );
     }
 
+    public override Mesh readMesh( GPUVoxelization voxelization ) {
+        throw new NotImplementedException( );
+    }
+
 }
 
 [CustomEditor( typeof( AdaptiveDualContouring ) )]

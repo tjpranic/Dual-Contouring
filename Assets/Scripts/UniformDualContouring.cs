@@ -299,6 +299,7 @@ public partial class UniformDualContouring : Voxelizer {
 
     }
 
+    // each is made the first time it is used, so the voxelizer can contour without having been started
     private ManagedImplementation managedImplementation;
     private GPUImplementation     gpuImplementation;
     private BurstImplementation   burstImplementation;
@@ -307,9 +308,9 @@ public partial class UniformDualContouring : Voxelizer {
     protected override Implementation implementation {
         get {
             return this.implementationType switch {
-                ImplementationType.Managed => this.managedImplementation,
-                ImplementationType.GPU     => this.gpuImplementation,
-                ImplementationType.Burst   => this.burstImplementation,
+                ImplementationType.Managed => this.managedImplementation ??= new ManagedImplementation( ),
+                ImplementationType.GPU     => this.gpuImplementation     ??= new GPUImplementation( ),
+                ImplementationType.Burst   => this.burstImplementation   ??= new BurstImplementation( ),
                 _                          => throw new Exception( "Unknown implementation type specified" )
             };
         }
@@ -328,16 +329,12 @@ public partial class UniformDualContouring : Voxelizer {
     public bool testing = false;
 
     public override void Start( ) {
-        this.managedImplementation = new ManagedImplementation( );
-        this.gpuImplementation     = new GPUImplementation( );
-        this.burstImplementation   = new BurstImplementation( );
-
         if( !testing ) {
             base.Start( );
         }
     }
 
-    public override void OnDestroy( ) {
+    public override void release( ) {
         this.gpuImplementation?.releaseBuffers( );
     }
 
@@ -345,11 +342,13 @@ public partial class UniformDualContouring : Voxelizer {
         // non-power-of-2 values don't voxelize well
         var resolution = ( int )Mathf.Pow( 2, this.resolution );
 
-        if( this.burstImplementation != null ) {
-            this.burstImplementation.debugInformation = this.debugInformationWanted;
+        var implementation = this.implementation;
+
+        if( implementation is BurstImplementation burstImplementation ) {
+            burstImplementation.debugInformation = this.debugInformationWanted;
         }
 
-        return this.implementation.voxelize(
+        return implementation.voxelize(
             densityFunctions,
             resolution,
             this.minimizerIterations,

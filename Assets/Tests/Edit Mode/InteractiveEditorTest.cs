@@ -1,0 +1,508 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using NUnit.Framework;
+using UnityEngine;
+
+using Object             = UnityEngine.Object;
+using Algorithm          = InteractiveEditor.Algorithm;
+using Shape              = InteractiveEditor.Shape;
+using Combination        = DensityFunction.Combination;
+using MaterialIndex      = SurfaceExtractor.MaterialIndex;
+using ImplementationType = SurfaceExtractor.Implementation.Type;
+using VertexNormals      = SurfaceExtractor.VertexNormals;
+using QEFSolverType      = QEFSolver.Type;
+using Approximation      = SurfaceExtractor.IntersectionApproximation;
+
+// the interactive editor in edit mode: choosing a voxelizer, reading shapes off their transforms, contouring, and what
+// it does when it is enabled, disabled and destroyed. Everything is made hidden and is not saved to the open scene
+public class InteractiveEditorTest {
+
+    public readonly struct Variant {
+
+        public readonly Algorithm          algorithm;
+        public readonly ImplementationType implementation;
+
+        public Variant( Algorithm algorithm, ImplementationType implementation ) {
+            this.algorithm      = algorithm;
+            this.implementation = implementation;
+        }
+
+        public override string ToString( ) {
+            return $"{this.algorithm} {this.implementation}";
+        }
+
+    }
+
+    private static readonly Variant[] variants = {
+        new( Algorithm.Uniform,  ImplementationType.Managed ),
+        new( Algorithm.Uniform,  ImplementationType.Burst ),
+        new( Algorithm.Uniform,  ImplementationType.GPU ),
+        new( Algorithm.Adaptive, ImplementationType.Managed ),
+        new( Algorithm.Adaptive, ImplementationType.Burst ),
+        new( Algorithm.Manifold, ImplementationType.Managed ),
+        new( Algorithm.Manifold, ImplementationType.Burst )
+    };
+
+    // the variants that contour by themselves
+    private static readonly Variant[] automaticVariants = variants.Where( ( variant ) => variant.implementation != ImplementationType.Managed ).ToArray( );
+
+    private readonly List<Object> created = new( );
+
+    [TearDown]
+    public void tearDown( ) {
+        // destroying the editor clears its contour and releases the compute buffers
+        foreach( var item in this.created ) {
+            Object.DestroyImmediate( item );
+        }
+        this.created.Clear( );
+    }
+
+    private InteractiveEditor createEditor( float scale = 1.0f ) {
+        var gameObject = new GameObject( "Interactive Editor" ) { hideFlags = HideFlags.HideAndDontSave };
+
+        this.created.Add( gameObject );
+
+        gameObject.transform.localScale = Vector3.one * scale;
+
+        return gameObject.AddComponent<InteractiveEditor>( );
+    }
+
+    private static Transform createGroup( Transform parent, Vector3 position, float scale ) {
+        var group = new GameObject( "Group" ) { hideFlags = HideFlags.HideAndDontSave };
+
+        group.transform.SetParent( parent, false );
+        group.transform.localPosition = position;
+        group.transform.localScale    = Vector3.one * scale;
+
+        return group.transform;
+    }
+
+    private static Volume addShape<T>( Transform parent, Vector3 position, Vector3 scale, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) where T : Volume {
+        var shape = new GameObject( typeof( T ).Name ) { hideFlags = HideFlags.HideAndDontSave };
+
+        shape.transform.SetParent( parent, false );
+        shape.transform.localPosition = position;
+        shape.transform.localScale    = scale;
+
+        var volume = shape.AddComponent<T>( );
+
+        volume.combination   = combination;
+        volume.materialIndex = materialIndex;
+
+        return volume;
+    }
+
+    // a rounded cube with a bite out of one corner and a ball of a second material sitting in the bite, the model of
+    // the scene
+    private static void addStarterModel( Transform parent ) {
+        addShape<Cuboid>    ( parent, Vector3.zero,                         Vector3.one * 0.6f );
+        addShape<Ellipsoid> ( parent, Vector3.zero,                         Vector3.one * 0.8f, Combination.Intersection );
+        addShape<Ellipsoid> ( parent, new Vector3( 0.25f, 0.25f, -0.25f ),  Vector3.one * 0.6f, Combination.Subtraction );
+        addShape<Ellipsoid> ( parent, new Vector3( 0.12f, 0.12f, -0.12f ),  Vector3.one * 0.24f, Combination.Union, MaterialIndex.Material1 );
+    }
+
+    private static Mesh shown( InteractiveEditor editor ) {
+        return editor.GetComponent<MeshFilter>( ).sharedMesh;
+    }
+
+    private static InteractiveEditor configure( InteractiveEditor editor, Variant variant ) {
+        editor.select( variant.algorithm );
+
+        editor.voxelizer.implementationType = variant.implementation;
+        editor.voxelizer.resolution         = variant.algorithm == Algorithm.Uniform ? 4 : 5;
+
+        return editor;
+    }
+
+    [Test]
+    public void addingTheEditorAddsItsVoxelizersAndMeshFilter( ) {
+        var editor = this.createEditor( );
+
+        Assert.IsNotNull( editor.GetComponent<UniformDualContouring>( ) );
+        Assert.IsNotNull( editor.GetComponent<AdaptiveDualContouring>( ) );
+        Assert.IsNotNull( editor.GetComponent<ManifoldDualContouring>( ) );
+        Assert.IsNotNull( editor.GetComponent<MeshFilter>( ) );
+        Assert.AreEqual( Algorithm.Uniform, editor.algorithm );
+    }
+
+    [Test]
+    public void onlyTheSelectedVoxelizerShowsInTheInspector( [Values] Algorithm algorithm ) {
+        var editor = this.createEditor( );
+
+        editor.select( algorithm );
+
+        foreach( Algorithm other in Enum.GetValues( typeof( Algorithm ) ) ) {
+            var hidden = ( editor.voxelizerOf( other ).hideFlags & HideFlags.HideInInspector ) == HideFlags.HideInInspector;
+
+            Assert.AreEqual( other != algorithm, hidden, other.ToString( ) );
+        }
+
+        Assert.AreSame( editor.voxelizerOf( algorithm ), editor.voxelizer );
+    }
+
+    [Test]
+    public void selectingAnAlgorithmCarriesTheCommonSettingsOver( [Values( Algorithm.Adaptive, Algorithm.Manifold )] Algorithm algorithm ) {
+        var editor  = this.createEditor( );
+        var uniform = editor.voxelizer;
+
+        uniform.resolution                  = 5;
+        uniform.minimizerIterations         = 3;
+        uniform.binarySearchIterations      = 9;
+        uniform.surfaceCorrectionIterations = 2;
+        uniform.implementationType          = ImplementationType.Burst;
+        uniform.qefSolverType               = QEFSolverType.Simple;
+        uniform.intersectionApproximation   = Approximation.LinearInterpolation;
+        uniform.vertexNormals               = VertexNormals.Split;
+        uniform.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
+
+        editor.select( algorithm );
+
+        var octree = editor.voxelizer;
+
+        // 2^5 cells across is 2^5 leaves across, at resolution 6
+        Assert.AreEqual( 6,                                              octree.resolution );
+        Assert.AreEqual( 3,                                              octree.minimizerIterations );
+        Assert.AreEqual( 9,                                              octree.binarySearchIterations );
+        Assert.AreEqual( 2,                                              octree.surfaceCorrectionIterations );
+        Assert.AreEqual( ImplementationType.Burst,                       octree.implementationType );
+        Assert.AreEqual( QEFSolverType.Simple,                           octree.qefSolverType );
+        Assert.AreEqual( Approximation.LinearInterpolation,              octree.intersectionApproximation );
+        Assert.AreEqual( VertexNormals.Split,                            octree.vertexNormals );
+        Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  octree.debugFlags );
+
+        editor.select( Algorithm.Uniform );
+
+        Assert.AreEqual( 5, uniform.resolution, "back to the same number of cells" );
+    }
+
+    [Test]
+    public void selectingAnOctreeTurnsGPUIntoBurst( [Values( Algorithm.Adaptive, Algorithm.Manifold )] Algorithm algorithm ) {
+        var editor = this.createEditor( );
+
+        editor.voxelizer.implementationType = ImplementationType.GPU;
+
+        editor.select( algorithm );
+
+        Assert.AreEqual( ImplementationType.Burst, editor.voxelizer.implementationType );
+    }
+
+    [Test]
+    public void selectingKeepsWhatOnlyOneAlgorithmHas( ) {
+        var editor   = this.createEditor( );
+        var adaptive = editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring;
+        var manifold = editor.voxelizerOf( Algorithm.Manifold ) as ManifoldDualContouring;
+
+        adaptive.simplification  = true;
+        adaptive.errorThreshold  = 0.125f;
+        adaptive.topologySafe    = false;
+        manifold.errorThreshold  = 0.25f;
+        manifold.enforceManifold = false;
+
+        editor.select( Algorithm.Adaptive );
+        editor.select( Algorithm.Manifold );
+        editor.select( Algorithm.Uniform );
+
+        Assert.IsTrue  ( adaptive.simplification );
+        Assert.AreEqual( 0.125f, adaptive.errorThreshold );
+        Assert.IsFalse ( adaptive.topologySafe );
+        Assert.AreEqual( 0.25f, manifold.errorThreshold );
+        Assert.IsFalse ( manifold.enforceManifold );
+    }
+
+    // an octree of resolution 8 has 128^3 leaves, a uniform grid of resolution 2 has 4^3 cells: the slider's ends
+    [Test]
+    public void resolutionStaysOnTheSlider( ) {
+        var editor = this.createEditor( );
+
+        editor.voxelizer.resolution = 8;
+        editor.select( Algorithm.Adaptive );
+
+        Assert.AreEqual( 8, editor.voxelizer.resolution );
+
+        editor.voxelizer.resolution = 2;
+        editor.select( Algorithm.Uniform );
+
+        Assert.AreEqual( 2, editor.voxelizer.resolution );
+    }
+
+    [Test]
+    public void aShapeIsWhereItsTransformPutsIt( ) {
+        var editor = this.createEditor( 5.0f );
+
+        addShape<Cuboid>( editor.transform, new Vector3( 0.25f, -0.125f, 0.0625f ), new Vector3( 0.5f, 0.25f, 0.125f ), Combination.Subtraction, MaterialIndex.Material1 );
+
+        var shape = editor.shapes( ).Single( ) as Shape;
+
+        Assert.AreEqual( DensityFunction.Type.Cuboid,                 shape.type );
+        Assert.AreEqual( new Vector3( 0.25f, -0.125f, 0.0625f ),      shape.origin );
+        Assert.AreEqual( new Vector3( 0.25f, 0.125f, 0.0625f ),       shape.extents );
+        Assert.AreEqual( Combination.Subtraction,                     shape.combination );
+        Assert.AreEqual( MaterialIndex.Material1,                     shape.materialIndex );
+    }
+
+    [Test]
+    public void groupsMoveAndScaleTheShapesInThem( ) {
+        var editor = this.createEditor( 5.0f );
+        var outer  = createGroup( editor.transform, new Vector3( 0.25f, 0.0f, 0.0f ), 0.5f );
+        var inner  = createGroup( outer,            new Vector3( 0.0f, 0.5f, 0.0f ),  2.0f );
+
+        addShape<Ellipsoid>( inner, new Vector3( 0.25f, 0.0f, 0.0f ), Vector3.one * 0.5f );
+
+        var shape = editor.shapes( ).Single( );
+
+        // inner: (0, 0.5, 0) + 2 (0.25, 0, 0) = (0.5, 0.5, 0), size 1. Outer: (0.25, 0, 0) + 0.5 (0.5, 0.5, 0)
+        Assert.AreEqual( new Vector3( 0.5f, 0.25f, 0.0f ), shape.origin );
+        Assert.AreEqual( Vector3.one * 0.25f,              shape.extents );
+    }
+
+    [Test]
+    public void aRotatedGroupTurnsWhereItsShapesAre( ) {
+        var editor = this.createEditor( );
+        var group  = createGroup( editor.transform, Vector3.zero, 1.0f );
+
+        group.localRotation = Quaternion.Euler( 0.0f, 90.0f, 0.0f );
+
+        addShape<Ellipsoid>( group, new Vector3( 0.25f, 0.0f, 0.0f ), Vector3.one * 0.5f );
+
+        var origin = editor.shapes( ).Single( ).origin;
+
+        Assert.That( Vector3.Distance( new Vector3( 0.0f, 0.0f, -0.25f ), origin ), Is.LessThan( 1e-6f ), origin.ToString( "F6" ) );
+    }
+
+    [Test]
+    public void aNegativeScaleGivesAPositiveSize( ) {
+        var editor = this.createEditor( );
+
+        addShape<Cuboid>( editor.transform, Vector3.zero, new Vector3( -0.5f, 0.5f, -0.25f ) );
+
+        Assert.AreEqual( new Vector3( 0.25f, 0.25f, 0.125f ), editor.shapes( ).Single( ).extents );
+    }
+
+    [Test]
+    public void shapesAreInHierarchyOrder( ) {
+        var editor = this.createEditor( );
+
+        var first  = addShape<Cuboid>    ( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Union );
+        var second = addShape<Ellipsoid> ( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Subtraction );
+        var third  = addShape<Cuboid>    ( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Intersection );
+
+        CollectionAssert.AreEqual(
+            new[] { Combination.Union, Combination.Subtraction, Combination.Intersection },
+            editor.shapes( ).Select( ( shape ) => shape.combination )
+        );
+
+        third.transform.SetSiblingIndex( 0 );
+
+        CollectionAssert.AreEqual(
+            new[] { Combination.Intersection, Combination.Union, Combination.Subtraction },
+            editor.shapes( ).Select( ( shape ) => shape.combination )
+        );
+    }
+
+    [Test]
+    public void inactiveDisabledAndOwnShapesAreLeftOut( ) {
+        var editor = this.createEditor( );
+
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Union );
+
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Subtraction ).gameObject.SetActive( false );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Subtraction ).enabled = false;
+
+        var inactiveGroup = createGroup( editor.transform, Vector3.zero, 1.0f );
+        addShape<Cuboid>( inactiveGroup, Vector3.zero, Vector3.one * 0.5f, Combination.Subtraction );
+        inactiveGroup.gameObject.SetActive( false );
+
+        editor.gameObject.AddComponent<Ellipsoid>( ).combination = Combination.Subtraction;
+
+        CollectionAssert.AreEqual( new[] { Combination.Union }, editor.shapes( ).Select( ( shape ) => shape.combination ) );
+    }
+
+    // with its object at scale 1, the editor's reading of the transforms is the volumes' reading
+    [Test]
+    public void atScaleOneTheContourIsThatOfTheVolumes( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( ), variant );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = Object.Instantiate( shown( editor ) );
+
+        try {
+            editor.voxelizer.contour( drawFromGPU: false );
+
+            MeshComparison.assertSameTriangles( shown( editor ), mesh );
+        }
+        finally {
+            Object.DestroyImmediate( mesh );
+        }
+    }
+
+    [Test]
+    public void theScaleOfTheEditorDoesNotChangeTheContour( ) {
+        var small = configure( this.createEditor( 1.0f ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+        var large = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( small.transform );
+        addStarterModel( large.transform );
+
+        small.contour( );
+        large.contour( );
+
+        MeshComparison.assertSameTriangles( shown( small ), shown( large ) );
+    }
+
+    [Test]
+    public void everyVariantContoursTheStarterModel( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( 5.0f ), variant );
+
+        addStarterModel( editor.transform );
+
+        var statistics = editor.contour( );
+        var mesh       = shown( editor );
+
+        Assert.Greater( mesh.vertexCount, 0 );
+        Assert.AreEqual( 2, mesh.subMeshCount, "both materials show" );
+        Assert.Greater( mesh.GetIndexCount( 0 ), 0 );
+        Assert.Greater( mesh.GetIndexCount( 1 ), 0 );
+
+        Assert.AreEqual( mesh.vertexCount, statistics.vertexCount );
+        Assert.AreEqual( statistics.milliseconds, editor.lastContour?.milliseconds );
+    }
+
+    // Unity draws every material past the last sub-mesh over the last sub-mesh, so without a sub-mesh of its own the
+    // last of the renderer's materials would colour the surface of the highest material on it
+    [Test]
+    public void everyMaterialOfTheRendererHasASubMesh( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( ), variant );
+
+        addStarterModel( editor.transform );
+
+        var material = new Material( Shader.Find( "Universal Render Pipeline/Lit" ) );
+        this.created.Add( material );
+
+        editor.GetComponent<MeshRenderer>( ).sharedMaterials = new[] { material, material, material, material };
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        Assert.AreEqual( 4, mesh.subMeshCount );
+        Assert.Greater( mesh.GetIndexCount( 0 ), 0 );
+        Assert.Greater( mesh.GetIndexCount( 1 ), 0 );
+        Assert.AreEqual( 0, mesh.GetIndexCount( 2 ) );
+        Assert.AreEqual( 0, mesh.GetIndexCount( 3 ) );
+
+        // the triangles stay those of the contour
+        var statistics = editor.lastContour.Value;
+
+        Assert.AreEqual( statistics.triangleCount, ( int )( mesh.GetIndexCount( 0 ) + mesh.GetIndexCount( 1 ) ) / 3 );
+    }
+
+    [Test]
+    public void managedDoesNotContourWhenEnabled( [Values] Algorithm algorithm ) {
+        var editor = configure( this.createEditor( ), new( algorithm, ImplementationType.Managed ) );
+
+        addStarterModel( editor.transform );
+
+        editor.enabled = false;
+        editor.enabled = true;
+
+        Assert.IsTrue( shown( editor ) == null );
+        Assert.IsNull( editor.lastContour );
+    }
+
+    [Test]
+    public void burstAndGPUContourWhenEnabledWithNothingShown( [ValueSource( nameof( automaticVariants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( ), variant );
+
+        addStarterModel( editor.transform );
+
+        editor.enabled = false;
+        editor.enabled = true;
+
+        Assert.IsTrue( shown( editor ) != null );
+        Assert.Greater( shown( editor ).vertexCount, 0 );
+    }
+
+    // so a script recompile, which disables and enables everything, costs no contour and keeps a managed mesh
+    [Test]
+    public void disablingAndEnablingKeepsTheMeshThatIsShown( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, implementation ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        editor.enabled = false;
+
+        Assert.AreSame( mesh, shown( editor ), "after disabling" );
+
+        editor.enabled = true;
+
+        Assert.AreSame( mesh, shown( editor ), "after enabling" );
+    }
+
+    // the GPU implementation makes its compute buffers anew after the editor was disabled
+    [Test]
+    public void gpuContoursAfterTheEditorWasDisabled( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.GPU ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var first = Object.Instantiate( shown( editor ) );
+
+        try {
+            editor.enabled = false;
+            editor.enabled = true;
+
+            editor.contour( );
+
+            MeshComparison.assertSameTriangles( first, shown( editor ) );
+        }
+        finally {
+            Object.DestroyImmediate( first );
+        }
+    }
+
+    [Test]
+    public void removingTheEditorRemovesTheMesh( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var mesh       = shown( editor );
+        var meshFilter = editor.GetComponent<MeshFilter>( );
+
+        Object.DestroyImmediate( editor );
+
+        Assert.IsTrue( mesh == null, "the mesh is still there" );
+        Assert.IsTrue( meshFilter.sharedMesh == null );
+    }
+
+    // switching algorithm shows the old mesh until the next contour, which replaces it
+    [Test]
+    public void contouringAfterSwitchingReplacesTheMesh( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.contour( );
+
+        var uniformMesh = shown( editor );
+
+        editor.select( Algorithm.Manifold );
+        editor.contour( );
+
+        Assert.IsTrue( uniformMesh == null, "the mesh of the uniform contour is still there" );
+        Assert.AreEqual( 1, editor.GetComponents<MeshFilter>( ).Length );
+    }
+
+}

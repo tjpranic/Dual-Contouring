@@ -149,17 +149,57 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
     private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
 
-    public virtual void Start( ) {
+    // how a contour went: how long it took in all, and the size of its mesh. A mesh drawn straight from the GPU is
+    // never read back, so its size is not known
+    public readonly struct ContourStatistics {
 
-        var volumes = this.GetComponentsInChildren<Volume>( );
+        public readonly double milliseconds;
+        public readonly int?   vertexCount;
+        public readonly int?   triangleCount;
+
+        public ContourStatistics( double milliseconds, int? vertexCount, int? triangleCount ) {
+            this.milliseconds  = milliseconds;
+            this.vertexCount   = vertexCount;
+            this.triangleCount = triangleCount;
+        }
+
+    }
+
+    // the meshes that contour makes are named this and are not saved with the scene, which tells them apart from a
+    // mesh someone put in the mesh filter by hand
+    private const string    contourMeshName  = "Contour";
+    private const HideFlags contourMeshFlags = HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild;
+
+    // the last mesh this voxelizer made, so it can be destroyed even when the mesh filter has gone first
+    private Mesh contourMesh;
+
+    public virtual void Start( ) {
+        this.contour( );
+    }
+
+    // contours the volumes below the voxelizer and shows the result, as the overload below does
+    public ContourStatistics contour( bool drawFromGPU = true, bool reorderVertices = true ) {
+        return this.contour( this.GetComponentsInChildren<Volume>( ), drawFromGPU, reorderVertices );
+    }
+
+    // contours the density functions and shows the result in place of whatever contour was shown before, so it can be
+    // called again and again.
+    // - drawFromGPU: with the GPU implementation and the debug view off, draw the mesh straight from the compute
+    //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode.
+    // - reorderVertices: reorder the vertex buffer, which makes the mesh a little faster to draw and takes 5 to 10% of
+    //   a Burst contour of 128^3 cells
+    public ContourStatistics contour( IEnumerable<DensityFunction> densityFunctions, bool drawFromGPU = true, bool reorderVertices = true ) {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew( );
 
         voxelizeMarker.Begin( );
 
-        var voxelization = this.voxelize( volumes );
+        var voxelization = this.voxelize( densityFunctions );
 
         voxelizeMarker.End( );
 
-        if( this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU ) {
+        this.stopDrawingFromGPU( );
+
+        if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
             this.directToGPU = voxelization.tryVisit(
                 ( GPUVoxelization voxelization ) => {
@@ -167,7 +207,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
                     UnityEngine.Debug.Assert( meshRenderer != null );
 
-                    this.material = new Material( Resources.Load<Shader>( "Shaders/RenderContourDiffuse" ) );
+                    this.material = new Material( Resources.Load<Shader>( "Shaders/RenderContourDiffuse" ) ) { hideFlags = HideFlags.DontSave };
 
                     this.material.SetBuffer( "vertices",     voxelization.vertices );
                     this.material.SetBuffer( "normals",      voxelization.normals );
@@ -175,8 +215,11 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                     this.material.SetMatrix( "localToWorld", this.transform.localToWorldMatrix );
                     this.material.SetMatrix( "worldToLocal", this.transform.worldToLocalMatrix );
 
-                    for( var materialIndex = 0; materialIndex < meshRenderer.materials.Length; ++materialIndex ) {
-                        this.material.SetColor( $"color{materialIndex}", meshRenderer.materials[materialIndex].color );
+                    // the shared materials, because reading Renderer.materials makes a copy of each
+                    var materials = meshRenderer.sharedMaterials;
+
+                    for( var materialIndex = 0; materialIndex < materials.Length; ++materialIndex ) {
+                        this.material.SetColor( $"color{materialIndex}", materials[materialIndex].color );
                     }
 
                     this.argumentsBuffer = voxelization.arguments;
@@ -184,48 +227,123 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             );
         }
 
-        if( !this.directToGPU ) {
+        if( this.directToGPU ) {
+            this.show( null );
+            this.captureDebugInformation( Enumerable.Empty<SurfaceExtractor.Corner>( ), Enumerable.Empty<SurfaceExtractor.Edge>( ), Enumerable.Empty<SurfaceExtractor.Voxel>( ) );
 
-            var ( mesh, corners, edges, voxels ) = voxelization.visit(
-                ( voxelization ) => {
-                    var mesh = voxelization.mesh;
-
-                    // convert to flat shading by splitting vertices. The GPU does that itself, in the contour kernel
-                    if( this.vertexNormals == VertexNormals.Split ) {
-                        splitVerticesMarker.Begin( );
-
-                        splitVertices( mesh );
-
-                        splitVerticesMarker.End( );
-                    }
-
-                    return ( mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
-                },
-                ( voxelization ) => {
-                    var converted = this.convert( voxelization );
-                    return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
-                }
-            );
-
-            finishMeshMarker.Begin( );
-
-            mesh.RecalculateBounds( );
-            mesh.OptimizeReorderVertexBuffer( );
-
-            finishMeshMarker.End( );
-
-            var meshFilter = this.gameObject.AddComponent<MeshFilter>( );
-
-            meshFilter.mesh = mesh;
-
-            captureDebugMarker.Begin( );
-
-            this.captureDebugInformation( corners, edges, voxels );
-
-            captureDebugMarker.End( );
-
+            return new( stopwatch.Elapsed.TotalMilliseconds, null, null );
         }
 
+        var ( mesh, corners, edges, voxels ) = voxelization.visit(
+            ( voxelization ) => {
+                var mesh = voxelization.mesh;
+
+                // convert to flat shading by splitting vertices. The GPU does that itself, in the contour kernel
+                if( this.vertexNormals == VertexNormals.Split ) {
+                    splitVerticesMarker.Begin( );
+
+                    splitVertices( mesh );
+
+                    splitVerticesMarker.End( );
+                }
+
+                return ( mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
+            },
+            ( voxelization ) => {
+                // with the debug view off nothing looks at the corners, edges and voxels, which take far longer to
+                // read back than the mesh
+                if( this.debugFlags == Debug.Off ) {
+                    return ( this.readMesh( voxelization ), Enumerable.Empty<SurfaceExtractor.Corner>( ), Enumerable.Empty<SurfaceExtractor.Edge>( ), Enumerable.Empty<SurfaceExtractor.Voxel>( ) );
+                }
+
+                var converted = this.convert( voxelization );
+                return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
+            }
+        );
+
+        finishMeshMarker.Begin( );
+
+        mesh.RecalculateBounds( );
+
+        if( reorderVertices ) {
+            mesh.OptimizeReorderVertexBuffer( );
+        }
+
+        finishMeshMarker.End( );
+
+        mesh.name      = contourMeshName;
+        mesh.hideFlags = contourMeshFlags;
+
+        this.show( mesh );
+
+        captureDebugMarker.Begin( );
+
+        this.captureDebugInformation( corners, edges, voxels );
+
+        captureDebugMarker.End( );
+
+        var triangleCount = 0;
+        for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
+            triangleCount += ( int )mesh.GetIndexCount( subMeshIndex ) / 3;
+        }
+
+        return new( stopwatch.Elapsed.TotalMilliseconds, mesh.vertexCount, triangleCount );
+    }
+
+    // takes away what contour shows: the mesh in the mesh filter, whichever voxelizer made it, the mesh this voxelizer
+    // made last, the drawing straight from the GPU and the debug data
+    public void clear( ) {
+        this.stopDrawingFromGPU( );
+        this.show( null );
+
+        if( this.contourMesh != null ) {
+            destroy( this.contourMesh );
+        }
+        this.contourMesh = null;
+
+        this.captureDebugInformation( Enumerable.Empty<SurfaceExtractor.Corner>( ), Enumerable.Empty<SurfaceExtractor.Edge>( ), Enumerable.Empty<SurfaceExtractor.Voxel>( ) );
+    }
+
+    // puts the mesh in the mesh filter, which is added the first time, in place of the contour shown before, which is
+    // destroyed. Voxelizers on the same object share the mesh filter, so this replaces the contour of any of them
+    private void show( Mesh mesh ) {
+        var meshFilter = this.GetComponent<MeshFilter>( );
+
+        if( meshFilter == null ) {
+            if( mesh == null ) {
+                return;
+            }
+            meshFilter = this.gameObject.AddComponent<MeshFilter>( );
+        }
+
+        var shown = meshFilter.sharedMesh;
+
+        meshFilter.sharedMesh = mesh;
+        this.contourMesh      = mesh;
+
+        if( shown != null && shown != mesh && shown.name == contourMeshName && ( shown.hideFlags & contourMeshFlags ) == contourMeshFlags ) {
+            destroy( shown );
+        }
+    }
+
+    private void stopDrawingFromGPU( ) {
+        if( this.material != null ) {
+            destroy( this.material );
+        }
+
+        this.directToGPU     = false;
+        this.material        = null;
+        this.argumentsBuffer = null;
+    }
+
+    // Destroy waits for the end of the frame, which only comes in play mode
+    private static void destroy( UnityEngine.Object item ) {
+        if( Application.isPlaying ) {
+            Destroy( item );
+        }
+        else {
+            DestroyImmediate( item );
+        }
     }
 
     // gives every triangle three vertices of its own, which makes the normals of the mesh the normals of its faces.
@@ -268,6 +386,11 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         IEnumerable<SurfaceExtractor.Edge>   edges,
         IEnumerable<SurfaceExtractor.Voxel>  voxels
     ) {
+        // the debug data of an earlier contour would show the wrong thing
+        this.debugCorners = null;
+        this.debugEdges   = null;
+        this.debugVoxels  = null;
+
         if( this.debugFlags == Debug.Off ) {
             return;
         }
@@ -374,8 +497,18 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     public abstract CPUVoxelization convert( GPUVoxelization voxelization );
 
-    // releases what an implementation holds on to outside of managed memory, such as compute buffers
-    public virtual void OnDestroy( ) { }
+    // the mesh of a GPU voxelization, read back on its own. convert also reads back the corners, edges and voxels,
+    // which takes far longer
+    public abstract Mesh readMesh( GPUVoxelization voxelization );
+
+    // releases what an implementation holds on to outside of managed memory, such as compute buffers. The next contour
+    // makes them anew, and what is shown stays
+    public virtual void release( ) { }
+
+    public virtual void OnDestroy( ) {
+        this.clear( );
+        this.release( );
+    }
 
     public void Update( ) {
         if( this.directToGPU ) {
