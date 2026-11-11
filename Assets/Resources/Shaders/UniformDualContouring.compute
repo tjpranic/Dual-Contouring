@@ -142,11 +142,12 @@ float sampleEllipsoid( float3 position, float3 extents ) {
     if( length( position ) == 0.0f ) {
         return -1.0f;
     }
+    else {
+        float k0 = length( divide( position, extents ) );
+        float k1 = length( divide( position, multiply( extents, extents ) ) );
 
-    float k0 = length( divide( position, extents ) );
-    float k1 = length( divide( position, multiply( extents, extents ) ) );
-
-    return k0 * ( k0 - 1.0f ) / k1;
+        return k0 * ( k0 - 1.0f ) / k1;
+    }
 }
 
 // #include "Noise.hlsl"
@@ -344,7 +345,9 @@ float3 approximateIntersection( float3 position0, float density0, float3 positio
     else if( intersectionApproximation == INTERSECTION_APPROXIMATION_LINEAR_INTERPOLATION ) {
         return position0 + ( ( -density0 ) * ( position1 - position0 ) / ( density1 - density0 ) );
     }
-    return float3( 0.0f, 0.0f, 0.0f );
+    else {
+        return float3( 0.0f, 0.0f, 0.0f );
+    }
 }
 
 float3 approximateIntersection( in Corner corner0, in Corner corner1 ) {
