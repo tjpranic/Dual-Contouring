@@ -76,7 +76,7 @@ public static class BurstDebugInformation {
         }
 
         public override int GetHashCode( ) {
-            return this.position.GetHashCode( );
+            return SurfaceExtractor.hashOf( this.position );
         }
 
     }
@@ -101,8 +101,10 @@ public static class BurstDebugInformation {
             return this.corners[0].Equals( other.corners[0] ) && this.corners[1].Equals( other.corners[1] );
         }
 
+        // the corners in order, as Equals compares them. The XOR of their hashes would cancel out the coordinates the
+        // two corners of an edge along an axis have in common
         public override int GetHashCode( ) {
-            return this.corners[0].GetHashCode( ) ^ this.corners[1].GetHashCode( );
+            return System.HashCode.Combine( this.corners[0].GetHashCode( ), this.corners[1].GetHashCode( ) );
         }
 
     }

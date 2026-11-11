@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -74,18 +73,9 @@ public class UniformDualContouringBurstTest : TopologyTest {
 
         // the hermite data of the contour, on every edge of the grid. Edges across a material boundary are left out: each
         // managed voxel has edges of its own, and the managed implementation shows the edge of the first voxel it is in,
-        // which has the hermite data of the boundary only if the contour passes through that voxel. The managed edges are
-        // taken from the voxels the same way, first voxel first, rather than through managed.edges: its hash of an edge
-        // is the same for all edges between the same two planes of the grid, and at 32^3 cells telling them apart takes
-        // half a minute
-        var managedEdges = new Dictionary<( Vector3, Vector3 ), SurfaceExtractor.Edge>( );
-        foreach( var voxel in managedVoxels ) {
-            foreach( var edge in voxel.edges ) {
-                managedEdges.TryAdd( ( edge.corners[0].position, edge.corners[1].position ), edge );
-            }
-        }
-
-        var burstEdges = burst.edges.ToArray( );
+        // which has the hermite data of the boundary only if the contour passes through that voxel
+        var managedEdges = managed.edges.ToDictionary( ( edge ) => ( edge.corners[0].position, edge.corners[1].position ) );
+        var burstEdges   = burst.edges.ToArray( );
 
         Assert.AreEqual( managedEdges.Count, burstEdges.Length, "edges" );
 

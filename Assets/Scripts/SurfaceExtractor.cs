@@ -165,6 +165,13 @@ public interface SurfaceExtractor {
         return mesh;
     }
 
+    // a hash of a position that tells the points of a grid apart, for corners, which are equal when their positions are.
+    // Vector3.GetHashCode shifts the hashes of the coordinates by a couple of bits and XORs them, which on the few
+    // mantissa bits of the coordinates of a grid gives one hash to many points
+    public static int hashOf( Vector3 position ) {
+        return HashCode.Combine( position.x, position.y, position.z );
+    }
+
     public static MaterialIndex calculateMaterial( Vector3 position, IEnumerable<DensityFunction> densityFunctions ) {
         return densityFunctions.Aggregate(
             MaterialIndex.Void,

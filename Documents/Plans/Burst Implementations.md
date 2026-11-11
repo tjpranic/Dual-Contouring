@@ -281,7 +281,10 @@ Same model and settings as the baseline. Times are medians of 3 runs after a war
 - **The other two step 0 fixes have no before-and-after timing.**
   - Adaptive and Manifold used to evaluate the density functions once per function at every corner. `DensitySamplingTest` counted 2.46× (Adaptive) and 2.57× (Manifold) as many samples per volume with three volumes as with one.
   - The cost of `Volume.origin` and `Volume.extents` searching the hierarchy on every sample was not measured on its own.
-- **Found in step 2, not fixed:** the managed debug edges are slow to tell apart.
-  - `Edge.GetHashCode` XORs the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid gets the same hash.
-  - `Distinct()` over the managed debug edges therefore turns quadratic, about 30 s at 32³.
-  - `Voxelizer.Start` enumerates those edges when debug drawing is on, so managed scenes with debug drawing pay for it at start-up. The Burst path doesn't use that hash.
+- **Found in step 2, fixed 2026-11-11 at the user's request:** the debug corners and edges were slow to tell apart.
+  - `Edge.GetHashCode` XORed the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid got the same hash: 31 hashes for the 104,544 edges of a 32³ grid. `Distinct()` over them took about 30 s.
+  - `Vector3.GetHashCode`, which the corners used, shifts the coordinate hashes by two bits and XORs them. On the few mantissa bits of grid coordinates that gave 3,447 hashes for 35,937 corners.
+  - The managed implementations hand their corners and edges out through `Distinct()`, and `Voxelizer.Start` goes through them when debug drawing is on. Managed scenes with debug drawing on paid for it at start-up.
+  - Now corners hash with `SurfaceExtractor.hashOf`, which combines the three coordinates, and edges combine their two corner hashes in order. This is done in the Uniform, Adaptive, Manifold and Burst debug classes.
+  - At 32³, `Distinct()` takes 82 ms on the edges and 33 ms on the corners. Voxel hashes are unchanged: voxel equality uses Unity's approximate `==`, which no exact hash can follow, and voxels never go through `Distinct()`.
+  - Test: `DebugInformationHashTest`, which needs at least 99% distinct hashes for the corners and edges of each implementation.
