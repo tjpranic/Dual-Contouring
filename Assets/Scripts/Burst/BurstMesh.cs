@@ -32,7 +32,7 @@ public static class BurstMesh {
     }
 
     // writes the contour into the mesh data. Positions go in vertex stream 0 and normals in stream 1
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct WriteMeshJob : IJob {
 
         [ReadOnly] public NativeArray<float3>   vertices;

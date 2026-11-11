@@ -82,40 +82,89 @@ public partial class ManifoldDualContouring {
 
     }
 
-    // which corners of every leaf are solid, a bit for each, and with that how many vertices the leaf has: one for
-    // every piece of the contour that passes through it. The solid corners also tell which of those vertices each
-    // intersected edge of the leaf is associated with, so that does not need to be kept for every leaf
+    // how many vertices every leaf has: one for every piece of the contour that passes through it, which its solid
+    // corners tell. They also tell which of those vertices each intersected edge of the leaf is associated with, so that
+    // does not need to be kept for every leaf. The leaves are gone through a row along z at a time, and each row adds up
+    // its own vertices
     [BurstCompile( CompileSynchronously = true )]
     private struct CountLeafVerticesJob : IJobParallelFor {
 
-        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte> solidCorners;
 
         public BurstOctree octree;
 
-        [WriteOnly] public NativeArray<byte> solidCorners;
-
         [NativeDisableParallelForRestriction] public NativeArray<int> vertexCounts;
 
-        public void Execute( int local ) {
-            var grid  = this.octree.grid;
-            var cell  = grid.cellOf( local );
-            var solid = 0;
+        [WriteOnly] public NativeArray<int> rowCounts;
 
-            for( var corner = 0; corner < SurfaceExtractor.Voxel.CornerCount; ++corner ) {
-                if( this.materials[grid.cornerIndex( grid.cornerOfCell( cell, corner ) )] != MaterialIndex.Void ) {
-                    solid |= 1 << corner;
-                }
+        public void Execute( int row ) {
+            var resolution = this.octree.grid.resolution;
+            var first      = row * resolution;
+            var firstNode  = this.octree.levelStart( this.octree.depth ) + first;
+            var total      = 0;
+
+            for( var z = 0; z < resolution; ++z ) {
+                var count = BurstTables.lookupVertexCount( this.solidCorners[first + z] );
+
+                this.vertexCounts[firstNode + z] = count;
+
+                total += count;
             }
 
-            this.solidCorners[local] = ( byte )solid;
-
-            this.vertexCounts[this.octree.levelStart( this.octree.depth ) + local] = BurstTables.lookupVertexCount( solid );
+            this.rowCounts[row] = total;
         }
 
     }
 
-    // where the vertices of every node of a level go: after those of the levels below, node after node. A leaf has
-    // room for its vertices, a node above the leaves for as many as its children have between them
+    // where the vertices of every row of leaves go: row after row. Within its row a leaf finds its own place
+    [BurstCompile( CompileSynchronously = true )]
+    private struct LayoutRowsJob : IJob {
+
+        [ReadOnly] public NativeArray<int> rowCounts;
+
+        [WriteOnly] public NativeArray<int> rowStarts;
+
+        // how many vertices there is room for, before and after
+        public NativeArray<int> room;
+
+        public void Execute( ) {
+            var next = this.room[0];
+
+            for( var row = 0; row < this.rowCounts.Length; ++row ) {
+                this.rowStarts[row] = next;
+
+                next += this.rowCounts[row];
+            }
+
+            this.room[0] = next;
+        }
+
+    }
+
+    // how many vertices every node of a level above the leaves has room for: as many as its children have between
+    // them. Clustering the level replaces that with how many the node ends up with
+    [BurstCompile( CompileSynchronously = true )]
+    private struct CountMembersJob : IJobParallelFor {
+
+        public BurstOctree octree;
+        public int         level;
+
+        [NativeDisableParallelForRestriction] public NativeArray<int> vertexCounts;
+
+        public void Execute( int local ) {
+            var coordinates = this.octree.nodeOf( this.level, local );
+            var members     = 0;
+
+            for( var child = 0; child < 8; ++child ) {
+                members += this.vertexCounts[this.octree.nodeIndex( this.level + 1, this.octree.childOf( coordinates, child ) )];
+            }
+
+            this.vertexCounts[this.octree.levelStart( this.level ) + local] = members;
+        }
+
+    }
+
+    // where the vertices of every node of a level above the leaves go: after those of the levels below, node after node
     [BurstCompile( CompileSynchronously = true )]
     private struct LayoutLevelJob : IJob {
 
@@ -137,16 +186,7 @@ public partial class ManifoldDualContouring {
             for( var node = start; node < end; ++node ) {
                 this.vertexStarts[node] = next;
 
-                if( this.level == this.octree.depth ) {
-                    next += this.vertexCounts[node];
-                }
-                else {
-                    var coordinates = this.octree.nodeOf( this.level, node - start );
-
-                    for( var child = 0; child < 8; ++child ) {
-                        next += this.vertexCounts[this.octree.nodeIndex( this.level + 1, this.octree.childOf( coordinates, child ) )];
-                    }
-                }
+                next += this.vertexCounts[node];
             }
 
             this.room[0] = next;
@@ -240,18 +280,20 @@ public partial class ManifoldDualContouring {
 
     // the vertices of the leaves: one for every piece of the contour in a leaf, from the QEF of the edges that piece
     // intersects, in the order the managed implementation adds them
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SolveLeavesJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
         [ReadOnly] public NativeArray<float>                densities;
         [ReadOnly] public NativeArray<MaterialIndex>        materials;
         [ReadOnly] public NativeArray<byte>                 solidCorners;
-        [ReadOnly] public NativeArray<int>                  vertexStarts;
         [ReadOnly] public NativeArray<int>                  vertexCounts;
+        [ReadOnly] public NativeArray<int>                  rowStarts;
 
         public BurstOctree   octree;
         public BurstSettings settings;
+
+        [NativeDisableParallelForRestriction] public NativeArray<int> vertexStarts;
 
         [NativeDisableParallelForRestriction] public NativeArray<float3>   positions;
         [NativeDisableParallelForRestriction] public NativeArray<float3>   normals;
@@ -262,21 +304,34 @@ public partial class ManifoldDualContouring {
         [NativeDisableParallelForRestriction] public NativeArray<int>      nodes;
         [NativeDisableParallelForRestriction] public NativeArray<byte>     intersections;
 
-        public unsafe void Execute( int local ) {
+        // a row of leaves along z, whose vertices follow each other from where the row starts
+        public void Execute( int row ) {
+            var resolution = this.octree.grid.resolution;
+            var leafStart  = this.octree.levelStart( this.octree.depth );
+            var next       = this.rowStarts[row];
+
+            for( var z = 0; z < resolution; ++z ) {
+                var local = ( row * resolution ) + z;
+                var count = this.vertexCounts[leafStart + local];
+
+                this.vertexStarts[leafStart + local] = next;
+
+                // the contour passes through the leaf
+                if( count > 0 ) {
+                    this.solve( local, next, count );
+                }
+
+                next += count;
+            }
+        }
+
+        private unsafe void solve( int local, int first, int count ) {
             const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
 
             var node  = this.octree.levelStart( this.octree.depth ) + local;
-            var count = this.vertexCounts[node];
-
-            // the contour does not pass through the cell
-            if( count == 0 ) {
-                return;
-            }
-
             var grid  = this.octree.grid;
             var cell  = grid.cellOf( local );
             var solid = this.solidCorners[local];
-            var first = this.vertexStarts[node];
 
             // the hermite data of the edges the contour intersects, and of the boundaries between materials that pass
             // through the cell
@@ -379,7 +434,7 @@ public partial class ManifoldDualContouring {
     // one level of the clustering, the managed climb for the nodes of that level, and with it whether each cluster may
     // stand in for its vertices and whether contouring can skip the node. Every node only looks at what is below it,
     // which the levels below have finished with, and writes its own vertices and the parents of those of its children
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct ClusterLevelJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<byte> solidCorners;
@@ -901,7 +956,7 @@ public partial class ManifoldDualContouring {
     // the debug view of the managed implementation: the vertices on the contour, each shown as a voxel in the node it
     // was created in, in the order the leaves of the managed octree come to them, and the corners and edges of those
     // nodes, each the first time a node has it. Only the leaves work out the hermite data of their edges
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct DebugInformationJob : IJob {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
@@ -1072,41 +1127,44 @@ public partial class ManifoldDualContouring {
                 grid             = grid,
                 densities        = densities,
                 materials        = materials
-            }.Schedule( grid.cornerCount, 256 ).Complete( );
-        }
-
-        // the next level of the octree gets room for its vertices after those of the levels so far
-        void layout( int level ) {
-            new LayoutLevelJob {
-                vertexCounts = vertexCounts,
-                octree       = octree,
-                level        = level,
-                vertexStarts = vertexStarts,
-                room         = room
-            }.Run( );
-
-            vertices.resize( room[0] );
+            }.Schedule( grid.cornerCount, BurstBatches.corners ).Complete( );
         }
 
         using( burstSolveVerticesMarker.Auto( ) ) {
-            new CountLeafVerticesJob {
-                materials    = materials,
-                octree       = octree,
-                solidCorners = solidCorners,
-                vertexCounts = vertexCounts
-            }.Schedule( grid.cellCount, 1024 ).Complete( );
+            using var rowCounts = new NativeArray<int>( grid.rowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+            using var rowStarts = new NativeArray<int>( grid.rowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
-            layout( octree.depth );
+            var findSolidCorners = new BurstSolidCornersJob {
+                materials    = materials,
+                grid         = grid,
+                solidCorners = solidCorners
+            }.Schedule( grid.rowCount, BurstBatches.rows );
+
+            var countVertices = new CountLeafVerticesJob {
+                solidCorners = solidCorners,
+                octree       = octree,
+                vertexCounts = vertexCounts,
+                rowCounts    = rowCounts
+            }.Schedule( grid.rowCount, BurstBatches.rows, findSolidCorners );
+
+            new LayoutRowsJob {
+                rowCounts = rowCounts,
+                rowStarts = rowStarts,
+                room      = room
+            }.Schedule( countVertices ).Complete( );
+
+            vertices.resize( room[0] );
 
             new SolveLeavesJob {
                 densityFunctions = functions,
                 densities        = densities,
                 materials        = materials,
                 solidCorners     = solidCorners,
-                vertexStarts     = vertexStarts,
                 vertexCounts     = vertexCounts,
+                rowStarts        = rowStarts,
                 octree           = octree,
                 settings         = settings,
+                vertexStarts     = vertexStarts,
                 positions        = vertices.positions.AsArray( ),
                 normals          = vertices.normals.AsArray( ),
                 qefs             = vertices.qefs.AsArray( ),
@@ -1115,7 +1173,7 @@ public partial class ManifoldDualContouring {
                 eulers           = vertices.eulers.AsArray( ),
                 nodes            = vertices.nodes.AsArray( ),
                 intersections    = vertices.intersections.AsArray( )
-            }.Schedule( grid.cellCount, 64 ).Complete( );
+            }.Schedule( grid.rowCount, BurstBatches.rows ).Complete( );
         }
 
         var leafVertexCount = vertices.count;
@@ -1124,7 +1182,22 @@ public partial class ManifoldDualContouring {
             using var inconsistent = new NativeArray<bool>( 1, Allocator.TempJob );
 
             for( var level = octree.depth - 1; level >= 0; --level ) {
-                layout( level );
+                // the level gets room for its vertices after those of the levels below
+                var countMembers = new CountMembersJob {
+                    octree       = octree,
+                    level        = level,
+                    vertexCounts = vertexCounts
+                }.Schedule( 1 << ( 3 * level ), BurstBatches.nodes );
+
+                new LayoutLevelJob {
+                    vertexCounts = vertexCounts,
+                    octree       = octree,
+                    level        = level,
+                    vertexStarts = vertexStarts,
+                    room         = room
+                }.Schedule( countMembers ).Complete( );
+
+                vertices.resize( room[0] );
 
                 new ClusterLevelJob {
                     solidCorners          = solidCorners,
@@ -1148,7 +1221,7 @@ public partial class ManifoldDualContouring {
                     clusterIndices        = vertices.clusterIndices.AsArray( ),
                     internalIntersections = vertices.internalIntersections.AsArray( ),
                     inconsistent          = inconsistent
-                }.Schedule( 1 << ( 3 * level ), level > 3 ? 16 : 1 ).Complete( );
+                }.Schedule( 1 << ( 3 * level ), level > 3 ? BurstBatches.nodes : 1 ).Complete( );
             }
 
             UnityEngine.Debug.Assert( !inconsistent[0], "Contour around an edge inside a cell is not part of a single cluster" );
@@ -1166,7 +1239,7 @@ public partial class ManifoldDualContouring {
                     nodes        = vertices.nodes.AsArray( ),
                     octree       = octree,
                     invalid      = invalid
-                }.Schedule( octree.levelStart( octree.depth ), 256 ).Complete( );
+                }.Schedule( octree.levelStart( octree.depth ), BurstBatches.scans ).Complete( );
 
                 // ensure every vertex of the child nodes was clustered into a vertex of the enclosing voxel
                 UnityEngine.Debug.Assert( !invalid[0], "Invalid octree cluster detected" );

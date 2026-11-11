@@ -27,12 +27,13 @@ public partial class AdaptiveDualContouring {
         public NativeArray<BurstQEF>  qefs;
         public NativeArray<bool>      hasQEF;
 
-        // every node starts out internal, VoxelType.Internal is zero, without a vertex or a QEF
+        // every node starts out internal, VoxelType.Internal is zero, without a vertex or a QEF. The vertex, normal and QEF
+        // of a node are only there, and only read, where the node has them
         public BurstNodes( int count ) {
             this.types           = new NativeArray<VoxelType> ( count, Allocator.TempJob );
             this.hasFeaturePoint = new NativeArray<bool>      ( count, Allocator.TempJob );
-            this.vertices        = new NativeArray<float3>    ( count, Allocator.TempJob );
-            this.normals         = new NativeArray<float3>    ( count, Allocator.TempJob );
+            this.vertices        = new NativeArray<float3>    ( count, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+            this.normals         = new NativeArray<float3>    ( count, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
             this.qefs            = new NativeArray<BurstQEF>  ( count, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
             this.hasQEF          = new NativeArray<bool>      ( count, Allocator.TempJob );
         }
@@ -51,12 +52,13 @@ public partial class AdaptiveDualContouring {
     // the leaves, as the managed implementation finds the vertex of every voxel. It does that for the internal nodes
     // from their own corners as well, which nothing reads afterwards: simplification gives an internal node a QEF of its
     // own from its children, and contouring and the debug view only look at the nodes that are not internal
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SolveLeavesJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
         [ReadOnly] public NativeArray<float>                densities;
         [ReadOnly] public NativeArray<MaterialIndex>        materials;
+        [ReadOnly] public NativeArray<byte>                 solidCorners;
 
         public BurstOctree   octree;
         public BurstSettings settings;
@@ -69,25 +71,35 @@ public partial class AdaptiveDualContouring {
         [NativeDisableParallelForRestriction] public NativeArray<bool>      hasQEF;
 
         public void Execute( int local ) {
-            var grid = this.octree.grid;
-            var node = this.octree.levelStart( this.octree.depth ) + local;
+            var grid  = this.octree.grid;
+            var node  = this.octree.levelStart( this.octree.depth ) + local;
+            var solid = this.solidCorners[local];
 
-            // a leaf the contour does not pass through has no QEF at all, one it passes through always has samples
-            var solved = BurstCells.solve( grid, grid.cellOf( local ), this.settings, this.densityFunctions, this.densities, this.materials, out var qef, out var vertex, out var normal );
+            this.types[node] = VoxelType.Leaf;
 
-            this.types[node]           = VoxelType.Leaf;
-            this.hasFeaturePoint[node] = solved;
-            this.vertices[node]        = vertex;
-            this.normals[node]         = normal;
-            this.qefs[node]            = qef;
-            this.hasQEF[node]          = solved;
+            // a leaf the contour does not pass through has no vertex and no QEF at all, and that is most of them. Nothing
+            // else is written for it, and what the arrays hold there is never read
+            if( solid == 0 || solid == 255 ) {
+                return;
+            }
+
+            // one it passes through always has samples
+            var solved = BurstCells.solve( grid, grid.cellOf( local ), solid, this.settings, this.densityFunctions, this.densities, this.materials, out var qef, out var vertex, out var normal );
+
+            if( solved ) {
+                this.hasFeaturePoint[node] = true;
+                this.vertices[node]        = vertex;
+                this.normals[node]         = normal;
+                this.qefs[node]            = qef;
+                this.hasQEF[node]          = true;
+            }
         }
 
     }
 
     // one level of the simplification, the managed climb for the nodes of that level. Every node only looks at its own
     // children, which the level below has finished with
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SimplifyLevelJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<MaterialIndex> materials;
@@ -374,7 +386,7 @@ public partial class AdaptiveDualContouring {
     // lists them, node before children, and the corners and edges of those nodes, each the first time a node has it.
     // Every managed voxel works out the hermite data of its own edges when the contour passes through it, so an edge
     // has the hermite data of a material boundary when the first node that has it holds both empty and solid corners
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct DebugInformationJob : IJob {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
@@ -485,8 +497,8 @@ public partial class AdaptiveDualContouring {
                 type            = this.types[index],
                 center          = this.octree.centerOf( node.level, node.coordinates ),
                 size            = new float3( this.octree.sizeOf( node.level ) ),
-                vertex          = this.vertices[index],
-                normal          = this.normals[index],
+                vertex          = this.hasFeaturePoint[index] ? this.vertices[index] : float3.zero,
+                normal          = this.hasFeaturePoint[index] ? this.normals[index]  : float3.zero,
                 hasFeaturePoint = this.hasFeaturePoint[index]
             };
 
@@ -545,20 +557,29 @@ public partial class AdaptiveDualContouring {
         using var materials = new NativeArray<MaterialIndex> ( grid.cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var nodes     = new BurstNodes( octree.nodeCount );
 
+        using var solidCorners = new NativeArray<byte>( grid.cellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+
         using( burstSampleCornersMarker.Auto( ) ) {
             new BurstSampleCornersJob {
                 densityFunctions = functions,
                 grid             = grid,
                 densities        = densities,
                 materials        = materials
-            }.Schedule( grid.cornerCount, 256 ).Complete( );
+            }.Schedule( grid.cornerCount, BurstBatches.corners ).Complete( );
         }
 
         using( burstSolveVerticesMarker.Auto( ) ) {
+            var findSolidCorners = new BurstSolidCornersJob {
+                materials    = materials,
+                grid         = grid,
+                solidCorners = solidCorners
+            }.Schedule( grid.rowCount, BurstBatches.rows );
+
             new SolveLeavesJob {
                 densityFunctions = functions,
                 densities        = densities,
                 materials        = materials,
+                solidCorners     = solidCorners,
                 octree           = octree,
                 settings         = settings,
                 types            = nodes.types,
@@ -567,7 +588,7 @@ public partial class AdaptiveDualContouring {
                 normals          = nodes.normals,
                 qefs             = nodes.qefs,
                 hasQEF           = nodes.hasQEF
-            }.Schedule( grid.cellCount, 64 ).Complete( );
+            }.Schedule( grid.cellCount, BurstBatches.cells, findSolidCorners ).Complete( );
         }
 
         if( this.simplification ) {
@@ -588,7 +609,7 @@ public partial class AdaptiveDualContouring {
                         normals         = nodes.normals,
                         qefs            = nodes.qefs,
                         hasQEF          = nodes.hasQEF
-                    }.Schedule( 1 << ( 3 * level ), 64, handle );
+                    }.Schedule( 1 << ( 3 * level ), BurstBatches.nodes, handle );
                 }
 
                 handle.Complete( );

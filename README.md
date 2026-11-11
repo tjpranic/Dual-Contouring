@@ -1,5 +1,5 @@
 # Dual Contouring Unity Project
-A Unity implementation of various **Dual Contouring** algorithms for mesh generation from implicit surfaces. This project includes multiple dual contouring variants with both CPU and GPU implementations.
+A Unity implementation of various **Dual Contouring** algorithms for mesh generation from implicit surfaces. This project includes multiple dual contouring variants with managed C#, Burst and GPU implementations.
 
 ## Overview
 Dual Contouring is a technique for generating meshes from volumetric data represented by implicit functions. Unlike Marching Cubes, Dual Contouring preserves sharp features and produces better-quality meshes by solving a Quadratic Error Function (QEF) to find optimal vertex positions.
@@ -10,11 +10,30 @@ This Unity project implements three main variants of the dual contouring algorit
 - **Adaptive Dual Contouring** - Octree-based implementation with level-of-detail support
 - **Manifold Dual Contouring** - Specialized version that ensures manifold mesh topology
 
+## Implementations
+Each voxelizer component has an **Implementation** setting that selects how it contours.
+
+| Algorithm | Managed | Burst | GPU |
+|---|---|---|---|
+| Uniform Dual Contouring | Yes | Yes | Yes |
+| Adaptive Dual Contouring | Yes | Yes | No |
+| Manifold Dual Contouring | Yes | Yes | No |
+
+- **Managed** is plain C#, written to follow the papers. It is the reference the other two are tested against, and it is slow: a grid of 128³ cells takes most of a minute.
+- **Burst** runs the same algorithm as jobs compiled by the Burst compiler, on all cores. It contours 128³ cells in about 25 to 30 ms in the editor, which is over a thousand times faster than Managed, and supports both QEF solvers.
+- **GPU** runs Uniform Dual Contouring in a compute shader, with the SVD solver only.
+
+Burst gives the same mesh as Managed, triangle for triangle, with vertices that differ in the last bits of their coordinates. Where octree simplification or vertex clustering decides right at the error threshold, the two can collapse different nodes.
+
+Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed` and `Assets/Scenes/<Algorithm>/Burst`. For Uniform Dual Contouring those two folders are under `CPU`, next to `GPU`.
+
 ## Requirements
 - **Unity 6000.4.5f1** or later
 - **Unity Mathematics** (1.3.3)
-- Compute Shader support for GPU implementations
+- **Burst** (1.8.29) and **Unity Collections** (6.4.0) for the Burst implementations
+- Compute Shader support for the GPU implementation
 - **Shapes** library by Freya Holmer
+- **Unity Test Framework** (1.6.0) and **Performance Testing** (3.4.0) to run the tests
 
 ## License
 The MIT License (MIT)

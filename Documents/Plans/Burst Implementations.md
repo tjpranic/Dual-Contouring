@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** steps 0–3 done and reviewed 2026-11-11, tolerances accepted. Step 4 done 2026-11-11 and awaiting review. Step 5 not started.
+**Status:** steps 0–4 done and reviewed 2026-11-11, tolerances accepted. Step 5 done 2026-11-11 and awaiting review.
 
 ## Goal
 
@@ -224,9 +224,18 @@ Each step is done tests first and reviewed before the next one starts.
      - `ManifoldDualContouringBurstTest` has 87 parity tests: every model, both solvers, four clustering thresholds, with and without the manifold criterion, four grid sizes, the special models of the topology tests, surface correction, 128³ leaves, and debug data on request.
      - `SubMeshTest` and `DebugInformationHashTest` include Burst Manifold. `BurstTablesTest` checks the two new lookups.
      - Edit mode 501/501, play mode 20/20.
-5. **Tuning.**
-   - Float mode, batch sizes, and a parallel traversal if profiling calls for it.
-   - Update `README.md` to list the Burst implementations and their package requirements.
+5. **Tuning. Done 2026-11-11.** Measured first, then changed what the measurements pointed at. The numbers are in "Tuning" under Measurements.
+   - **Float mode: stays Strict.** Fast measured 3–5% less time and moved more collapse decisions away from managed. The mode is now one constant, `BurstFloats.mode`, that every job and test job uses.
+   - **Batch sizes: unchanged.** Four times larger or smaller made no measurable difference. They are named constants in `BurstBatches`.
+   - **Empty cells: the change that mattered.** More than half the time went into walking cells the contour doesn't pass through. Fixing that took 23–35% off the 128³ and 256³ timings.
+     - `BurstSolidCornersJob` in `BurstGrid.cs` classifies every cell in one sweep per row and writes a byte of solid corners per cell. The leaf passes of all three algorithms read that byte and return at once for an empty cell.
+     - Uniform and Adaptive no longer write a vertex, normal or QEF for empty cells. What those arrays hold there is never read.
+     - Manifold lays its leaf vertices out per row in parallel, and counts each level's members in parallel, in place of two single-threaded passes over every node.
+     - The Uniform contour pass skips eight cells at a time where none starts a quad.
+   - **Parallel traversal: not done.** After the above, the single-threaded Uniform contour pass is 5 ms of 24 at 128³ and 32 of 153 at 256³. What is left of it is per-quad work in first-use order, which is what keeps the mesh identical to managed.
+   - **Same output:** 99 configurations (three algorithms, both solvers, two models, several sizes and thresholds) hash to the same meshes and debug data before and after.
+   - Tests: `BurstGridTest` (12) for the new job. Edit mode 513/513, play mode 20/20.
+   - `README.md` lists the implementations and the packages they need.
 
 ## Measurements
 
@@ -314,6 +323,46 @@ Same model and settings as the baseline: clustering at 2e-4 with the manifold cr
 - The mesh at 128³ is closed and manifold with no clustering, at 2e-4 and with the threshold out of the way. On the same model, plain dual contouring has 56 non-manifold edges.
 - Collapse flags are part of the Cluster stage. Validate only runs in the editor and in development builds.
 
+### Tuning (step 5)
+
+Same model and settings as above, in the editor with Burst safety checks on. These replace the "Voxelize" columns of the three Burst tables above, which were measured before tuning.
+
+**Voxelize after tuning, in ms**
+
+| Cells or leaves | Uniform | Before | Adaptive | Before | Manifold | Before |
+|----------------:|--------:|-------:|---------:|-------:|---------:|-------:|
+| 16³             | 0.5     | 0.5    | 0.8      | 0.8    | 1.2      | 1.0    |
+| 32³             | 1.3     | 1.3    | 2.1      | 1.8    | 2.6      | 2.3    |
+| 64³             | 5.3     | 5.0    | 6.4      | 6.7    | 7.0      | 7.9    |
+| 128³            | 24.3    | 34.6   | 28.8     | 44.4   | 29.0     | 42.5   |
+| 256³            | 152.5   | 199.1  | —        | —      | —        | —      |
+
+Against managed at 128³ that is about 1,590× for Uniform, 1,640× for Adaptive and 1,960× for Manifold. Vertex and triangle counts are unchanged.
+
+**Stages after tuning, in ms**
+
+| Run           | Sample corners | Solve vertices | Simplify or cluster | Validate | Contour | Build mesh |
+|---------------|---------------:|---------------:|--------------------:|---------:|--------:|-----------:|
+| Uniform 128³  | 6.0            | 11.1           | —                   | —        | 5.3     | 1.2        |
+| Uniform 256³  | 48.0           | 54.3           | —                   | —        | 31.9    | 4.6        |
+| Adaptive 128³ | 6.1            | 12.8           | 4.9                 | —        | 1.6     | 0.1        |
+| Manifold 128³ | 6.2            | 11.9           | 5.5                 | 1.6      | 3.6     | 0.1        |
+
+**What was measured on the way**
+
+- **Empty cells.** A model that touches almost no cells took 17.1 ms of Uniform's 31.5 ms at 128³ and 134.5 of 196.8 ms at 256³, with Adaptive and Manifold at 24 of 37–39 ms. After the change the same model takes 8.8 ms at 128³ and 77 ms at 256³, most of it sampling corners.
+- **Burst safety checks.** With the checks off, as in a build, the untuned code took 15–38% less time (Uniform 22 against 31.5 ms, Manifold 25 against 40.5 ms at 128³). All tables here have them on, the editor default.
+- **Float mode.** Fast took 3–5% less time. Adaptive went from 2,586 to 2,574 vertices and Manifold from 2,359 to 2,344 at 128³.
+- **Batch sizes.** Five combinations from a quarter to four times the current sizes all landed within the 5% the runs differ by anyway.
+- **After a domain reload** the first benchmark run measured 9.6 ms at 16³ where a warm run takes 0.5 ms. The cause wasn't looked into; it looks like the jobs running before Burst has finished compiling them.
+
+**What is left, and was left alone**
+
+- **Sampling corners** is now the largest fixed cost: every corner samples every volume, about 9 divisions and square roots per ellipsoid. Making it cheaper means changing the arithmetic, which changes the last bits of every density, or culling parts of the grid, which is a different algorithm.
+- **Hermite data** is worked out by each cell for its own edges, so a crossing edge is worked out by the four cells around it. Working each edge out once would take an estimated 10–15% off the total, for a compact per-edge store with its own counting and layout passes in all three leaf passes.
+- **The Uniform contour pass** is single-threaded: 32 ms at 256³.
+- **Allocation** of the dense per-cell arrays is 12–15 ms at 256³ for Uniform, about 640 MB for a mesh of 209 thousand vertices. Compact vertex arrays would shrink both.
+
 ### What the baseline shows
 
 - **Sampling corners is 45–69% of the time** in every algorithm. Every voxel samples its own 8 corners, and in the octrees every internal node samples its corners too. Each sample goes through LINQ and interface calls.
@@ -332,14 +381,15 @@ Same model and settings as the baseline: clustering at 2e-4 with the manifold cr
   - Example at 128³ leaves on the three balls: a node whose error in double precision is 2.033e-4, 1.7% above the threshold, was collapsed by the managed code. Its mirror image, with the same samples, was kept by managed and collapsed by Burst.
   - At 128³ a few dozen nodes fall in that band at any threshold, so the two implementations differ by a few nodes at 1e-4 and 2e-4 alike. At 32³ there are about 150 candidates, and none fell in the band.
   - It would go away in both implementations if the QEF sums were kept relative to a local origin, such as the node's center, which keeps c small. That changes the numerics of the algorithm, so it is left for a decision.
-- **Found in step 4, not fixed: an error threshold of 6e-12, the default of Manifold, is below what the error formula can resolve.**
+- **Found in step 4, left as it is: an error threshold of 6e-12, the default of Manifold, is below what the error formula can resolve.**
   - The error is xᵀAx − 2xᵀb + c in float. With c (BtB) near 1, its smallest step is about 6e-8, ten thousand times the threshold. A cluster whose true error is zero comes out as 0 or as one such step, depending on the last bits of the sums. So at 6e-12, "below the threshold" means "rounded to exactly zero".
   - Two of the 11 Manifold scenes use 6e-12 and get a different contour from Burst than from managed. Both contours are closed and manifold.
     - **Sphere:** each of the 8 leaves on the diagonals is alone in its cluster, with three samples and BtB 0.75. Managed computes an error of 5.96e-8 (2⁻²⁴) and keeps the leaf vertex. Burst computes 0 and uses the cluster vertex, which is not moved onto the surface, so it sits 0.058 leaves from the managed one.
     - **Multiple Materials:** two clusters half the grid across have an error of exactly 0 in managed. The same sums give 3.8e-6 with every operation rounded to float and 9.5e-7 in double. Burst keeps them apart: 52 vertices against 40.
   - Neither implementation is the right one here. Managed's zero in Multiple Materials is as much a matter of rounding as Burst's zero on the sphere.
   - The other 9 scenes have thresholds from 2e-4 up, or shapes whose sums are exact, and match.
-  - Keeping the QEF sums in double would make the error meaningful down to about 1e-15 in both implementations. A local origin alone would not: it shrinks the step to about 1e-9, still above 6e-12. Either changes the numerics of the managed solvers, so it is left for a decision, together with the local origin above.
+  - Keeping the QEF sums in double would make the error meaningful down to about 1e-15 in both implementations. A local origin alone would not: it shrinks the step to about 1e-9, still above 6e-12. Either changes the numerics of the managed solvers.
+  - **Decided 2026-11-11: the solvers stay in float.** That level of precision isn't needed for this project. The two scenes keep their Burst contours, and the few clusters at 128³ that collapse differently are accepted.
 - **Found in step 3, expected:** plain dual contouring of the three balls has edges shared by more than two triangles from 64³ cells on, 40 at 64³ and 56 at 128³, in Uniform and in unsimplified Adaptive, managed and Burst alike. Where the balls meet in creases, a cell holds two sheets of surface and has only one vertex for both. That is what the manifold variant is for. The large-grid closedness tests use the sphere.
 - **Found in step 2, fixed 2026-11-11 at the user's request:** the debug corners and edges were slow to tell apart.
   - `Edge.GetHashCode` XORed the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid got the same hash: 31 hashes for the 104,544 edges of a 32³ grid. `Distinct()` over them took about 30 s.

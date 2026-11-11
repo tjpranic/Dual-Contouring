@@ -35,7 +35,7 @@ public class BurstQEFTest {
 
     }
 
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct QEFJob : IJob {
 
         public QEFSolverType type;

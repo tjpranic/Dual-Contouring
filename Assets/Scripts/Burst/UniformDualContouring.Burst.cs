@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Mathematics;
 using Unity.Profiling;
@@ -17,13 +18,15 @@ using QEFSolverType             = QEFSolver.Type;
 
 public partial class UniformDualContouring {
 
-    // the vertex of every cell the contour passes through
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    // the vertex of every cell the contour passes through. The other cells, which is most of them, are left without one:
+    // nothing is written for them, and what the arrays hold there is never read
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SolveCellsJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
         [ReadOnly] public NativeArray<float>                densities;
         [ReadOnly] public NativeArray<MaterialIndex>        materials;
+        [ReadOnly] public NativeArray<byte>                 solidCorners;
 
         public BurstGrid     grid;
         public BurstSettings settings;
@@ -33,9 +36,18 @@ public partial class UniformDualContouring {
         [WriteOnly] public NativeArray<bool>   hasVertex;
 
         public void Execute( int index ) {
-            this.hasVertex[index] = BurstCells.solve(
+            var solid = this.solidCorners[index];
+
+            if( solid == 0 || solid == 255 ) {
+                this.hasVertex[index] = false;
+
+                return;
+            }
+
+            var solved = BurstCells.solve(
                 this.grid,
                 this.grid.cellOf( index ),
+                solid,
                 this.settings,
                 this.densityFunctions,
                 this.densities,
@@ -45,8 +57,12 @@ public partial class UniformDualContouring {
                 out var normal
             );
 
-            this.vertices[index] = vertex;
-            this.normals[index]  = normal;
+            this.hasVertex[index] = solved;
+
+            if( solved ) {
+                this.vertices[index] = vertex;
+                this.normals[index]  = normal;
+            }
         }
 
     }
@@ -157,7 +173,17 @@ public partial class UniformDualContouring {
         }
 
         public void Execute( ) {
+            // most cells start no quad, and eight of those in a row are passed over in one go. A grid has a whole number
+            // of eights of cells unless it is a single cell
+            var eights = this.quads.Length % 8 == 0 ? this.quads.Reinterpret<ulong>( UnsafeUtility.SizeOf<byte>( ) ) : default;
+
             for( var index = 0; index < this.quads.Length; ++index ) {
+                if( eights.IsCreated && ( index & 7 ) == 0 && eights[index >> 3] == 0 ) {
+                    index += 7;
+
+                    continue;
+                }
+
                 var quads = this.quads[index];
 
                 if( quads == 0 ) {
@@ -202,7 +228,7 @@ public partial class UniformDualContouring {
     // an intersection and normal on an edge that crosses the contour, or that crosses a material boundary in a cell the
     // contour passes through, and zero on the others. The managed implementation only works out the edges of those
     // cells, which leaves material boundaries deep inside a solid without hermite data
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct DebugEdgesJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
@@ -330,8 +356,8 @@ public partial class UniformDualContouring {
                 type            = VoxelType.None,
                 center          = this.grid.centerOf( cell ),
                 size            = new float3( 1.0f / this.grid.resolution ),
-                vertex          = this.vertices[index],
-                normal          = this.normals[index],
+                vertex          = this.hasVertex[index] ? this.vertices[index] : float3.zero,
+                normal          = this.hasVertex[index] ? this.normals[index]  : float3.zero,
                 hasFeaturePoint = this.hasVertex[index]
             };
 
@@ -387,26 +413,35 @@ public partial class UniformDualContouring {
             using var normals   = new NativeArray<float3>        ( grid.cellCount,   Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
             using var hasVertex = new NativeArray<bool>          ( grid.cellCount,   Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
+            using var solidCorners = new NativeArray<byte>( grid.cellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+
             using( sampleCornersMarker.Auto( ) ) {
                 new BurstSampleCornersJob {
                     densityFunctions = functions,
                     grid             = grid,
                     densities        = densities,
                     materials        = materials
-                }.Schedule( grid.cornerCount, 256 ).Complete( );
+                }.Schedule( grid.cornerCount, BurstBatches.corners ).Complete( );
             }
 
             using( solveVerticesMarker.Auto( ) ) {
+                var findSolidCorners = new BurstSolidCornersJob {
+                    materials    = materials,
+                    grid         = grid,
+                    solidCorners = solidCorners
+                }.Schedule( grid.rowCount, BurstBatches.rows );
+
                 new SolveCellsJob {
                     densityFunctions = functions,
                     densities        = densities,
                     materials        = materials,
+                    solidCorners     = solidCorners,
                     grid             = grid,
                     settings         = settings,
                     vertices         = vertices,
                     normals          = normals,
                     hasVertex        = hasVertex
-                }.Schedule( grid.cellCount, 64 ).Complete( );
+                }.Schedule( grid.cellCount, BurstBatches.cells, findSolidCorners ).Complete( );
             }
 
             using var quads         = new NativeArray<byte>( grid.cellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
@@ -421,7 +456,7 @@ public partial class UniformDualContouring {
                     hasVertex = hasVertex,
                     grid      = grid,
                     quads     = quads
-                }.Schedule( grid.cellCount, 1024 );
+                }.Schedule( grid.cellCount, BurstBatches.scans );
 
                 new ContourJob {
                     materials     = materials,

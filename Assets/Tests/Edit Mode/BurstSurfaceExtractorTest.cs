@@ -39,7 +39,7 @@ public class BurstSurfaceExtractorTest {
     private const int materialMasks  = 4;     // the first four material bits, each by itself
     private const float edgeLength   = 1.0f / 16.0f;
 
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct PointJob : IJob {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
@@ -77,7 +77,7 @@ public class BurstSurfaceExtractorTest {
 
     }
 
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct EdgeJob : IJob {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
@@ -124,7 +124,7 @@ public class BurstSurfaceExtractorTest {
 
     }
 
-    [BurstCompile( CompileSynchronously = true, FloatMode = FloatMode.Strict, FloatPrecision = FloatPrecision.Standard )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct MaterialJob : IJob {
 
         [ReadOnly] public NativeArray<MaterialIndex> materials;
