@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for adding a Burst implementation of each dual contouring algorithm next to its managed implementation.
 
-**Status:** step 0 done and reviewed 2026-11-11. Step 1 done 2026-11-11 and awaiting review. Steps 2–5 not started.
+**Status:** steps 0 and 1 done and reviewed 2026-11-11, tolerances accepted. Step 2 done 2026-11-11 and awaiting review. Steps 3–5 not started.
 
 ## Goal
 
@@ -86,18 +86,18 @@ Uniform keeps its GPU implementation. GPU implementations of Adaptive and Manifo
 
 ### Uniform (medium)
 
-1. **Corners** (parallel over (n+1)³): density and material.
-2. **Edges** (parallel over 3(n+1)³): intersection and normal where the edge runs between void and solid. On solid-to-solid edges that cross a material boundary, the material-boundary intersection and normal. Each edge also gets a flag.
-3. **Cells** (parallel over n³):
+As built in step 2, in `Assets/Scripts/Burst/UniformDualContouring.Burst.cs`:
+
+1. **Corners** (parallel over (n+1)³): density and material, from one sample of each density function.
+2. **Cells** (parallel over n³):
    - Skips cells that are all void or all solid.
-   - Gathers the 12 edges into a QEF.
-   - Places the vertex as `QEFSolver.placeVertex` does: the mass point where the table shows more than one piece of contour.
-   - Applies surface correction and sets the averaged normal.
-4. **Quads** (parallel over n³):
-   - Each cell has three slots, one for each positive-axis edge (edges 3, 7 and 11). A quad is written where all four cells have a vertex and the edge crosses the contour, with the same winding as managed.
-   - Quads on the grid boundary are skipped, as in managed.
-   - The slots are then compacted, and a single-threaded pass assigns vertex indices in first-use order.
-5. **Mesh:** written by the mesh output job.
+   - Works out the hermite data of the cell's own 12 edges in the order of the edge layout, adds it to a QEF, and places the vertex as `QEFSolver.placeVertex` does. Then applies surface correction and sets the averaged normal.
+   - An edge the contour crosses is worked out by each of the four cells around it, as in the managed implementation. The plan first had a pass over every edge of the grid, but that needs storage for every edge, about 1.3 GB at 256³, of which almost none cross the contour.
+3. **Quads** (parallel over n³): each cell gets a bit for each positive-axis edge (edges 3, 7 and 11) where all four cells around it have a vertex and the edge crosses the contour. Quads on the grid boundary are skipped, as in managed.
+4. **Contour** (one job): goes through the cells in the managed order and builds the quads with the managed winding. Vertices are created when a quad first uses them, so the mesh is the managed one, vertex for vertex and triangle for triangle.
+5. **Mesh:** written by `BurstMesh`.
+6. **Debug data:** copied only when debug drawing is on or `Voxelizer.keepDebugInformation` is set; tests set it. Every corner, every edge and every cell is copied, as the managed implementation has them.
+   - Hermite data of the edges is worked out in a separate pass over every edge, for contour edges and for material-boundary edges in cells the contour passes through.
 
 ### Adaptive (medium to large)
 
@@ -202,7 +202,10 @@ Each step is done tests first and reviewed before the next one starts.
 1. **Burst core (medium). Done 2026-11-11.** Density, QEFs, tables, the mesh writer and debug data. Done when the core unit tests are green.
    - Code in `Assets/Scripts/Burst/`: `BurstDensityFunction`, `BurstSurfaceExtractor`, `BurstQEF`, `BurstTables`, `BurstOctreeTopology`, `BurstMesh`, `BurstDebugInformation`.
    - Tests: `BurstSurfaceExtractorTest`, `BurstQEFTest`, `BurstTablesTest`, `BurstOctreeTopologyTest`, `BurstMeshTest` and `BurstDebugInformationTest`, with shared helpers in `BurstTestSupport`. Edit mode 207/207, play mode 20/20.
-2. **Uniform (medium).** The Burst implementation, the 8 Burst scenes, parity tests and the benchmark. Done when the Uniform fixtures and parity tests are green for Burst and the benchmark is recorded.
+2. **Uniform (medium). Done 2026-11-11.** The Burst implementation, the 8 Burst scenes, parity tests and the benchmark. Done when the Uniform fixtures and parity tests are green for Burst and the benchmark is recorded.
+   - Code: `Assets/Scripts/Burst/UniformDualContouring.Burst.cs`, with `UniformDualContouring` made partial, and `Voxelizer.keepDebugInformation`.
+   - Scenes: `Assets/Scenes/Uniform Dual Contouring/CPU/Burst/`, 8 copies of the managed scenes with `_implementation: 2`. Each one contours to the same vertex, triangle and voxel counts as its managed scene.
+   - Tests: `UniformDualContouringBurstTest`, 18 parity tests (meshes identical triangle for triangle, vertices and hermite data within the tolerances), including 256³ with 32-bit indices. The Uniform topology, hermite normal and sub-mesh tests run for Burst too. Edit mode 239/239, play mode 20/20.
 3. **Adaptive (medium to large).** The same, with 9 scenes. Done on the same terms.
 4. **Manifold (large).** The same, with 11 scenes. Done on the same terms.
 5. **Tuning.**
@@ -249,6 +252,22 @@ Measured with `ContouringPerformanceTest` (edit mode, explicit, category `Perfor
 | 64³    | 944      | 1,884     | 5,280.5  | 890.1        | 3,296.3        | 629.6          | 262.9   | 35.1     | 21.1           | 22.2    | 0.5        | 99.0       |
 | 128³   | 2,368    | 4,732     | 56,792.3 | 21,746.0     | 28,427.6       | 3,504.1        | 1,905.8 | 274.6    | 165.5          | 78.2    | 1.1        | 689.3      |
 
+### Burst Uniform (step 2)
+
+Same model and settings as the baseline. Times are medians of 3 runs after a warm-up, in the editor with Burst safety checks on (the editor default).
+
+| Cells | Vertices | Triangles | Voxelize | Sample corners | Solve vertices | Contour | Build mesh | Managed voxelize | Speed-up |
+|------:|---------:|----------:|---------:|---------------:|---------------:|--------:|-----------:|-----------------:|---------:|
+| 16³   | 760      | 1,516     | 0.5      | 0.1            | 0.2            | 0.1     | 0.1        | 104.5            | ~200×    |
+| 32³   | 3,216    | 6,428     | 1.3      | 0.2            | 0.7            | 0.2     | 0.1        | 678.6            | ~520×    |
+| 64³   | 13,000   | 26,036    | 5.0      | 0.8            | 2.8            | 1.0     | 0.3        | 4,818.9          | ~960×    |
+| 128³  | 52,224   | 104,500   | 34.6     | 7.5            | 16.5           | 8.0     | 1.3        | 38,554.3         | ~1,110×  |
+| 256³  | 208,900  | 417,876   | 199.1    | 50.9           | 78.1           | 46.6        | 4.6        | out of memory    | —        |
+
+- **Same output:** vertex and triangle counts equal the managed ones at every size managed can contour.
+- **Mesh post-processing:** at 256³, splitting vertices takes 22.7 ms and `RecalculateBounds` with `OptimizeReorderVertexBuffer` 18.1 ms. Both are now a sizeable part of the total.
+- **Contour stage:** the single-threaded pass is a quarter of the time at 128³ and 256³, which makes it the first candidate for step 5.
+
 ### What the baseline shows
 
 - **Sampling corners is 45–69% of the time** in every algorithm. Every voxel samples its own 8 corners, and in the octrees every internal node samples its corners too. Each sample goes through LINQ and interface calls.
@@ -262,3 +281,7 @@ Measured with `ContouringPerformanceTest` (edit mode, explicit, category `Perfor
 - **The other two step 0 fixes have no before-and-after timing.**
   - Adaptive and Manifold used to evaluate the density functions once per function at every corner. `DensitySamplingTest` counted 2.46× (Adaptive) and 2.57× (Manifold) as many samples per volume with three volumes as with one.
   - The cost of `Volume.origin` and `Volume.extents` searching the hierarchy on every sample was not measured on its own.
+- **Found in step 2, not fixed:** the managed debug edges are slow to tell apart.
+  - `Edge.GetHashCode` XORs the hashes of the edge's two corners. For an axis-aligned edge the two coordinates that agree cancel out, so every edge between the same two planes of the grid gets the same hash.
+  - `Distinct()` over the managed debug edges therefore turns quadratic, about 30 s at 32³.
+  - `Voxelizer.Start` enumerates those edges when debug drawing is on, so managed scenes with debug drawing pay for it at start-up. The Burst path doesn't use that hash.

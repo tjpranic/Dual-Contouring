@@ -37,6 +37,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Uniform,  ImplementationType.Managed ) => new[] { "BuildGrid",   "SampleCorners", "SolveVertices", "Contour", "BuildMesh", "DebugInformation" },
             ( Algorithm.Adaptive, ImplementationType.Managed ) => new[] { "BuildOctree", "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh", "DebugInformation" },
             ( Algorithm.Manifold, ImplementationType.Managed ) => new[] { "BuildOctree", "SampleCorners", "SolveVertices", "Cluster", "Validate", "MarkCollapsed", "Contour", "BuildMesh", "DebugInformation" },
+            ( Algorithm.Uniform,  ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
 
@@ -51,8 +52,13 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Uniform,  ImplementationType.Managed ) => 7,
             ( Algorithm.Adaptive, ImplementationType.Managed ) => 7,
             ( Algorithm.Manifold, ImplementationType.Managed ) => 7,
+            ( Algorithm.Uniform,  ImplementationType.Burst )   => 8,
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
+    }
+
+    private static bool exists( Algorithm algorithm, ImplementationType implementation ) {
+        return implementation == ImplementationType.Managed || ( algorithm == Algorithm.Uniform && implementation == ImplementationType.Burst );
     }
 
     // a uniform grid has 2^resolution cells across, an octree 2^(resolution - 1) leaves
@@ -95,9 +101,12 @@ public class ContouringPerformanceTest : TopologyTest {
     [UnityTest, Performance]
     public IEnumerator voxelize(
         [Values] Algorithm algorithm,
-        [Values( ImplementationType.Managed )] ImplementationType implementation,
+        [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation,
         [Values( 4, 5, 6, 7, 8 )] int cellsExponent
     ) {
+        if( !exists( algorithm, implementation ) ) {
+            Assert.Ignore( $"{algorithm} dual contouring has no {implementation} implementation yet" );
+        }
         if( algorithm != Algorithm.Uniform && cellsExponent > 7 ) {
             Assert.Ignore( "an octree is at most 2^7 leaves across" );
         }
@@ -107,6 +116,10 @@ public class ContouringPerformanceTest : TopologyTest {
 
         var voxelizer = this.create( algorithm, implementation, cellsExponent );
         var volumes   = voxelizer.GetComponentsInChildren<Volume>( );
+
+        // what is measured is contouring. The managed implementations build their debug information either way, the
+        // Burst ones only when asked to, as they are in a scene with debug drawing off
+        voxelizer.keepDebugInformation = false;
 
         // a recorder adds up the time of its marker over the current frame, and starts again from zero on the next. Every
         // contour gets a frame of its own, and its stages are what the recorders gained while it ran
@@ -124,9 +137,10 @@ public class ContouringPerformanceTest : TopologyTest {
             Measure.Custom( new SampleGroup( name, SampleUnit.Millisecond ), milliseconds );
         }
 
-        // small grids are measured a few times after a warm up, large ones once
-        var warmups      = cellsExponent <= 6 ? 1 : 0;
-        var measurements = cellsExponent <= 6 ? 3 : 1;
+        // small grids are measured a few times after a warm up, large ones once. Burst code is fast enough to always be
+        // measured a few times, and the warm up keeps its compilation out of the measurements
+        var warmups      = cellsExponent <= 6 || implementation == ImplementationType.Burst ? 1 : 0;
+        var measurements = cellsExponent <= 6 || implementation == ImplementationType.Burst ? 3 : 1;
 
         var vertices  = 0;
         var triangles = 0;

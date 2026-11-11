@@ -77,6 +77,10 @@ public abstract class ContouringTest {
 
         this.voxelizers.Add( voxelizer );
 
+        // the tests look at the corners, edges and voxels of the contours, which the Burst implementations only copy out
+        // when asked to
+        voxelizer.keepDebugInformation = true;
+
         voxelizer.resolution    = resolution;
         voxelizer.qefSolverType = solver;
 

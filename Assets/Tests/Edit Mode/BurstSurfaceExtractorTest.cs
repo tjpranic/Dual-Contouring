@@ -48,6 +48,7 @@ public class BurstSurfaceExtractorTest {
         public NativeArray<float>         densities;
         public NativeArray<float>         maskedDensities;
         public NativeArray<MaterialIndex> materials;
+        public NativeArray<bool>          combinedAgrees;
         public NativeArray<float3>        normals;
         public NativeArray<float3>        maskedNormals;
         public NativeArray<bool>          managed;
@@ -61,6 +62,11 @@ public class BurstSurfaceExtractorTest {
                 this.densities[point] = BurstSurfaceExtractor.calculateDensity  ( position, this.densityFunctions );
                 this.materials[point] = BurstSurfaceExtractor.calculateMaterial ( position, this.densityFunctions );
                 this.normals[point]   = BurstSurfaceExtractor.calculateNormal   ( position, this.densityFunctions, BurstSurfaceExtractor.AnyMaterial );
+
+                // the density and material from one sample of every density function are those of the two functions
+                var density = BurstSurfaceExtractor.calculateDensityAndMaterial( position, this.densityFunctions, out var material );
+
+                this.combinedAgrees[point] = density == this.densities[point] && material == this.materials[point];
 
                 for( var mask = 0; mask < materialMasks; ++mask ) {
                     this.maskedDensities[( point * materialMasks ) + mask] = BurstSurfaceExtractor.calculateDensity ( position, this.densityFunctions, ( MaterialIndex )( 1 << mask ) );
@@ -178,6 +184,7 @@ public class BurstSurfaceExtractorTest {
             using var materials        = new NativeArray<MaterialIndex>( points.Length, Allocator.TempJob );
             using var normals          = new NativeArray<float3>( points.Length, Allocator.TempJob );
             using var maskedNormals    = new NativeArray<float3>( points.Length * materialMasks, Allocator.TempJob );
+            using var combinedAgrees   = new NativeArray<bool>( points.Length, Allocator.TempJob );
             using var managed          = new NativeArray<bool>( 1, Allocator.TempJob );
 
             new PointJob {
@@ -188,10 +195,13 @@ public class BurstSurfaceExtractorTest {
                 materials        = materials,
                 normals          = normals,
                 maskedNormals    = maskedNormals,
+                combinedAgrees   = combinedAgrees,
                 managed          = managed
             }.Run( );
 
             BurstTestSupport.assertRanUnderBurst( managed );
+
+            Assert.AreEqual( 0, combinedAgrees.Count( ( agrees ) => !agrees ), "points where the density and material at once are not the two by themselves" );
 
             BurstTestSupport.assertClose( "densities", points.Select( ( point ) => SurfaceExtractor.calculateDensity( point, shapes ) ).ToArray( ), densities.ToArray( ), densityTolerance );
             var nearSurface = Enumerable.Range( 0, points.Length ).Where( ( point ) => Mathf.Abs( SurfaceExtractor.calculateDensity( points[point], shapes ) ) < normalDistance ).ToArray( );

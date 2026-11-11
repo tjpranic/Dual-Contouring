@@ -112,6 +112,15 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     public Color debugMinimizingVertexColor = Color.blue;
     public Color debugSurfaceNormalColor    = Color.blue;
 
+    // the Burst implementations keep a contour outside of managed memory, and only copy its corners, edges and voxels out
+    // of it when someone is going to look at them: the debug view, or a test that sets this
+    [HideInInspector]
+    public bool keepDebugInformation = false;
+
+    public bool debugInformationWanted {
+        get { return this.debugFlags != Debug.Off || this.keepDebugInformation; }
+    }
+
     private bool          directToGPU = false;
     private Material      material;
     private ComputeBuffer argumentsBuffer;

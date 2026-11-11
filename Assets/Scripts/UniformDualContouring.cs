@@ -16,7 +16,7 @@ using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using VertexNormals             = SurfaceExtractor.VertexNormals;
 using QEFSolverType             = QEFSolver.Type;
 
-public class UniformDualContouring : Voxelizer {
+public partial class UniformDualContouring : Voxelizer {
 
     public class Corner : SurfaceExtractor.Corner {
 
@@ -811,6 +811,7 @@ public class UniformDualContouring : Voxelizer {
 
     private ManagedImplementation managedImplementation;
     private GPUImplementation     gpuImplementation;
+    private BurstImplementation   burstImplementation;
 
     private Implementation _implementation;
     protected override Implementation implementation {
@@ -818,7 +819,7 @@ public class UniformDualContouring : Voxelizer {
             return this.implementationType switch {
                 ImplementationType.Managed => this.managedImplementation,
                 ImplementationType.GPU     => this.gpuImplementation,
-                ImplementationType.Burst   => throw new NotImplementedException( "Uniform dual contouring has no Burst implementation yet" ),
+                ImplementationType.Burst   => this.burstImplementation,
                 _                          => throw new Exception( "Unknown implementation type specified" )
             };
         }
@@ -839,6 +840,7 @@ public class UniformDualContouring : Voxelizer {
     public override void Start( ) {
         this.managedImplementation = new ManagedImplementation( );
         this.gpuImplementation     = new GPUImplementation( );
+        this.burstImplementation   = new BurstImplementation( );
 
         if( !testing ) {
             base.Start( );
@@ -852,6 +854,10 @@ public class UniformDualContouring : Voxelizer {
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
         // non-power-of-2 values don't voxelize well
         var resolution = ( int )Mathf.Pow( 2, this.resolution );
+
+        if( this.burstImplementation != null ) {
+            this.burstImplementation.debugInformation = this.debugInformationWanted;
+        }
 
         return this.implementation.voxelize(
             densityFunctions,

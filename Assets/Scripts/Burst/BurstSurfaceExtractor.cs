@@ -95,6 +95,43 @@ public static class BurstSurfaceExtractor {
         return materialIndex;
     }
 
+    // calculateDensity and calculateMaterial at once, which takes every density function's sample for both instead of
+    // sampling it twice. The results are those of the two functions by themselves
+    public static float calculateDensityAndMaterial( float3 point, NativeArray<BurstDensityFunction> densityFunctions, out MaterialIndex materialIndex ) {
+        var density = float.MaxValue;
+
+        materialIndex = MaterialIndex.Void;
+
+        for( var index = 0; index < densityFunctions.Length; ++index ) {
+            var densityFunction = densityFunctions[index];
+
+            var sample = densityFunction.sample( point );
+
+            switch( densityFunction.combination ) {
+                case Combination.Union:
+                    density = min( density, sample );
+                    if( sample < 0.0f ) {
+                        materialIndex |= densityFunction.materialIndex;
+                    }
+                    break;
+                case Combination.Intersection:
+                    density = max( density, sample );
+                    if( sample > 0.0f ) {
+                        materialIndex &= ~densityFunction.materialIndex;
+                    }
+                    break;
+                case Combination.Subtraction:
+                    density = max( density, -sample );
+                    if( sample < 0.0f ) {
+                        materialIndex &= ~densityFunction.materialIndex;
+                    }
+                    break;
+            }
+        }
+
+        return density;
+    }
+
     // where the density of the given material, or of all of them, changes sign between two points
     public static float3 approximateIntersection(
         float3                             position,

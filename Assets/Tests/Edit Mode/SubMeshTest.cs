@@ -16,6 +16,7 @@ public class SubMeshTest : ContouringTest {
     public enum Algorithm {
         UniformManaged,
         UniformGPU,
+        UniformBurst,
         Adaptive,
         Manifold
     }
@@ -37,6 +38,7 @@ public class SubMeshTest : ContouringTest {
         return algorithm switch {
             Algorithm.UniformManaged => this.createUniformVoxelizer( 4, ImplementationType.Managed, QEFSolverType.SVD, shapes ),
             Algorithm.UniformGPU     => this.createUniformVoxelizer( 4, ImplementationType.GPU,     QEFSolverType.SVD, shapes ),
+            Algorithm.UniformBurst   => this.createUniformVoxelizer( 4, ImplementationType.Burst,   QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive       => this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ),
             Algorithm.Manifold       => this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ),
             _                        => throw new Exception( "Unknown algorithm specified" )
