@@ -27,12 +27,33 @@ Burst gives the same mesh as Managed, triangle for triangle, with vertices that 
 
 Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed` and `Assets/Scenes/<Algorithm>/Burst`. For Uniform Dual Contouring those two folders are under `CPU`, next to `GPU`.
 
+## Interactive editor
+`Assets/Scenes/Interactive Editor.unity` lets you build a model out of shapes and see it contoured as you edit, in edit mode, without pressing Play.
+
+The **Interactive Editor** object holds the editor and a voxelizer for each algorithm. In its inspector:
+
+- **Algorithm** picks Uniform, Adaptive or Manifold. The settings all voxelizers share, such as resolution, implementation and solver, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
+- **Shapes** lists every shape below the object, in the order their operations apply. Each row has an enabled box, the shape's name, which selects it, its operation (Union, Intersection or Subtraction) and material, and a remove button. Drag rows to reorder them. **Add Cuboid** and **Add Ellipsoid** add a new shape. Everything can be undone.
+- **Contour** contours at once. The line below it says whether the mesh is up to date, and how long the last contour took.
+- **Warnings** point out likely mistakes: a first shape that is not a Union, a shape without a material or outside the grid, a material the renderer has no material for, a debug view that draws so much it slows the editor down.
+
+Shapes are read off their transforms the way Unity shows them. A direct child of scale 1 fills the grid, whatever the scale of the editor object, and the box around the editor in the scene view is the grid. Groups, empty objects between the editor and its shapes, move and scale the shapes in them. Shapes are contoured without their own rotation for now. In the scene view, an outline shows each shape where it is contoured, in green for Union, yellow for Intersection and red for Subtraction, so subtracted shapes can be seen and clicked.
+
+How the mesh follows changes depends on the implementation:
+
+| Implementation | Contours by itself |
+|---|---|
+| Burst, GPU | After every change, from the inspector, a handle, the hierarchy or an undo. Contours that take up to 50 ms follow a drag live; slower ones wait until the changes settle for the **Debounce** interval. After a contour over a second, it waits for **Contour** to be pressed until a contour is fast again. |
+| Managed | Never. Managed contours take from a tenth of a second at 16³ cells to most of a minute at 128³, so it contours when **Contour** is pressed. |
+
+Nothing contours by itself while Unity is not the active application, where everything runs many times slower. The mesh is not saved with the scene, so a Burst or GPU variant contours when the scene opens, and a Managed one waits for **Contour**.
+
 ## Code layout
 Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is split into partial class files: the component file, plus one file for each implementation.
 
 | Folder | Contents |
 |---|---|
-| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. |
+| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
 | `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. |
 | `Assets/Scripts/GPU` | The GPU implementation of Uniform Dual Contouring (`UniformDualContouring.GPU.cs`) and the layout it uploads density functions in. The compute shaders are in `Assets/Resources/Shaders`. |

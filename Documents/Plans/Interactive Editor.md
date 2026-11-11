@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for an editor in which shapes are added and combined with CSG operations, and the contour follows every change, in edit mode.
 
-**Status:** step 0 (measurement) done 2026-11-11, and the two questions it raised were answered (decisions 6 and 7). Steps 1 (re-runnable voxelizer), 2 (editor component and scene) and 3 (automatic remeshing) done 2026-11-11; step 3 awaits review.
+**Status:** complete. Steps 0 to 5 were done and reviewed on 2026-11-11. The editor is in `Assets/Scenes/Interactive Editor.unity`, and the README has a section on it. `Shape Rotation.md` follows.
 
 ## Goal
 
@@ -213,10 +213,52 @@ Each step compiles, passes every test, and is reviewed before the next one start
        - a material added to the renderer gets a sub-mesh without a contour.
    - **By hand in the scene:** moving the ball contoured by itself, and moving it back contoured again to the same vertex count, within two seconds each and without marking the scene modified.
    - **Verified:** edit mode 734/734, play mode 21/21, and the 416 `Start` hashes are identical to the baseline.
-4. **Authoring (medium).** Inspector list and buttons, outlines, grid box, warnings, status line, debug overlay in edit mode.
-   - Tests: add, remove and reorder through the same functions the inspector calls, each undoable; each warning condition.
-   - The inspector layout and the scene view drawing are checked by eye, by the user.
-5. **Documentation (small).** A README section on the interactive editor, and this plan marked complete.
+4. **Authoring (medium). Done 2026-11-11.** Inspector list and buttons, outlines, grid box, warnings, status line, debug overlay in edit mode.
+   - **Inspector:**
+     - The order is now Algorithm, Debounce, Contour, status, last contour, warnings, then the shape list.
+     - The shape list is a reorderable list of every shape below the editor (`volumes()`, inactive and disabled ones too), in the order operations apply, indented by group depth. Each row has the enabled box, the name and type (click to select the shape; grey when it isn't contoured), the operation, the material and a remove button. Rows edit through `SerializedObject`, so every edit is undoable.
+     - Under the list are "Add Cuboid", "Add Ellipsoid" and a one-line legend for the outline colours.
+   - **Operations** on `InteractiveEditor`, editor-only, each undoable:
+     - `addShape( type )`: a child at the centre at scale 0.5, Union, Material0, with a unique name, last in order.
+     - `removeShape( volume )`: removes the object, or only the shape when the object holds other shapes.
+     - `moveShape( from, to )`: in the list's order. The shape goes in front of the shape that will follow it, under that shape's parent, or after the last one. It keeps its world placement when it changes groups, so only the order changes. It never goes below itself.
+   - **Scene view:**
+     - Each contoured shape has a wire outline (box or ellipsoid) where and as large as it is contoured, so it shows the contour's reading, not the shape's own rotation. Colours: Union green, Intersection yellow, Subtraction red. Half opaque, fully when selected.
+     - The outlines are drawn through `[DrawGizmo]` for `Cuboid` and `Ellipsoid`, so clicking one selects that shape. Shapes outside an interactive editor, as in the example scenes, get none.
+     - A faint white wire box shows the grid, drawn by the editor's `OnDrawGizmos`.
+   - **Debug overlay:** the editor calls the selected voxelizer's `DrawShapes` from `RenderPipelineManager.beginCameraRendering` (and `Camera.onPreRender` for the built-in pipeline), leaving out preview and reflection cameras as Shapes does. That covers edit mode, and play mode, where the voxelizers are disabled.
+   - **Warnings** (`warnings()`), one line each, naming the shape:
+     - a first contoured shape that is not a Union;
+     - a shape without a material;
+     - a Union whose material the renderer has no material for;
+     - a shape with no size along an axis;
+     - a shape entirely outside the grid;
+     - a shape turned by its own rotation or a group's;
+     - a shape on the editor's own object;
+     - a debug view that draws more than 30,000 shapes a frame.
+     
+     Shapes that aren't contoured aren't warned about. The editor's own rotation is fine.
+   - **Debug overlay cost:** the CPU time of building the overlay for one camera, measured in a probe, is about 0.55–0.7 µs per shape:
+
+     | Cells | Minimizers only | Cells only | Every flag |
+     |---:|---:|---:|---:|
+     | 16³ | 0.7 ms | 2.3 ms | 17 ms |
+     | 32³ | 3.6 ms | 18 ms | 110 ms |
+     | 64³ | 20 ms | 146 ms | 927 ms |
+
+     This is the existing `Voxelizer.DrawShapes`, shared with the example scenes, so it is left as it is. `Voxelizer` gained `debugDrawCount`, worked out when the debug data is captured, and the editor warns above 30,000 (about 16 ms a frame per camera).
+   - **Tests:**
+     - `InteractiveEditorAuthoringTest` (12): add (both types, names, undo), remove (object, undo, a shape holding others), move (four directions, undo, into a group keeping its placement, not below itself, out of range).
+     - `InteractiveEditorTest` (17 more, 118 in all): every warning and the cases that must not warn, `volumes()`, and the debug draw count for each flag.
+   - **Undo in tests, a trap found on the way:** when an edit mode run ends, the test runner reverts the run's undo history (`PerformUndoTask`). The first version of the authoring tests worked in a temporary scene and closed it, and that revert brought the shapes they had removed with undo back into the active scene, the open "Interactive Editor" scene: a second editor and four loose objects. They were in memory only, with the scene file untouched and not marked modified. They were deleted, and each test now takes back its own undo steps before cleaning up, and only ever uses an untitled scene. Reruns leave the scene clean and log no assertions.
+   - **Seen:** the outlines (green cube, yellow rounding, red bite, green ball), the grid box and the debug overlay in edit mode, on a hidden editor beside the scene's. The inspector could not be captured, because the screen was locked and Unity could not repaint. Its look is for the user to check.
+   - **Verified:** edit mode 763/763, play mode 21/21, the 416 `Start` hashes identical to the baseline. After the full run the open scene still has only its four roots, is not marked modified, and no new assertion was logged.
+   - **After review, with the inspector seen:**
+     - Adding the editor adds the voxelizers it requires first, which put their long inspector above the editor's. `Reset` now moves a newly added editor above the first voxelizer the inspector shows (`moveAboveVoxelizers`; `MoveComponentUp` goes by shown components and does nothing on objects hidden from the hierarchy). The scene's editor was moved the same way and the scene saved; only its component order changed.
+     - The operation column takes 55% of what the name leaves, so "Intersection" fits, and the list has no empty footer.
+     - The ordering test moves components, which is recorded for undo. Without reverting its undo group, it left an empty "Interactive Editor" in the open scene, which was deleted. It now reverts it like the authoring tests.
+     - Edit mode 764/764, play mode 21/21, `Start` hashes identical, the open scene clean, and no assertion logged by the last two runs.
+5. **Documentation (small). Done 2026-11-11.** `README.md` has an "Interactive editor" section: the scene, the inspector, how shapes are read, the outlines, and which implementations contour by themselves. The code layout table names `InteractiveEditor.cs` and `RemeshScheduler.cs`. This plan is marked complete.
 
 ## Out of scope
 

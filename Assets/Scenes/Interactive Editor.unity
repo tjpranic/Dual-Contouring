@@ -328,10 +328,10 @@ GameObject:
   - component: {fileID: 954588973}
   - component: {fileID: 954588972}
   - component: {fileID: 954588971}
-  - component: {fileID: 954588970}
+  - component: {fileID: 954588967}
   - component: {fileID: 954588969}
   - component: {fileID: 954588968}
-  - component: {fileID: 954588967}
+  - component: {fileID: 954588970}
   m_Layer: 0
   m_Name: Interactive Editor
   m_TagString: Untagged

@@ -783,4 +783,265 @@ public class InteractiveEditorTest {
         Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
     }
 
+    // a renderer with a material for each of the first n material bits
+    private Material[] giveMaterials( InteractiveEditor editor, int count ) {
+        var material = new Material( Shader.Find( "Universal Render Pipeline/Lit" ) );
+        this.created.Add( material );
+
+        var materials = Enumerable.Repeat( material, count ).ToArray( );
+
+        editor.GetComponent<MeshRenderer>( ).sharedMaterials = materials;
+
+        return materials;
+    }
+
+    private static void assertOneWarningAbout( InteractiveEditor editor, string name, string about ) {
+        var warnings = editor.warnings( );
+
+        Assert.AreEqual( 1, warnings.Count, string.Join( "\n", warnings ) );
+        StringAssert.Contains( name,  warnings[0] );
+        StringAssert.Contains( about, warnings[0] );
+    }
+
+    [Test]
+    public void theStarterModelHasNoWarnings( ) {
+        var editor = this.createEditor( 5.0f );
+
+        this.giveMaterials( editor, 2 );
+        addStarterModel( editor.transform );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void aFirstShapeThatIsNoUnionIsWarnedAbout( [Values( Combination.Intersection, Combination.Subtraction )] Combination combination ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f, combination ).name = "Opening";
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+
+        assertOneWarningAbout( editor, "Opening", "first shape" );
+    }
+
+    // shapes that are not contoured cannot be the first
+    [Test]
+    public void aDisabledFirstShapeIsNotWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f, Combination.Subtraction ).enabled = false;
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void aShapeWithoutAMaterialIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, Vector3.one * 0.25f, Combination.Subtraction, MaterialIndex.Void ).name = "Hole";
+
+        assertOneWarningAbout( editor, "Hole", "no material" );
+    }
+
+    [Test]
+    public void aMaterialTheRendererLacksIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 2 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, Vector3.one * 0.25f, Combination.Union, MaterialIndex.Material2 ).name = "Blue";
+
+        assertOneWarningAbout( editor, "Blue", "material 2" );
+    }
+
+    // only a union adds a surface of its material
+    [Test]
+    public void aMaterialTheRendererLacksIsFineForASubtraction( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, Vector3.one * 0.25f, Combination.Subtraction, MaterialIndex.Material0 | MaterialIndex.Material3 );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void aShapeOutsideTheGridIsWarnedAbout( ) {
+        var editor = this.createEditor( 5.0f );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        addShape<Ellipsoid>( editor.transform, new Vector3( 0.0f, -1.0f, 0.0f ), Vector3.one * 0.5f ).name = "Far";
+
+        assertOneWarningAbout( editor, "Far", "outside the grid" );
+    }
+
+    [Test]
+    public void aShapeReachingIntoTheGridIsFine( ) {
+        var editor = this.createEditor( 5.0f );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Ellipsoid>( editor.transform, new Vector3( 0.0f, -0.625f, 0.0f ), Vector3.one * 0.5f );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void aShapeWithoutSizeIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, new Vector3( 0.5f, 0.0f, 0.5f ) ).name = "Flat";
+
+        assertOneWarningAbout( editor, "Flat", "no size" );
+    }
+
+    [Test]
+    public void aRotatedShapeIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Cuboid>( editor.transform, Vector3.zero, Vector3.one * 0.5f ).transform.localRotation = Quaternion.Euler( 0.0f, 30.0f, 0.0f );
+
+        assertOneWarningAbout( editor, "Cuboid", "turned" );
+    }
+
+    [Test]
+    public void aShapeInARotatedGroupIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+        var group  = createGroup( editor.transform, Vector3.zero, 1.0f );
+
+        group.localRotation = Quaternion.Euler( 30.0f, 0.0f, 0.0f );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Ellipsoid>( group, Vector3.zero, Vector3.one * 0.5f );
+
+        assertOneWarningAbout( editor, "Ellipsoid", "turned" );
+    }
+
+    // the rotation of the editor itself turns the whole mesh, which is fine
+    [Test]
+    public void aRotatedEditorIsFine( ) {
+        var editor = this.createEditor( );
+
+        editor.transform.localRotation = Quaternion.Euler( 0.0f, 45.0f, 0.0f );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void aShapeOnTheEditorItselfIsWarnedAbout( ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+        addShape<Ellipsoid>( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        editor.gameObject.AddComponent<Cuboid>( );
+
+        assertOneWarningAbout( editor, "Interactive Editor", "own object" );
+    }
+
+    // the inspector lists shapes that are not contoured too, so they can be turned back on
+    [Test]
+    public void volumesListsEveryShapeBelowTheEditor( ) {
+        var editor = this.createEditor( );
+        var group  = createGroup( editor.transform, Vector3.zero, 1.0f );
+
+        var enabled  = addShape<Cuboid>    ( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        var disabled = addShape<Ellipsoid> ( editor.transform, Vector3.zero, Vector3.one * 0.5f );
+        var inactive = addShape<Cuboid>    ( group,            Vector3.zero, Vector3.one * 0.5f );
+
+        disabled.enabled = false;
+        group.gameObject.SetActive( false );
+        editor.gameObject.AddComponent<Ellipsoid>( );
+
+        // the group came first
+        CollectionAssert.AreEqual( new Volume[] { inactive, enabled, disabled }, editor.volumes( ) );
+        Assert.AreEqual( 1, editor.shapes( ).Count );
+    }
+
+    // drawing takes about half a microsecond to a microsecond per shape, every frame, for every camera
+    [Test]
+    public void aDebugViewThatDrawsTooMuchIsWarnedAbout( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        this.giveMaterials( editor, 2 );
+        addStarterModel( editor.transform );
+
+        // 32^3 cells
+        editor.voxelizer.resolution = 5;
+        editor.voxelizer.debugFlags = Voxelizer.Debug.Cells;
+        editor.contour( );
+
+        Assert.AreEqual( 32 * 32 * 32, editor.voxelizer.debugDrawCount );
+        assertOneWarningAbout( editor, ( 32 * 32 * 32 ).ToString( "N0" ), "debug view" );
+
+        // 16^3 cells
+        editor.voxelizer.resolution = 4;
+        editor.contour( );
+
+        Assert.AreEqual( 16 * 16 * 16, editor.voxelizer.debugDrawCount );
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
+    [Test]
+    public void debugDrawCountFollowsTheFlags( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.voxelizer.resolution = 3;
+
+        editor.voxelizer.debugFlags = Voxelizer.Debug.Off;
+        editor.contour( );
+        Assert.AreEqual( 0, editor.voxelizer.debugDrawCount, "off" );
+
+        editor.voxelizer.debugFlags = Voxelizer.Debug.Corners;
+        editor.contour( );
+        Assert.AreEqual( 9 * 9 * 9, editor.voxelizer.debugDrawCount, "corners of 8^3 cells" );
+
+        editor.voxelizer.debugFlags = Voxelizer.Debug.Edges | Voxelizer.Debug.Intersections;
+        editor.contour( );
+        Assert.AreEqual( 3 * 8 * 9 * 9, editor.voxelizer.debugDrawCount, "every edge, crossing or not" );
+
+        editor.voxelizer.debugFlags = Voxelizer.Debug.Minimizers;
+        editor.contour( );
+        Assert.AreEqual( 2 * editor.lastContour.Value.vertexCount, editor.voxelizer.debugDrawCount, "a vertex and a normal for each vertex of the shared mesh" );
+    }
+
+    // the editor's own inspector comes before the selected voxelizer's long one. Unity does not reorder the components
+    // of an object hidden from the hierarchy, so this one is only kept from being saved
+    [Test]
+    public void theEditorMovesAboveItsVoxelizers( ) {
+        var gameObject = new GameObject( "Interactive Editor" ) { hideFlags = HideFlags.DontSave };
+
+        this.created.Add( gameObject );
+
+        var editor = gameObject.AddComponent<InteractiveEditor>( );
+
+        // moving a component is recorded for undo, and the test runner reverts what a run recorded when it ends, which
+        // would bring the object back after it was destroyed. So the test takes its own undo steps back first
+        UnityEditor.Undo.IncrementCurrentGroup( );
+        var undoGroup = UnityEditor.Undo.GetCurrentGroup( );
+
+        try {
+            editor.moveAboveVoxelizers( );
+
+            var shown = editor.GetComponents<Component>( ).Where( ( component ) => ( component.hideFlags & HideFlags.HideInInspector ) == 0 ).ToList( );
+
+            Assert.Less( shown.IndexOf( editor ), shown.IndexOf( editor.voxelizer ) );
+            Assert.Greater( shown.IndexOf( editor ), shown.IndexOf( editor.GetComponent<MeshRenderer>( ) ), "it stays below the renderer" );
+        }
+        finally {
+            UnityEditor.Undo.RevertAllDownToGroup( undoGroup );
+        }
+    }
+
 }

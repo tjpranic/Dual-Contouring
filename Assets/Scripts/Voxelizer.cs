@@ -144,6 +144,10 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private DebugEdge[]  debugEdges;
     private DebugVoxel[] debugVoxels;
 
+    // how many shapes the debug view draws each frame, worked out when the debug data is captured. Drawing takes about
+    // half a microsecond to a microsecond of the CPU per shape and camera, so this tells how much it slows things down
+    public int debugDrawCount { get; private set; }
+
     private static readonly ProfilerMarker voxelizeMarker      = new( "Voxelizer.Voxelize" );
     private static readonly ProfilerMarker splitVerticesMarker = new( "Voxelizer.SplitVertices" );
     private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
@@ -387,9 +391,10 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         IEnumerable<SurfaceExtractor.Voxel>  voxels
     ) {
         // the debug data of an earlier contour would show the wrong thing
-        this.debugCorners = null;
-        this.debugEdges   = null;
-        this.debugVoxels  = null;
+        this.debugCorners   = null;
+        this.debugEdges     = null;
+        this.debugVoxels    = null;
+        this.debugDrawCount = 0;
 
         if( this.debugFlags == Debug.Off ) {
             return;
@@ -414,6 +419,32 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                 normal          = voxel.normal
             }
         ).ToArray( );
+
+        // what DrawShapes goes on to draw
+        var drawEdges         = ( this.debugFlags & Debug.Edges         ) == Debug.Edges;
+        var drawIntersections = ( this.debugFlags & Debug.Intersections ) == Debug.Intersections;
+
+        if( ( this.debugFlags & Debug.Cells ) == Debug.Cells ) {
+            this.debugDrawCount += this.debugVoxels.Length;
+        }
+        if( ( this.debugFlags & Debug.Corners ) == Debug.Corners ) {
+            this.debugDrawCount += this.debugCorners.Length;
+        }
+        if( drawEdges || drawIntersections ) {
+            foreach( var edge in this.debugEdges ) {
+                if( edge.intersectsContour ? drawIntersections : drawEdges ) {
+                    ++this.debugDrawCount;
+                }
+            }
+        }
+        if( ( this.debugFlags & Debug.Minimizers ) == Debug.Minimizers ) {
+            foreach( var voxel in this.debugVoxels ) {
+                if( voxel.hasFeaturePoint ) {
+                    // its normal and the vertex itself
+                    this.debugDrawCount += 2;
+                }
+            }
+        }
     }
 
     public override void DrawShapes( Camera camera ) {
