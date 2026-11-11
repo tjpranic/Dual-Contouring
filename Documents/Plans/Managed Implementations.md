@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for moving the managed implementation of each dual contouring algorithm out of its component file, the way the Burst implementations already are.
 
-**Status:** steps 0 to 3 done on 2026-11-11, step 4 next. The decisions were made on 2026-11-11.
+**Status:** complete. All five steps, 0 to 4, were done and reviewed on 2026-11-11. The managed implementations live in `Assets/Scripts/Managed/` and Uniform's GPU implementation in `Assets/Scripts/GPU/`, beside `Assets/Scripts/Burst/`. Every mesh, test and scene is unchanged.
 
 ## Goal
 
@@ -88,7 +88,7 @@ Each step compiles, passes every test, gives identical output, and is reviewed b
    - **Tools:** the probe (run through `unity command script run`, compiled in memory, nothing added to the project), the moved-lines checker and the comparison script are in the session's scratchpad, together with the baseline results.
 1. **Managed code (medium). Done 2026-11-11.**
    - **Result:**
-     - The component files went from 999, 682 and 949 lines to 730, 56 and 53. Uniform's file still holds the GPU code until step 3.
+     - The component files went from 999, 682 and 949 lines to 730, 56 and 53. Uniform's file kept the GPU code until step 3.
      - The new files are `UniformDualContouring.Managed.cs` (285 lines), `AdaptiveDualContouring.Managed.cs` (634) and `ManifoldDualContouring.Managed.cs` (904).
      - The moved-lines check found 3,091 lines moved unchanged. Everything else that changed is `using` lines, the three `partial` declarations, braces and blank lines.
      - The compile gave 0 errors and 0 warnings. Tests: edit mode 513/513, play mode 20/20. All 1,134 probe configurations match the baseline.
@@ -102,7 +102,7 @@ Each step compiles, passes every test, gives identical output, and is reviewed b
    - **Result:**
      - `SurfaceExtractor.cs` went from 342 to 173 lines; `calculateMaterial` to `findHighestMaterialBit` moved to `Managed/SurfaceExtractor.Managed.cs`.
      - `QEFSolver.cs` went from 48 to 7 lines and keeps only `QEFSolver.Type`.
-     - `DensityFunction.cs` went from 85 to 46 lines; `Snapshot` and `snapshot( )` moved. `Data` stays there until step 3.
+     - `DensityFunction.cs` went from 85 to 46 lines; `Snapshot` and `snapshot( )` moved. `Data` stayed there until step 3.
      - The moved-lines check found 249 lines moved unchanged, with only headers besides.
      - The compile gave 0 errors and 0 warnings. Tests: edit mode 513/513, play mode 20/20. All 1,134 probe configurations match the baseline. No asset changed.
      - No call site changed.
@@ -113,7 +113,7 @@ Each step compiles, passes every test, gives identical output, and is reviewed b
      - The moved-lines check found 376 lines moved unchanged, with only headers besides.
      - The compile gave 0 errors and 0 warnings. Tests: edit mode 513/513, play mode 20/20. All 1,134 probe configurations match the baseline, the 112 GPU ones as sets of triangles.
      - The compute shader still loads from `Resources`. No asset changed.
-4. **Documents (small).** `README.md` gets a short code layout section naming the three folders and the rule. This plan is marked complete.
+4. **Documents (small). Done 2026-11-11.** `README.md` gets a short code layout section naming the three folders and the rule. This plan is marked complete.
 
 ## Checks
 
