@@ -2,7 +2,7 @@
 
 Plan written 2026-11-11 for making Cuboid and Ellipsoid honour their rotation in the Managed, Burst and GPU implementations.
 
-**Status:** in progress. The user asked for it on 2026-11-11 and started it on 2026-11-12. Steps 0 to 4 are done: every implementation contours rotated shapes, and so does the interactive editor. Step 5, the documentation, is left. The user decided two things on 2026-11-12, both under Measurements and finding 7:
+**Status:** complete. The user asked for it on 2026-11-11, and steps 0 to 5 were done and reviewed on 2026-11-12. Every implementation contours rotated shapes, and so does the interactive editor; the README describes both. The user decided two things on 2026-11-12, both under Measurements and finding 7:
 - They accepted that unrotated Burst contours are 3 to 5% slower.
 - The GPU takes every shape through the rotation, and its unrotated meshes are a unit or two in the last place off from before.
 
@@ -153,7 +153,15 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **The tests catch a mistake:** with a group's rotation applied before the shape's instead of after, three conversion tests failed.
    - **Live:** a hidden probe editor with a Burst cube was turned from outside. Unity's own editor updates remeshed it each time, to a reach of 0.354 at 45° and 0.321 at 20°.
    - **Verification:** edit mode 878 of 878, play mode 21 of 21. The 416 `Start` hashes are identical to the baseline from the end of step 3.
-5. **Documentation (small).** README, and this plan marked complete.
+5. **Documentation (small).** README, and this plan marked complete. **Done 2026-11-12:**
+   - **Implementations section:** volumes are placed by their transform's position, rotation and scale; every implementation contours turned shapes; and Burst is 6 to 11% slower on a model whose shapes are all turned.
+   - **Interactive editor section:**
+     - groups move, turn and scale their shapes;
+     - a shape turned inside an unevenly scaled group is contoured with square sides, and warned about;
+     - the outlines show shapes as they are contoured;
+     - turning a shape with a handle remeshes Burst and the GPU.
+   - **Code layout:** names `DensityFunction.Frame`.
+   - **`Interactive Editor.md`'s status** points here.
 
 ## Measurements
 

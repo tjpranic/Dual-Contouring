@@ -2,7 +2,10 @@
 
 Plan written 2026-11-11 for an editor in which shapes are added and combined with CSG operations, and the contour follows every change, in edit mode.
 
-**Status:** complete. Steps 0 to 5 were done and reviewed on 2026-11-11. The editor is in `Assets/Scenes/Interactive Editor.unity`, and the README has a section on it. `Shape Rotation.md` follows.
+**Status:** complete. Steps 0 to 5 were done and reviewed on 2026-11-11. The editor is in `Assets/Scenes/Interactive Editor.unity`, and the README has a section on it. `Shape Rotation.md` followed and was completed on 2026-11-12.
+- Since then the editor reads rotations, and the signature includes them.
+- The "turned" warning became one about shapes a group would shear.
+- Where this plan says rotation is ignored, that describes the editor as it was built here.
 
 ## Goal
 
