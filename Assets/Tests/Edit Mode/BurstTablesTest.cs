@@ -96,6 +96,15 @@ public class BurstTablesTest {
                 for( var across = 0; across < 256; ++across ) {
                     this.entries.Add( BurstTables.sharesJoinedFace( solidCorners, across ) ? 1 : 0 );
                 }
+                for( var vertex = 0; vertex < 4; ++vertex ) {
+                    for( var other = 0; other < 4; ++other ) {
+                        this.entries.Add( BurstTables.lookupSeparation( solidCorners, vertex, other, out var normal, out var twiceOffset ) ? 1 : 0 );
+                        this.entries.Add( normal.x );
+                        this.entries.Add( normal.y );
+                        this.entries.Add( normal.z );
+                        this.entries.Add( twiceOffset );
+                    }
+                }
                 for( var edge = 0; edge < 12; ++edge ) {
                     for( var side = 0; side < 2; ++side ) {
                         this.entries.Add( BurstTables.lookupEdgeAcrossFace( solidCorners, edge, side ) );
@@ -208,6 +217,15 @@ public class BurstTablesTest {
             entries.Add( DualMarchingCubes.complement( solidCorners ) );
             for( var across = 0; across < 256; ++across ) {
                 entries.Add( DualMarchingCubes.sharesJoinedFace( solidCorners, across ) ? 1 : 0 );
+            }
+            for( var vertex = 0; vertex < 4; ++vertex ) {
+                for( var other = 0; other < 4; ++other ) {
+                    entries.Add( DualMarchingCubes.lookupSeparation( solidCorners, vertex, other, out var normal, out var twiceOffset ) ? 1 : 0 );
+                    entries.Add( normal.x );
+                    entries.Add( normal.y );
+                    entries.Add( normal.z );
+                    entries.Add( twiceOffset );
+                }
             }
             for( var edge = 0; edge < 12; ++edge ) {
                 for( var side = 0; side < 2; ++side ) {

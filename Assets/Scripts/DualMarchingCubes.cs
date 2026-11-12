@@ -53,6 +53,16 @@ public static class DualMarchingCubes {
     private static readonly int[,,] edgesAcrossFaces = buildEdgesAcrossFaces( );
     private static readonly int[]   joinedFaces      = buildJoinedFaces( );
 
+    // where each corner of a cell is, in units of the cell from its minimum
+    private static readonly int[,] cornerOffsets = {
+        { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 1 }, { 0, 0, 1 },
+        { 0, 1, 1 }, { 0, 1, 0 }, { 1, 1, 0 }, { 1, 1, 1 }
+    };
+
+    // for each of the 256 ways and each pair of vertices of the cell, the lower numbered one first, a plane between
+    // their pieces of the contour: its normal and twice its offset, all zero where there is no such pair
+    private static readonly int[,,] separations = buildSeparations( );
+
     // the edges of a cell that each of its vertices is associated with, given the materials at its corners. A cell
     // that the contour does not pass through has no vertices
     public static int[][] lookupVertexEdges( MaterialIndex[] corners ) {
@@ -112,6 +122,33 @@ public static class DualMarchingCubes {
     // no joined face, and the edge between them is part of two polygons again
     public static int complement( int solidCorners ) {
         return ~solidCorners & 255;
+    }
+
+    // a plane that keeps two vertices of a cell apart. The edges of the piece of the contour of the first lie on one side
+    // of it or in it, and those of the second on the other side or in it: for every point of an edge of the first, the
+    // normal times the point is at most the offset, in units of the cell from its minimum. Each vertex of a cell with
+    // several stays on its own side of such planes, so that the polygons of one piece do not pass through those of
+    // another (Occupancy-Based Dual Contouring, appendix A.1.5, leaves cells with several vertices uncovered). The
+    // offset is given twice, which makes it a whole number. False where the cell has no such two vertices
+    public static bool lookupSeparation( int solidCorners, int vertex, int other, out UnityEngine.Vector3Int normal, out int twiceOffset ) {
+        normal      = UnityEngine.Vector3Int.zero;
+        twiceOffset = 0;
+
+        var count = vertexEdges[solidCorners].Length;
+
+        if( vertex == other || vertex < 0 || other < 0 || vertex >= count || other >= count ) {
+            return false;
+        }
+
+        var lower  = System.Math.Min( vertex, other );
+        var higher = System.Math.Max( vertex, other );
+        var pair   = ( lower * ( 7 - lower ) / 2 ) + ( higher - lower - 1 );
+        var sign   = vertex < other ? 1 : -1;
+
+        normal      = new UnityEngine.Vector3Int( separations[solidCorners, pair, 0], separations[solidCorners, pair, 1], separations[solidCorners, pair, 2] ) * sign;
+        twiceOffset = separations[solidCorners, pair, 3] * sign;
+
+        return true;
     }
 
     // whether a cell and the cell across its joined face both have the face between them joined, given the solid corners
@@ -301,6 +338,112 @@ public static class DualMarchingCubes {
         }
 
         return table;
+    }
+
+    // the pieces of a cell are kept apart by the plane that leaves the widest gap between the corners at the ends of
+    // their edges, midway in that gap. Most pairs of pieces touch, at a corner or along a diagonal, and every plane
+    // through where they touch that has one on either side leaves no gap: of those it is the plane that faces most
+    // squarely from the middle of the corners of the one piece to the middle of those of the other. Every pair has a
+    // plane among those whose normals are -1, 0 or 1 along each axis, which are the directions of the planes through
+    // any three corners of a cell
+    private static int[,,] buildSeparations( ) {
+        var table = new int[256, 6, 4];
+
+        for( var solidCorners = 0; solidCorners < table.GetLength( 0 ); ++solidCorners ) {
+            var vertices = vertexEdges[solidCorners];
+
+            for( var vertex = 0; vertex < vertices.Length; ++vertex ) {
+                for( var other = vertex + 1; other < vertices.Length; ++other ) {
+                    var pair = ( vertex * ( 7 - vertex ) / 2 ) + ( other - vertex - 1 );
+
+                    var corners      = findCorners( vertices[vertex] );
+                    var otherCorners = findCorners( vertices[other] );
+
+                    var found = false;
+
+                    // the best plane so far: its gap and how far apart the middles of the two pieces are along its
+                    // normal, each as its square over the square of the length of the normal
+                    var widest   = 0L;
+                    var farthest = 0L;
+                    var length   = 1L;
+
+                    for( var x = -1; x <= 1; ++x ) {
+                        for( var y = -1; y <= 1; ++y ) {
+                            for( var z = -1; z <= 1; ++z ) {
+                                if( x == 0 && y == 0 && z == 0 ) {
+                                    continue;
+                                }
+
+                                int along( int corner ) {
+                                    return ( x * cornerOffsets[corner, 0] ) + ( y * cornerOffsets[corner, 1] ) + ( z * cornerOffsets[corner, 2] );
+                                }
+
+                                var highest = int.MinValue;
+                                var lowest  = int.MaxValue;
+                                var sum     = 0;
+                                var otherSum = 0;
+
+                                foreach( var corner in corners ) {
+                                    highest = System.Math.Max( highest, along( corner ) );
+                                    sum    += along( corner );
+                                }
+                                foreach( var corner in otherCorners ) {
+                                    lowest    = System.Math.Min( lowest, along( corner ) );
+                                    otherSum += along( corner );
+                                }
+
+                                if( highest > lowest ) {
+                                    continue;
+                                }
+
+                                // from the middle of the one to the middle of the other, times the number of corners
+                                // of both, which is the same for every plane
+                                long apart   = ( otherSum * corners.Count ) - ( sum * otherCorners.Count );
+                                long gap     = lowest - highest;
+                                long squared = ( x * x ) + ( y * y ) + ( z * z );
+
+                                var wider   = gap * gap * length > widest * squared;
+                                var asWide  = gap * gap * length == widest * squared;
+                                var farther = apart * apart * length > farthest * squared;
+
+                                if( !found || wider || ( asWide && farther ) ) {
+                                    found    = true;
+                                    widest   = gap * gap;
+                                    farthest = apart * apart;
+                                    length   = squared;
+
+                                    table[solidCorners, pair, 0] = x;
+                                    table[solidCorners, pair, 1] = y;
+                                    table[solidCorners, pair, 2] = z;
+                                    table[solidCorners, pair, 3] = highest + lowest;
+                                }
+                            }
+                        }
+                    }
+
+                    if( !found ) {
+                        throw new System.Exception( "Two pieces of the contour in a cell without a plane between them" );
+                    }
+                }
+            }
+        }
+
+        return table;
+    }
+
+    // the corners at the ends of the given edges, each once
+    private static List<int> findCorners( int[] edges ) {
+        var corners = new List<int>( );
+
+        foreach( var edge in edges ) {
+            for( var end = 0; end < 2; ++end ) {
+                if( !corners.Contains( edgeCorners[edge, end] ) ) {
+                    corners.Add( edgeCorners[edge, end] );
+                }
+            }
+        }
+
+        return corners;
     }
 
     // the corner that two edges have in common, or -1 where they do not meet

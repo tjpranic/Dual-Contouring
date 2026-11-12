@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -41,11 +42,37 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
     }
 
     // section 5.4 keeps every vertex inside its cell, where the reference implementation has it a thousandth of a cell
-    // from the faces. A vertex the QEF put outside was moved back, and is on one of those inner faces
-    private static bool wasMovedIntoItsCell( SurfaceExtractor.Voxel voxel ) {
-        return Enumerable.Range( 0, 3 ).Any(
-            ( axis ) => voxel.vertex[axis] - voxel.minimum[axis] < 1.5f * BurstOccupancy.margin * cell || voxel.maximum[axis] - voxel.vertex[axis] < 1.5f * BurstOccupancy.margin * cell
-        );
+    // from the faces, and a vertex of a cell with several is kept on its own side of the planes between them. A vertex
+    // the QEF put outside was moved back, and is on one of those inner faces or planes
+    private static HashSet<SurfaceExtractor.Voxel> findMovedIntoTheirCells( SurfaceExtractor.Voxel[] voxels ) {
+        const float reach = 1.5f * BurstOccupancy.margin;
+
+        var moved = new HashSet<SurfaceExtractor.Voxel>( );
+
+        foreach( var cell in voxels.GroupBy( ( voxel ) => voxel.center ) ) {
+            // the debug view lists the vertices of a cell in the order the table numbers them. A cell that took its
+            // vertices from its complement has as many as that has
+            var vertices     = cell.ToArray( );
+            var solidCorners = DualMarchingCubes.solidCornersOf( vertices[0].corners.Select( ( corner ) => corner.materialIndex ).ToArray( ) );
+            var lookup       = DualMarchingCubes.lookupVertexEdges( solidCorners ).Length == vertices.Length ? solidCorners : DualMarchingCubes.complement( solidCorners );
+
+            for( var vertex = 0; vertex < vertices.Length; ++vertex ) {
+                var inCell = ( vertices[vertex].vertex - vertices[vertex].minimum ).divide( vertices[vertex].size );
+
+                var atFace = Enumerable.Range( 0, 3 ).Any( ( axis ) => inCell[axis] < reach || inCell[axis] > 1.0f - reach );
+
+                var atPlane = Enumerable.Range( 0, vertices.Length ).Any(
+                    ( other ) => DualMarchingCubes.lookupSeparation( lookup, vertex, other, out var normal, out var twiceOffset ) &&
+                                 Vector3.Dot( new Vector3( normal.x, normal.y, normal.z ), inCell ) > ( twiceOffset * 0.5f ) - reach
+                );
+
+                if( atFace || atPlane ) {
+                    moved.Add( vertices[vertex] );
+                }
+            }
+        }
+
+        return moved;
     }
 
     // the corners of a cuboid in its own frame, which ShapeContourTest leaves to RotatedCubeTest
@@ -127,8 +154,10 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
             return Mathf.Abs( volume.sample( voxel.vertex ) ) / cell;
         }
 
-        var free  = voxels.Where( ( voxel ) => !wasMovedIntoItsCell( voxel ) ).ToArray( );
-        var moved = voxels.Where( wasMovedIntoItsCell ).ToArray( );
+        var movedIntoTheirCells = findMovedIntoTheirCells( voxels );
+
+        var free  = voxels.Where( ( voxel ) => !movedIntoTheirCells.Contains( voxel ) ).ToArray( );
+        var moved = voxels.Where( movedIntoTheirCells.Contains ).ToArray( );
 
         var worstFree  = free.Max( distanceOf );
         var worstMoved = moved.Length > 0 ? moved.Max( distanceOf ) : 0.0f;
@@ -178,6 +207,23 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
 
         Assert.LessOrEqual( distances.Last( ),                 isExact( type, turn ) ? 0.02f : 0.6f,  "how far the mesh is from the edges at worst, in cells" );
         Assert.LessOrEqual( distances[distances.Length / 2], isExact( type, turn ) ? 0.001f : 0.15f, "how far the mesh is from the middle one of the points along the edges, in cells" );
+    }
+
+    // section 5.4: no two triangles of any shape pass through each other. Split along the same diagonal always, as
+    // Manifold Dual Contouring splits them, the polygons of the turned shapes with edges do: 2 to 7 pairs of triangles
+    // on each, and 16 on the upright octahedron
+    [Test]
+    public void noTwoTrianglesCross( [Values] DensityFunction.Type type, [Values] Turn turn ) {
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( type, turn ) ).mesh ), "pairs of triangles that pass through each other" );
+    }
+
+    [Test]
+    public void withoutTheSplitTrianglesCross( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.Octahedron, DensityFunction.Type.Cone )] DensityFunction.Type type ) {
+        var voxelizer = this.create( type, Turn.Turned );
+
+        voxelizer.splitQuads = false;
+
+        Assert.Greater( MeshIntersections.count( this.voxelize( voxelizer ).mesh ), 0, "pairs of triangles that pass through each other without the split" );
     }
 
     // section 5.3: the plane at a 1D point goes through it and the two 2D points next to it. On a cube those are on the

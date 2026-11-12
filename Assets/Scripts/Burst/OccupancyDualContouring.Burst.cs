@@ -179,8 +179,53 @@ public partial class OccupancyDualContouring {
 
             qef.solve( grid.centerOf( cell ), out var minimizer, out _ );
 
-            position = BurstOccupancy.intoCell( grid, cell, average, minimizer );
+            position = BurstOccupancy.intoCell( grid, cell, lookup, vertex, average, minimizer );
             normal   = BurstSurfaceExtractor.normalize( normal );
+        }
+
+        // the edge of a cell along the given axis at its maximum, which the cell starts the polygon around: the corners
+        // of the grid at its ends, whether the contour crosses it, which end is solid, and the materials there
+        public struct Edge {
+
+            public int3          start;
+            public int3          end;
+            public bool          crossed;
+            public bool          startIsSolid;
+            public MaterialIndex material;
+
+        }
+
+        // that edge is edge 3, 7 or 11 of the cell, which run from corner 4, 2 and 6 to corner 7
+        public static Edge edgeOf( in BurstGrid grid, int3 cell, int axis, NativeArray<MaterialIndex> materials ) {
+            var start = grid.cornerOfCell( cell, axis == 0 ? 4 : axis == 1 ? 2 : 6 );
+            var end   = grid.cornerOfCell( cell, 7 );
+
+            var startMaterial = materials[grid.cornerIndex( start )];
+            var endMaterial   = materials[grid.cornerIndex( end )];
+
+            return new Edge {
+                start        = start,
+                end          = end,
+                crossed      = BurstSurfaceExtractor.intersectsContour( startMaterial, endMaterial ),
+                startIsSolid = startMaterial != MaterialIndex.Void,
+                material     = startMaterial == MaterialIndex.Void ? endMaterial : startMaterial
+            };
+        }
+
+        // the vertices that the edge four cells have in common is associated with in each of them, going around the
+        // edge so that the triangle of the first three faces its empty end. BurstQuads.clusterOf gives the cells row by
+        // row: going around the edge they are the first, the second, the fourth and the third, which faces the start
+        // of the edge
+        public static int4 aroundEdge( in BurstGrid grid, int4 cluster, int axis, bool startIsSolid, NativeArray<byte> solidCorners, NativeArray<int> vertexStarts ) {
+            var vertices = int4.zero;
+
+            for( var place = 0; place < 4; ++place ) {
+                var lookup = BurstCells.vertexLookupOf( grid, solidCorners, cluster[place] );
+
+                vertices[place] = vertexStarts[cluster[place]] + BurstTables.lookupEdgeVertex( lookup, BurstQuads.edgeOf( axis, place ) );
+            }
+
+            return startIsSolid ? vertices.xzwy : vertices.xywz;
         }
 
         // along an edge of a cell, from its solid end to its empty one
@@ -194,16 +239,21 @@ public partial class OccupancyDualContouring {
 
     }
 
-    // the polygons each cell starts, a bit for each axis: around the edge of the cell along that axis at its maximum,
+    // the polygons each cell starts, two bits for each axis: around the edge of the cell along that axis at its maximum,
     // where the contour crosses the edge and the four cells around it are in the grid. Each of those cells then has a
-    // vertex for the edge
-    [BurstCompile( CompileSynchronously = true )]
-    private struct FindQuadsJob : IJobParallelFor {
+    // vertex for the edge. The bits say how the polygon is split into triangles (BurstOccupancy.splitOf)
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct SplitQuadsJob : IJobParallelFor {
 
-        [ReadOnly] public NativeArray<MaterialIndex> materials;
-        [ReadOnly] public NativeArray<byte>          solidCorners;
+        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
+        [ReadOnly] public NativeArray<MaterialIndex>        materials;
+        [ReadOnly] public NativeArray<byte>                 solidCorners;
+        [ReadOnly] public NativeArray<int>                  vertexStarts;
+        [ReadOnly] public NativeArray<float3>               positions;
 
         public BurstGrid grid;
+        public int       edgeSearchIterations;
+        public bool      splitQuads;
 
         [WriteOnly] public NativeArray<byte> quads;
 
@@ -215,11 +265,35 @@ public partial class OccupancyDualContouring {
                 var cell = this.grid.cellOf( index );
 
                 for( var axis = 0; axis < 3; ++axis ) {
-                    if( BurstQuads.clusterOf( this.grid, cell, axis, out _ ) &&
-                        BurstSurfaceExtractor.intersectsContour( this.materials[BurstQuads.edgeStartOf( this.grid, cell, axis )], this.materials[BurstQuads.edgeEndOf( this.grid, cell )] )
-                    ) {
-                        quads |= 1 << axis;
+                    if( !BurstQuads.clusterOf( this.grid, cell, axis, out var cluster ) ) {
+                        continue;
                     }
+
+                    var edge = BurstOccupancyCells.edgeOf( this.grid, cell, axis, this.materials );
+
+                    if( !edge.crossed ) {
+                        continue;
+                    }
+
+                    var split = BurstOccupancy.SecondDiagonal;
+
+                    if( this.splitQuads ) {
+                        var around = BurstOccupancyCells.aroundEdge( this.grid, cluster, axis, edge.startIsSolid, this.solidCorners, this.vertexStarts );
+                        var along  = BurstOccupancy.searchEdge( this.grid, edge.start, axis, edge.startIsSolid, this.densityFunctions, this.edgeSearchIterations );
+
+                        split = BurstOccupancy.splitOf(
+                            this.positions[around.x],
+                            this.positions[around.y],
+                            this.positions[around.z],
+                            this.positions[around.w],
+                            this.grid.positionOf( edge.startIsSolid ? edge.start : edge.end ),
+                            this.grid.positionOf( edge.startIsSolid ? edge.end : edge.start ),
+                            BurstOccupancy.positionOnEdge( this.grid, edge.start, axis, along ),
+                            BurstOccupancy.tolerance / this.grid.resolution
+                        );
+                    }
+
+                    quads |= split << ( 2 * axis );
                 }
             }
 
@@ -230,17 +304,19 @@ public partial class OccupancyDualContouring {
 
     // the vertices and triangles of the mesh, cell by cell and axis by axis, a vertex when a polygon first uses it. The
     // same volumes give the same mesh, vertex for vertex
-    [BurstCompile( CompileSynchronously = true )]
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct ContourJob : IJob {
 
-        [ReadOnly] public NativeArray<MaterialIndex> materials;
-        [ReadOnly] public NativeArray<byte>          solidCorners;
-        [ReadOnly] public NativeArray<int>           vertexStarts;
-        [ReadOnly] public NativeArray<float3>        positions;
-        [ReadOnly] public NativeArray<float3>        normals;
-        [ReadOnly] public NativeArray<byte>          quads;
+        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
+        [ReadOnly] public NativeArray<MaterialIndex>        materials;
+        [ReadOnly] public NativeArray<byte>                 solidCorners;
+        [ReadOnly] public NativeArray<int>                  vertexStarts;
+        [ReadOnly] public NativeArray<float3>               positions;
+        [ReadOnly] public NativeArray<float3>               normals;
+        [ReadOnly] public NativeArray<byte>                 quads;
 
         public BurstGrid grid;
+        public int       edgeSearchIterations;
 
         // the index each vertex has in the mesh plus one, zero until a polygon uses it
         public NativeArray<int> meshVertices;
@@ -248,14 +324,6 @@ public partial class OccupancyDualContouring {
         public NativeList<float3>             meshPositions;
         public NativeList<float3>             meshNormals;
         public NativeList<BurstMesh.Triangle> triangles;
-
-        // the vertex of a cell that the edge four cells have in common is associated with, the cell being the one at
-        // the given place around that edge
-        private int vertexOf( int cell, int axis, int place ) {
-            var lookup = BurstCells.vertexLookupOf( this.grid, this.solidCorners, cell );
-
-            return this.vertexStarts[cell] + BurstTables.lookupEdgeVertex( lookup, BurstQuads.edgeOf( axis, place ) );
-        }
 
         private int meshVertexOf( int vertex ) {
             if( this.meshVertices[vertex] == 0 ) {
@@ -288,30 +356,55 @@ public partial class OccupancyDualContouring {
                 var cell = this.grid.cellOf( index );
 
                 for( var axis = 0; axis < 3; ++axis ) {
-                    if( ( quads & ( 1 << axis ) ) == 0 ) {
+                    var split = ( quads >> ( 2 * axis ) ) & 3;
+
+                    if( split == BurstOccupancy.NoPolygon ) {
                         continue;
                     }
 
                     BurstQuads.clusterOf( this.grid, cell, axis, out var cluster );
 
-                    var startMaterial = this.materials[BurstQuads.edgeStartOf( this.grid, cell, axis )];
-                    var endMaterial   = this.materials[BurstQuads.edgeEndOf( this.grid, cell )];
-                    var materialIndex = startMaterial == MaterialIndex.Void ? endMaterial : startMaterial;
-                    var subMeshIndex  = BurstSurfaceExtractor.findHighestMaterialBit( materialIndex );
+                    var edge   = BurstOccupancyCells.edgeOf( this.grid, cell, axis, this.materials );
+                    var around = BurstOccupancyCells.aroundEdge( this.grid, cluster, axis, edge.startIsSolid, this.solidCorners, this.vertexStarts );
 
-                    var v0 = this.meshVertexOf( this.vertexOf( cluster.x, axis, 0 ) );
-                    var v1 = this.meshVertexOf( this.vertexOf( cluster.y, axis, 1 ) );
-                    var v2 = this.meshVertexOf( this.vertexOf( cluster.z, axis, 2 ) );
-                    var v3 = this.meshVertexOf( this.vertexOf( cluster.w, axis, 3 ) );
+                    var subMeshIndex = BurstSurfaceExtractor.findHighestMaterialBit( edge.material );
 
-                    // ensure quad is indexed facing outward
-                    if( startMaterial == MaterialIndex.Void ) {
-                        this.triangles.Add( new BurstMesh.Triangle( v0, v1, v2, subMeshIndex ) );
-                        this.triangles.Add( new BurstMesh.Triangle( v3, v2, v1, subMeshIndex ) );
-                    }
-                    else {
-                        this.triangles.Add( new BurstMesh.Triangle( v1, v2, v3, subMeshIndex ) );
-                        this.triangles.Add( new BurstMesh.Triangle( v2, v1, v0, subMeshIndex ) );
+                    var v0 = this.meshVertexOf( around.x );
+                    var v1 = this.meshVertexOf( around.y );
+                    var v2 = this.meshVertexOf( around.z );
+                    var v3 = this.meshVertexOf( around.w );
+
+                    // every triangle goes around the same way as the polygon, which makes it face the empty end of
+                    // the edge
+                    switch( split ) {
+                        case BurstOccupancy.FirstDiagonal: {
+                            this.triangles.Add( new BurstMesh.Triangle( v0, v1, v2, subMeshIndex ) );
+                            this.triangles.Add( new BurstMesh.Triangle( v0, v2, v3, subMeshIndex ) );
+
+                            break;
+                        }
+                        case BurstOccupancy.SecondDiagonal: {
+                            this.triangles.Add( new BurstMesh.Triangle( v0, v1, v3, subMeshIndex ) );
+                            this.triangles.Add( new BurstMesh.Triangle( v3, v1, v2, subMeshIndex ) );
+
+                            break;
+                        }
+                        default: {
+                            // the 1D point of the edge becomes a vertex, between the normals of the four around it
+                            var along = BurstOccupancy.searchEdge( this.grid, edge.start, axis, edge.startIsSolid, this.densityFunctions, this.edgeSearchIterations );
+
+                            this.meshPositions.Add( BurstOccupancy.positionOnEdge( this.grid, edge.start, axis, along ) );
+                            this.meshNormals.Add( BurstSurfaceExtractor.normalize( this.normals[around.x] + this.normals[around.y] + this.normals[around.z] + this.normals[around.w] ) );
+
+                            var middle = this.meshPositions.Length - 1;
+
+                            this.triangles.Add( new BurstMesh.Triangle( middle, v0, v1, subMeshIndex ) );
+                            this.triangles.Add( new BurstMesh.Triangle( middle, v1, v2, subMeshIndex ) );
+                            this.triangles.Add( new BurstMesh.Triangle( middle, v2, v3, subMeshIndex ) );
+                            this.triangles.Add( new BurstMesh.Triangle( middle, v3, v0, subMeshIndex ) );
+
+                            break;
+                        }
                     }
                 }
             }
@@ -527,25 +620,32 @@ public partial class OccupancyDualContouring {
         using var triangles     = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
 
         using( burstContourMarker.Auto( ) ) {
-            var findQuads = new FindQuadsJob {
-                materials    = materials,
-                solidCorners = solidCorners,
-                grid         = grid,
-                quads        = quads
-            }.Schedule( grid.cellCount, BurstBatches.scans );
+            var findQuads = new SplitQuadsJob {
+                densityFunctions     = functions,
+                materials            = materials,
+                solidCorners         = solidCorners,
+                vertexStarts         = vertexStarts,
+                positions            = positions,
+                grid                 = grid,
+                edgeSearchIterations = this.edgeSearchIterations,
+                splitQuads           = this.splitQuads,
+                quads                = quads
+            }.Schedule( grid.cellCount, BurstBatches.cells );
 
             new ContourJob {
-                materials     = materials,
-                solidCorners  = solidCorners,
-                vertexStarts  = vertexStarts,
-                positions     = positions,
-                normals       = normals,
-                quads         = quads,
-                grid          = grid,
-                meshVertices  = meshVertices,
-                meshPositions = meshPositions,
-                meshNormals   = meshNormals,
-                triangles     = triangles
+                densityFunctions     = functions,
+                materials            = materials,
+                solidCorners         = solidCorners,
+                vertexStarts         = vertexStarts,
+                positions            = positions,
+                normals              = normals,
+                quads                = quads,
+                grid                 = grid,
+                edgeSearchIterations = this.edgeSearchIterations,
+                meshVertices         = meshVertices,
+                meshPositions        = meshPositions,
+                meshNormals          = meshNormals,
+                triangles            = triangles
             }.Schedule( findQuads ).Complete( );
         }
 

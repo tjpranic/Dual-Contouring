@@ -31,6 +31,12 @@ public partial class OccupancyDualContouring : Voxelizer {
     [Range( 1, 20 ), Tooltip( "How many times a search across a face then halves the step it found the contour in" )]
     public int faceSearchIterations = 11;
 
+    // section 5.4: the polygon around an edge is split along the diagonal that keeps its triangles from intersecting
+    // those of other polygons, or into four triangles around the point where the contour crosses the edge. Off, it is
+    // always split along the same diagonal, as manifold dual contouring splits it
+    [Tooltip( "Split each polygon so that its triangles do not intersect those of others" )]
+    public bool splitQuads = true;
+
     // a voxelizer starts out with the managed implementation, which this one does not have. A value saved with a scene
     // is read after this and takes its place
     public OccupancyDualContouring( ) {

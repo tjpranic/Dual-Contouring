@@ -343,33 +343,153 @@ public static class BurstOccupancy {
         return count;
     }
 
-    // a vertex that the QEF put outside its cell, moved back toward the anchor, a point of the cell, until it is inside
-    // by the margin. The polygons of section 5.4 are only free of intersections with every vertex in its own cell. A
-    // vertex that is inside already stays as it is
-    public static float3 intoCell( in BurstGrid grid, int3 cell, float3 anchor, float3 vertex ) {
-        var inset   = margin / grid.resolution;
-        var minimum = grid.positionOf( cell ) + inset;
-        var maximum = grid.positionOf( cell + 1 ) - inset;
+    // a vertex that the QEF put outside its part of its cell, moved back toward the anchor, a point of that part, until
+    // it is inside by the margin. The polygons of section 5.4 are only free of intersections with every vertex in its
+    // own cell. And where a cell has several vertices, which the paper leaves uncovered, each stays on its own side of
+    // the planes between it and the others (DualMarchingCubes.lookupSeparation), so the polygons of one piece of the
+    // contour do not pass through those of another. A vertex that is inside already stays as it is.
+    // - lookup is what the cell looks its vertices up with, and index which of them this one is.
+    // - the anchor is the average of the 1D points of the vertex, which lie on its side of every such plane
+    public static float3 intoCell( in BurstGrid grid, int3 cell, int lookup, int index, float3 anchor, float3 vertex ) {
+        // everything in cells from the minimum of the cell, where the cell is the unit cube
+        var origin = grid.positionOf( cell );
+        var from   = ( anchor - origin ) * grid.resolution;
+        var to     = ( vertex - origin ) * grid.resolution;
 
-        if( math.all( vertex >= minimum ) && math.all( vertex <= maximum ) ) {
-            return vertex;
+        // the anchor first: it can be nearer a face or a plane than the margin
+        from = math.clamp( from, margin, 1.0f - margin );
+
+        for( var other = 0; other < 4; ++other ) {
+            if( BurstTables.lookupSeparation( lookup, index, other, out var normal, out var twiceOffset ) ) {
+                var past = math.dot( normal, from ) - ( ( twiceOffset * 0.5f ) - margin );
+
+                if( past > 0.0f ) {
+                    from -= ( float3 )normal * ( past / math.dot( normal, normal ) );
+                }
+            }
         }
-
-        anchor = math.clamp( anchor, minimum, maximum );
 
         // the part of the way from the anchor to the vertex that is inside
         var part = 1.0f;
 
         for( var axis = 0; axis < 3; ++axis ) {
-            if( vertex[axis] > maximum[axis] ) {
-                part = math.min( part, ( maximum[axis] - anchor[axis] ) / ( vertex[axis] - anchor[axis] ) );
+            if( to[axis] > 1.0f - margin ) {
+                part = math.min( part, ( 1.0f - margin - from[axis] ) / ( to[axis] - from[axis] ) );
             }
-            else if( vertex[axis] < minimum[axis] ) {
-                part = math.min( part, ( minimum[axis] - anchor[axis] ) / ( vertex[axis] - anchor[axis] ) );
+            else if( to[axis] < margin ) {
+                part = math.min( part, ( margin - from[axis] ) / ( to[axis] - from[axis] ) );
             }
         }
 
-        return math.clamp( anchor + ( ( vertex - anchor ) * part ), minimum, maximum );
+        for( var other = 0; other < 4; ++other ) {
+            if( BurstTables.lookupSeparation( lookup, index, other, out var normal, out var twiceOffset ) ) {
+                var limit = ( twiceOffset * 0.5f ) - margin;
+                var past  = math.dot( normal, to ) - limit;
+
+                if( past > 0.0f ) {
+                    var inside = limit - math.dot( normal, from );
+
+                    part = math.min( part, inside > 0.0f ? inside / ( inside + past ) : 0.0f );
+                }
+            }
+        }
+
+        if( part >= 1.0f ) {
+            return vertex;
+        }
+
+        return origin + ( math.clamp( from + ( ( to - from ) * math.max( part, 0.0f ) ), margin, 1.0f - margin ) / grid.resolution );
+    }
+
+    // how the polygon around an edge is made into triangles. Its four vertices are numbered going around the edge, so
+    // that the triangle of the first three faces the empty end of the edge
+    public const int NoPolygon      = 0;
+    public const int FirstDiagonal  = 1; // triangles 0 1 2 and 0 2 3
+    public const int SecondDiagonal = 2; // triangles 0 1 3 and 1 2 3
+    public const int Fan            = 3; // four triangles around the 1D point of the edge
+
+    // appendix A.1.5, equations 3 and 4: a vertex of the polygon is concave when it lies below the triangle of its two
+    // neighbors and the empty end of the edge, or above the triangle of its neighbors and the solid end. The diagonal
+    // between those neighbors then leaves the envelope the polygon has to stay in: the four tetrahedra between the edge
+    // and each side of the polygon (Intersection-free Contouring, and Wang's convex/concave analysis)
+    public static bool isConcave( float3 vertex, float3 previous, float3 next, float3 solidEnd, float3 emptyEnd ) {
+        return math.dot( vertex - emptyEnd, math.cross( previous - emptyEnd, next - emptyEnd ) ) < 0.0f ||
+               math.dot( vertex - solidEnd, math.cross( previous - solidEnd, next - solidEnd ) ) > 0.0f;
+    }
+
+    // section 5.4 and appendix A.1.5: which way to split the polygon around an edge so that its triangles stay inside
+    // the envelope. A diagonal may be used when neither of the two vertices it passes between is concave. With neither
+    // diagonal the polygon becomes four triangles around the 1D point of the edge. The paper leaves open which to take
+    // when both may be used: here it is the one whose triangles pass nearer the 1D point, which is on the surface, and
+    // the second, the one the other algorithms always take, when they are as near to within the given distance
+    public static int splitOf( float3 vertex0, float3 vertex1, float3 vertex2, float3 vertex3, float3 solidEnd, float3 emptyEnd, float3 edgePoint, float nothing ) {
+        var first  = !isConcave( vertex1, vertex0, vertex2, solidEnd, emptyEnd ) && !isConcave( vertex3, vertex2, vertex0, solidEnd, emptyEnd );
+        var second = !isConcave( vertex0, vertex3, vertex1, solidEnd, emptyEnd ) && !isConcave( vertex2, vertex1, vertex3, solidEnd, emptyEnd );
+
+        if( !first && !second ) {
+            return Fan;
+        }
+        if( first != second ) {
+            return first ? FirstDiagonal : SecondDiagonal;
+        }
+
+        var alongFirst  = math.min( distanceToTriangle( edgePoint, vertex0, vertex1, vertex2 ), distanceToTriangle( edgePoint, vertex0, vertex2, vertex3 ) );
+        var alongSecond = math.min( distanceToTriangle( edgePoint, vertex0, vertex1, vertex3 ), distanceToTriangle( edgePoint, vertex1, vertex2, vertex3 ) );
+
+        return alongFirst < alongSecond - nothing ? FirstDiagonal : SecondDiagonal;
+    }
+
+    // how far a point is from a triangle: from the nearest point of its inside, its sides or its corners (Ericson,
+    // Real-Time Collision Detection, section 5.1.5)
+    public static float distanceToTriangle( float3 point, float3 a, float3 b, float3 c ) {
+        var ab = b - a;
+        var ac = c - a;
+        var ap = point - a;
+
+        var d1 = math.dot( ab, ap );
+        var d2 = math.dot( ac, ap );
+
+        if( d1 <= 0.0f && d2 <= 0.0f ) {
+            return math.length( ap );
+        }
+
+        var bp = point - b;
+        var d3 = math.dot( ab, bp );
+        var d4 = math.dot( ac, bp );
+
+        if( d3 >= 0.0f && d4 <= d3 ) {
+            return math.length( bp );
+        }
+
+        var vc = ( d1 * d4 ) - ( d3 * d2 );
+
+        if( vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f ) {
+            return math.length( point - ( a + ( ab * ( d1 / ( d1 - d3 ) ) ) ) );
+        }
+
+        var cp = point - c;
+        var d5 = math.dot( ab, cp );
+        var d6 = math.dot( ac, cp );
+
+        if( d6 >= 0.0f && d5 <= d6 ) {
+            return math.length( cp );
+        }
+
+        var vb = ( d5 * d2 ) - ( d1 * d6 );
+
+        if( vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f ) {
+            return math.length( point - ( a + ( ac * ( d2 / ( d2 - d6 ) ) ) ) );
+        }
+
+        var va = ( d3 * d6 ) - ( d5 * d4 );
+
+        if( va <= 0.0f && ( d4 - d3 ) >= 0.0f && ( d5 - d6 ) >= 0.0f ) {
+            return math.length( point - ( b + ( ( c - b ) * ( ( d4 - d3 ) / ( ( d4 - d3 ) + ( d5 - d6 ) ) ) ) ) );
+        }
+
+        var denominator = 1.0f / ( va + vb + vc );
+
+        return math.length( point - ( a + ( ab * ( vb * denominator ) ) + ( ac * ( vc * denominator ) ) ) );
     }
 
 }

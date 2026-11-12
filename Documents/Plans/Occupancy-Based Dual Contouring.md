@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day and waits for review, with a question about the clamp (finding 14).
+**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12 and waits for review, with what it measured for that question (finding 15).
 
 ## Goal
 
@@ -83,6 +83,12 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
     - **No way of moving them is much better.** Moving toward the average of the 1D points, as planned, and taking the nearest point of the cell instead give the same sizes of error: the edge is simply not in the cell.
     - **The paper does not mention it.** It is what the reference code does (finding 4), and what the argument for polygons without intersections needs. Step 3 will show how many intersections there are with and without it.
     - **Open, for the user:** whether keeping vertices in their cells should be a setting. See the question at the end.
+15. **The clamp is what makes the polygons free of intersections, and cells with several vertices need planes between them.** Found in step 3, by counting the pairs of triangles that pass through each other on 27 models at 16³, 32³ and 64³ (Measurements).
+    - **With the clamp and the split:** none at 16³ and 32³, and 4 at 64³, all on one model around one cell with two vertices.
+    - **With the clamp and without the split,** always the same diagonal as Manifold Dual Contouring takes: 99, 151 and 436, on 11 of the 27 models. The split is what removes them.
+    - **Without the clamp** the split does not help: 436, 645 and 1,849 with it, against 401, 745 and 2,238 without. Its test of a diagonal assumes the four vertices are in their own cells.
+    - **Cells with several vertices,** which the paper says its argument does not cover. With every vertex only kept in its cell, the two models of shapes that cut into each other had 32 and 7 crossings at 32³, every one between triangles with vertices in the same cell. With each vertex also kept on its own side of a plane between the pieces of its cell, they have none. The reference code keeps them apart with planes from a table (finding 4); here the planes are derived from `DualMarchingCubes`.
+    - **So the choice of finding 14 is a real one:** the clamp costs edges on turned shapes, and it is all that stands between this algorithm and the crossings Manifold Dual Contouring has.
 
 ## Design
 
@@ -141,14 +147,17 @@ For each piece of a cell:
 - **QEF:** the planes go into a `BurstQEF`, or the shader's SVD QEF, and the piece's vertex is its minimizer. With no plane, the vertex is the average of the piece's 1D points.
 - **Inside the cell:** a minimizer outside the cell, less the margin, is moved back along the line to the average of the piece's 1D points until it is inside (finding 4). This is ODC's alone: the other algorithms keep the Secret Sauce rule the audit gave them.
 - **Normal of the vertex:** the normalized sum of the piece's plane normals.
-- **Not in the first version:** keeping the vertices of one cell apart (finding 4). Step 3 counts self-intersections on cells with several vertices and reports them. If there are any, planes to keep them apart are derived from `DualMarchingCubes` then.
+- **Apart from the other vertices of its cell** (built in step 3, finding 15): in a cell with several vertices, each is also kept on its own side of a plane between its piece of the contour and each of the others.
+  - `DualMarchingCubes.lookupSeparation` gives the plane for every pair of pieces of every configuration: the one with the widest gap between the corners at the ends of their edges, midway in it. Most pairs touch, at a corner or along a diagonal, and then it is the plane through where they touch that faces most squarely from one piece to the other.
+  - All 118 pairs have such a plane, with a normal of -1, 0 or 1 along each axis.
+  - The average of a piece's 1D points is on its side of every such plane, so the way back from the minimizer to it always comes inside.
 
 ### Polygons
 
 For each grid edge inside the grid that the contour crosses, the four cells around it give four vertices, in an order that turns from the solid end to the empty one.
 
 - **The test** (appendix A.1.5, equations 3 and 4): a vertex is concave when it lies beyond the triangle of its two neighbours and either end of the edge.
-- **Two triangles** along the diagonal 1-3 when neither 2 nor 4 is concave, or along 2-4 when neither 1 nor 3 is. When both are allowed, the diagonal whose triangles pass nearer the edge's 1D point (finding 4).
+- **Two triangles** along the diagonal 1-3 when neither 2 nor 4 is concave, or along 2-4 when neither 1 nor 3 is. When both are allowed, the diagonal whose triangles pass nearer the edge's 1D point (finding 4), and the one the other algorithms take when both pass as near, as on a flat polygon.
 - **Four triangles** around the edge's 1D point when neither diagonal is allowed. The 1D point becomes a vertex of the mesh, with the normalized sum of the four vertices' normals for its normal.
 - **Sub-mesh and facing:** the highest material of the solid end, facing the empty end, as now.
 - **With `splitQuads` off:** always the diagonal the other algorithms use.
@@ -342,7 +351,38 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - Edit mode 1530 of 1530, play mode 21 of 21.
      - The 416 `Start` hashes are identical to step 0.
      - Compiling gave no errors.
-3. **Intersection-free polygons (medium).** The concave test, the choice of diagonal, four triangles around a 1D point, `splitQuads`. The crossing-triangles helper and the polygon tests. The count of crossings on cells with several vertices (Design, Vertices).
+3. **Intersection-free polygons (medium).** The concave test, the choice of diagonal, four triangles around a 1D point, `splitQuads`. The crossing-triangles helper and the polygon tests. The count of crossings on cells with several vertices (Design, Vertices). **Done 2026-11-12:**
+   - **`BurstOccupancy`:** `isConcave` (equations 3 and 4), `splitOf`, which chooses between the two diagonals and the fan, and `distanceToTriangle` for the choice when both diagonals fit.
+   - **`SplitQuadsJob`** takes the place of step 1's job that found the polygons: in parallel, it also decides how each is split, in two bits for each of a cell's three polygons. It works out the 1D point of the edge for that.
+   - **`ContourJob`** makes the triangles, and for a fan adds the 1D point as a vertex, with the sum of the normals of the four around it.
+   - **Setting:** `splitQuads`, on unless set. Off gives two triangles along the diagonal the other algorithms take, and no vertices on edges.
+   - **Planes between the vertices of a cell** (Design, Vertices): `DualMarchingCubes.lookupSeparation`, its copy in `BurstTables` written out by a probe, and `BurstOccupancy.intoCell` keeping to them.
+   - **The triangles of a polygon** go around the way the polygon does, which makes them face out of the shape. With the split off the mesh has the triangles of step 2.
+   - **New tests:**
+     - **`MeshIntersections`,** the helper beside `MeshTopology`: the pairs of triangles of which a side of one passes through the inside of the other. Triangles that share a side are not looked at, of two that share a corner only the sides opposite it, and triangles that only touch or lie in one plane do not count.
+     - **`OccupancyPolygonTest` (5),** on polygons made by hand around an edge:
+       - a flat polygon is split along the second diagonal;
+       - a vertex pushed in past the diagonal of its neighbours is concave, and the polygon is split along the diagonal that ends in it;
+       - a vertex is also concave where that diagonal passes beyond the end of the edge;
+       - with neither diagonal it becomes a fan;
+       - of two diagonals that fit, the one nearer the 1D point.
+     - **In the topology fixture,** 37 now:
+       - no two triangles cross on any model at 16³ and 32³, nor on the shapes that cut into each other, the two spheres and the block with hollows;
+       - the vertices of every cell with several are on their own sides of the planes between them;
+       - on the sphere cutaway the polygons no diagonal fits are four triangles around a 1D point, and without the split triangles cross there;
+       - triangles face out of the shape, and those of the cutaway enclose the volume it has.
+     - **In the shape fixture,** 66 now: no two triangles cross on any of the nine shapes, upright or turned, and without the split they do on the turned cuboid, octahedron and cone. A vertex moved onto a plane between pieces counts as moved, like one moved onto a face of its cell.
+     - **`DualMarchingCubesTest`:** the plane between two vertices has the edges of each on its side, and is the same plane turned round from the other. `BurstTablesTest` holds the Burst copy to it.
+   - **Not built as planned:** the test that every triangle passes the envelope test it was chosen by. The mesh does not say which polygon a triangle is of, so the choice is tested on polygons made by hand, and its effect by counting crossings.
+   - **The tests catch mistakes.**
+     - Equation 3 the wrong way round, no planes between the vertices of a cell and a fan going around the wrong way were put in together. They failed all 5 polygon tests, 19 of the topology tests and 1 shape test.
+     - Polygons going around their edges the other way and the farther of two diagonals failed 2 polygon tests and 4 topology tests, among them the triangles facing out.
+   - **Measured:** finding 15, and the table of crossings under Measurements. The clamp was switched off for it by making `intoCell` return the vertex as it is, which the component cannot do.
+   - **Speed:** a contour of the three balls at 128³ takes 80 ms, 6 ms more than after step 2. That is the split working out the 1D point of every polygon's edge once more, which sharing points between cells in step 6 would take away.
+   - **Verification:**
+     - Edit mode 1570 of 1570, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0.
+     - Compiling gave no errors.
 4. **GPU (large).** `DensityFunctions.hlsl` first, with Uniform's GPU hashes and timing checked. Then the shader, its buffers, readback, drawing straight from the GPU and split normals. The Burst-against-GPU tests.
 5. **Interactive editor and scenes (medium).** The fourth algorithm in the editor and its tests, the component in `Interactive Editor.unity`, the example scenes.
 6. **Tuning and documentation (medium).** Sharing 1D and 2D points between cells in Burst if step 2's timings call for it, with the output held bit for bit. README (algorithms, implementations table, code layout, the editor), `AGENTS.md`, and this plan marked complete.
@@ -453,6 +493,34 @@ How well corners and edges are kept, from the measuring runs of `BurstOccupancyS
 - One corner of the turned cuboid is in a cell none of whose corners is inside the cuboid, so no method on this grid gives it a vertex.
 - Manifold Dual Contouring's own tests hold a vertex within 0.03 of a cell of the corners of the cone, the pyramid, the octahedron and the hexagonal prism, upright and turned, and the mesh within 0.03 of their edges.
 
+### Burst timings after step 3 (2026-11-12)
+
+The same test, with Unity in front for all 20 cases. In ms, the two rounds:
+
+| Cells | Model | Voxelize | SolveVertices | Contour | Contour after step 2 |
+|---|---|---|---|---|---|
+| 128³ | upright | 79.6, 79.5 | 61.3, 61.4 | 10.4, 10.3 | 4.2, 4.3 |
+| 256³ | upright | 367.3, 367.6 | 252.2, 252.8 | 54.1, 53.7 | 25.9, 26.4 |
+| 128³ | turned | 87.8, 87.4 | 67.9, 67.5 | 10.7, 10.7 | 4.2, 4.2 |
+
+The three balls have no polygon that becomes a fan: 52,252 vertices and 104,500 triangles, as before.
+
+### Triangles that pass through each other (step 3, 2026-11-12)
+
+Pairs of triangles, counted by `MeshIntersections`, added up over 27 models: the four of `TopologyTest`, the two spheres, the block with hollows, the turned shapes, the new shapes, a torus, and each of the nine shapes upright and turned. The models have 20,000 triangles between them at 16³, 84,000 at 32³ and 339,000 at 64³.
+
+| Vertices kept in their cells | Polygons split | 16³ | 32³ | 64³ |
+|---|---|---|---|---|
+| yes | as the paper splits them | 0 | 0 | 4 |
+| yes | always along the same diagonal | 99 | 151 | 436 |
+| no | as the paper splits them | 436 | 645 | 1,849 |
+| no | always along the same diagonal | 401 | 745 | 2,238 |
+
+- **The 4** are on the new shapes at 64³, all between triangles around one cell that has two vertices.
+- **Which models:** with the same diagonal always, 11 of the 27 have crossings at each size. They are the ones with edges at an angle to the grid, and the upright pyramid and octahedron. Curved shapes and the upright cuboid have none either way.
+- **Four triangles around a 1D point** are rare: 22, 14 and 39 polygons over all the models.
+- **Without the clamp** the paper's split makes more fans (92, 134 and 322) and no fewer crossings.
+
 ## Out of scope
 
 - **A managed implementation.**
@@ -473,4 +541,4 @@ All five were decided as recommended on 2026-11-12.
 
 ### Open after step 2
 
-6. **Should keeping vertices in their cells be a setting?** Decision 3 has the clamp always on, as the reference code has it. Step 2 measured what it costs on turned shapes with edges (finding 14). Recommended: decide after step 3, which counts the intersections the clamp is there to prevent, with and without it. If they are few without it, a setting that is on unless turned off would give the choice between the paper's guarantee and sharper edges.
+6. **Should keeping vertices in their cells be a setting?** Decision 3 has the clamp always on, as the reference code has it. Step 2 measured what it costs on turned shapes with edges (finding 14), and step 3 what it buys (finding 15): with it there are no crossings to speak of, and without it as many as Manifold Dual Contouring has, whatever the split. Recommended: a setting, on unless turned off. Curved models lose nothing to the clamp, and models of turned boxes lose their edges to it, so which is better depends on the model. Off, the component would also leave the split and the planes between vertices out, which do nothing for vertices outside their cells.

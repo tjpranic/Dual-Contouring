@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
@@ -135,6 +136,41 @@ public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
         Assert.GreaterOrEqual( worst, 0.996f, "the normal that points least away from the middle of the sphere, as the cosine of the angle between the two" );
     }
 
+    // every triangle goes around the way its polygon does, which faces the empty end of the polygon's edge: out of the
+    // shape. That holds for the triangles of both diagonals and for the four around a point on an edge, which the sphere
+    // cutaway has
+    [Test]
+    public void trianglesFaceOutOfTheShape( ) {
+        var sphere = shapesOf( Model.Sphere );
+        var mesh   = this.voxelize( this.create( resolution, sphere ) ).mesh;
+
+        var vertices  = mesh.vertices;
+        var triangles = mesh.triangles;
+
+        for( var triangle = 0; triangle < triangles.Length; triangle += 3 ) {
+            var a = vertices[triangles[triangle]];
+            var b = vertices[triangles[triangle + 1]];
+            var c = vertices[triangles[triangle + 2]];
+
+            Assert.Greater( Vector3.Dot( Vector3.Cross( b - a, c - a ).normalized, ( ( ( a + b + c ) / 3.0f ) - sphere[0].origin ).normalized ), 0.8f, $"how far the triangle at {a} faces away from the middle of the sphere" );
+        }
+
+        // the cutaway is closed, so with every triangle facing out the volume its triangles enclose is positive
+        var cutaway = this.voxelize( this.create( resolution, shapesOf( Model.SphereCutaway ) ) ).mesh;
+
+        vertices  = cutaway.vertices;
+        triangles = cutaway.triangles;
+
+        var volume = 0.0f;
+
+        for( var triangle = 0; triangle < triangles.Length; triangle += 3 ) {
+            volume += Vector3.Dot( vertices[triangles[triangle]], Vector3.Cross( vertices[triangles[triangle + 1]], vertices[triangles[triangle + 2]] ) ) / 6.0f;
+        }
+
+        // half a ball of radius 0.5 with a ball of 0.4 in it
+        Assert.AreEqual( ( 2.0f / 3.0f * Mathf.PI * 0.125f ) + ( 2.0f / 3.0f * Mathf.PI * 0.064f ), volume, 0.02f, "the volume the triangles of the cutaway enclose" );
+    }
+
     // sections 5.2 and 5.3: with a single sample and a single halving a search across a face finds the surface to within
     // 0.4 of a cell instead of a ten-thousandth, and the vertices placed from it are farther from the sphere
     [Test]
@@ -155,6 +191,96 @@ public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
 
         Assert.LessOrEqual( fine, 0.03f, "how far the farthest vertex is from the sphere with the searches of the paper, in cells" );
         Assert.Greater( coarse, 2.0f * fine, "how far the farthest vertex is from the sphere with coarse searches, in cells" );
+    }
+
+    // section 5.4: with every vertex inside its cell and every polygon split so that its triangles stay in the envelope
+    // around its edge, no two triangles pass through each other
+    [Test]
+    public void noTwoTrianglesCross( [Values] Model model, [Values( 4, 5 )] int resolution ) {
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( resolution, shapesOf( model ) ) ).mesh ), "pairs of triangles that pass through each other" );
+    }
+
+    // the paper's argument is for cells with one vertex. Shapes that meet and cut into each other leave cells with
+    // several, whose vertices are kept on their own sides of the planes between their pieces of the contour
+    // (DualMarchingCubes.lookupSeparation). Without those planes the turned shapes have 32 crossings on the finer of
+    // these grids and the new shapes 7, every one between triangles with vertices in the same cell
+    [Test]
+    public void noTwoTrianglesCrossWhereCellsHaveSeveralVertices( [Values( 4, 5 )] int resolution ) {
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( resolution, turnedShapes ) ).mesh ),       "pairs of triangles that pass through each other on the turned shapes" );
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( resolution, newShapes ) ).mesh ),          "pairs of triangles that pass through each other on the new shapes" );
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( resolution, twoSpheres ) ).mesh ),         "pairs of triangles that pass through each other on the two spheres" );
+        Assert.AreEqual( 0, MeshIntersections.count( this.voxelize( this.create( resolution, hollowsAcrossFaces ) ).mesh ), "pairs of triangles that pass through each other on the block with hollows" );
+    }
+
+    // each vertex of a cell with several is on its own side of the plane between it and each of the others, by half the
+    // margin at least
+    [Test]
+    public void theVerticesOfACellStayOnTheirOwnSides( ) {
+        var voxels  = this.voxelize( this.create( 5, turnedShapes ) ).voxels.ToArray( );
+        var several = voxels.GroupBy( ( voxel ) => voxel.center ).Where( ( group ) => group.Count( ) > 1 ).ToArray( );
+
+        Assert.Greater( several.Length, 10, "cells with several vertices" );
+
+        foreach( var cell in several ) {
+            var vertices = cell.ToArray( );
+
+            // the debug view lists the vertices of a cell in the order the table numbers them
+            var solidCorners = DualMarchingCubes.solidCornersOf( vertices[0].corners.Select( ( corner ) => corner.materialIndex ).ToArray( ) );
+
+            Assert.AreEqual( DualMarchingCubes.lookupVertexEdges( solidCorners ).Length, vertices.Length, $"vertices of the cell at {cell.Key}" );
+
+            for( var vertex = 0; vertex < vertices.Length; ++vertex ) {
+                for( var other = 0; other < vertices.Length; ++other ) {
+                    if( !DualMarchingCubes.lookupSeparation( solidCorners, vertex, other, out var normal, out var twiceOffset ) ) {
+                        continue;
+                    }
+
+                    var inCell = ( vertices[vertex].vertex - vertices[vertex].minimum ).divide( vertices[vertex].size );
+                    var along  = Vector3.Dot( new Vector3( normal.x, normal.y, normal.z ), inCell );
+
+                    Assert.LessOrEqual( along, ( twiceOffset * 0.5f ) - ( 0.5f * BurstOccupancy.margin ), $"vertex {vertex} of the cell at {cell.Key} against the plane between it and vertex {other}" );
+                }
+            }
+        }
+    }
+
+    // appendix A.1.5: where neither diagonal keeps the triangles of a polygon in its envelope, it becomes four
+    // triangles around the 1D point of its edge, which is then a vertex of the mesh without a cell of its own. The
+    // surface stays closed and manifold, as surfaceIsClosedAndManifold holds for this model
+    [Test]
+    public void aPolygonNoDiagonalFitsBecomesFourTrianglesAroundThePointOnItsEdge( ) {
+        const float cell = 1.0f / 16;
+
+        var voxelizer    = this.create( resolution, shapesOf( Model.SphereCutaway ) );
+        var voxelization = this.voxelize( voxelizer );
+
+        var ofCells  = new HashSet<Vector3>( voxelization.voxels.Select( ( voxel ) => voxel.vertex ) );
+        var onEdges  = voxelization.mesh.vertices.Where( ( vertex ) => !ofCells.Contains( vertex ) ).ToArray( );
+        var crossing = new HashSet<Vector3>( voxelization.edges.Where( ( edge ) => edge.intersectsContour( ) ).Select( ( edge ) => edge.intersection ) );
+
+        Assert.Greater( onEdges.Length, 0, "vertices of the mesh that are not the vertex of a cell" );
+
+        foreach( var vertex in onEdges ) {
+            Assert.IsTrue( crossing.Contains( vertex ), $"the vertex at {vertex / cell} cells is the 1D point of an edge" );
+        }
+
+        // four triangles in place of two for each
+        var triangles = voxelization.mesh.triangles;
+
+        foreach( var vertex in onEdges ) {
+            var index = Array.IndexOf( voxelization.mesh.vertices, vertex );
+
+            Assert.AreEqual( 4, Enumerable.Range( 0, triangles.Length / 3 ).Count( ( triangle ) => triangles[triangle * 3] == index || triangles[( triangle * 3 ) + 1] == index || triangles[( triangle * 3 ) + 2] == index ), $"triangles around the vertex at {vertex / cell} cells" );
+        }
+
+        // with the split off, every polygon is two triangles between the vertices of cells
+        voxelizer.splitQuads = false;
+
+        var plain = this.voxelize( voxelizer );
+
+        Assert.AreEqual( plain.voxels.Count( ), plain.mesh.vertexCount, "vertices of the mesh without the split" );
+        Assert.AreEqual( plain.mesh.triangles.Length + ( 6 * onEdges.Length ), triangles.Length, "indices of the mesh with the split, against without" );
+        Assert.Greater( MeshIntersections.count( plain.mesh ), 0, "pairs of triangles that pass through each other without the split" );
     }
 
     // the debug view is given a voxel for every vertex of the contour: its cell, with that vertex in it. A cell that

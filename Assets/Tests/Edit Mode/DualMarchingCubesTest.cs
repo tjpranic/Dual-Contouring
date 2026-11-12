@@ -372,6 +372,56 @@ public class DualMarchingCubesTest {
         Assert.AreEqual( 6 * 6 * 6, sharing, "pairs of cells that share a joined face" );
     }
 
+    // the plane between two vertices of a cell has the corners at the ends of the edges of the one on one side or in it,
+    // and those of the other on the other side or in it. Seen from the other vertex it is the same plane, turned round
+    [Test]
+    public void aPlaneKeepsTheEdgesOfTwoVerticesOfACellApart( ) {
+        var pairs = 0;
+
+        for( var solidCorners = 0; solidCorners < 256; ++solidCorners ) {
+            var vertices = DualMarchingCubes.lookupVertexEdges( solidCorners );
+
+            for( var vertex = 0; vertex < 4; ++vertex ) {
+                for( var other = 0; other < 4; ++other ) {
+                    var found = DualMarchingCubes.lookupSeparation( solidCorners, vertex, other, out var normal, out var twiceOffset );
+                    var where = $"vertices {vertex} and {other} with solid corners {solidCorners}";
+
+                    Assert.AreEqual( vertex != other && vertex < vertices.Length && other < vertices.Length, found, $"a plane between {where}" );
+
+                    if( !found ) {
+                        Assert.AreEqual( UnityEngine.Vector3Int.zero, normal, $"normal of no plane between {where}" );
+
+                        continue;
+                    }
+
+                    ++pairs;
+
+                    int twiceAlong( int corner ) {
+                        return 2 * ( ( normal.x * cornerOffsets[corner, 0] ) + ( normal.y * cornerOffsets[corner, 1] ) + ( normal.z * cornerOffsets[corner, 2] ) );
+                    }
+
+                    Assert.AreNotEqual( UnityEngine.Vector3Int.zero, normal, $"normal of the plane between {where}" );
+
+                    foreach( var edge in vertices[vertex] ) {
+                        Assert.LessOrEqual( twiceAlong( edgeCorners[edge, 0] ), twiceOffset, $"start of edge {edge} of the first of {where}" );
+                        Assert.LessOrEqual( twiceAlong( edgeCorners[edge, 1] ), twiceOffset, $"end of edge {edge} of the first of {where}" );
+                    }
+                    foreach( var edge in vertices[other] ) {
+                        Assert.GreaterOrEqual( twiceAlong( edgeCorners[edge, 0] ), twiceOffset, $"start of edge {edge} of the second of {where}" );
+                        Assert.GreaterOrEqual( twiceAlong( edgeCorners[edge, 1] ), twiceOffset, $"end of edge {edge} of the second of {where}" );
+                    }
+
+                    Assert.IsTrue( DualMarchingCubes.lookupSeparation( solidCorners, other, vertex, out var reversed, out var reversedOffset ), $"the plane the other way round between {where}" );
+                    Assert.AreEqual( normal * -1, reversed,       $"normal the other way round between {where}" );
+                    Assert.AreEqual( -twiceOffset, reversedOffset, $"offset the other way round between {where}" );
+                }
+            }
+        }
+
+        // 92 of the 256 ways leave a cell with several vertices, with 118 pairs of them, each counted both ways
+        Assert.AreEqual( 2 * 118, pairs, "pairs of vertices with a plane between them" );
+    }
+
     // the vertices to take for each of two cells that share a face along the given axis, given whether each takes its
     // complement, and how many polygons then run along the edge between each pair of their vertices: one polygon for
     // each intersected edge of the face, from the vertex of that edge in the one cell to its vertex in the other
