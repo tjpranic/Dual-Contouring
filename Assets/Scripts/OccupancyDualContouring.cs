@@ -31,6 +31,14 @@ public partial class OccupancyDualContouring : Voxelizer {
     [Range( 1, 20 ), Tooltip( "How many times a search across a face then halves the step it found the contour in" )]
     public int faceSearchIterations = 11;
 
+    // the paper's polygons are only free of intersections when every vertex is inside its own cell, and its reference
+    // implementation moves a vertex that the QEF puts outside back in. That takes the vertex off the planes it was
+    // placed by: an edge of a shape that passes just outside a cell is blunted there. Off, vertices stay where the QEF
+    // puts them, as in manifold dual contouring, and triangles pass through each other as they do there. The split
+    // below, which relies on vertices being in their cells, is then left out as well
+    [Tooltip( "Move vertices that are placed outside their cell back into it. Off, edges are sharper and triangles can intersect" )]
+    public bool keepVerticesInCells = true;
+
     // section 5.4: the polygon around an edge is split along the diagonal that keeps its triangles from intersecting
     // those of other polygons, or into four triangles around the point where the contour crosses the edge. Off, it is
     // always split along the same diagonal, as manifold dual contouring splits it
@@ -51,18 +59,10 @@ public partial class OccupancyDualContouring : Voxelizer {
     public override Either<CPUVoxelization, GPUVoxelization> voxelize( IEnumerable<DensityFunction> densityFunctions ) {
         return this.implementationType switch {
             ImplementationType.Burst   => this.voxelizeBurst( densityFunctions ),
-            ImplementationType.GPU     => throw new NotImplementedException( "Occupancy-based dual contouring has no GPU implementation yet" ),
+            ImplementationType.GPU     => this.voxelizeGPU( densityFunctions ),
             ImplementationType.Managed => throw new NotSupportedException( "Occupancy-based dual contouring has no managed implementation" ),
             _                          => throw new Exception( "Unknown implementation type specified" )
         };
-    }
-
-    public override CPUVoxelization convert( GPUVoxelization voxelization ) {
-        throw new NotImplementedException( );
-    }
-
-    public override Mesh readMesh( GPUVoxelization voxelization ) {
-        throw new NotImplementedException( );
     }
 
 }
@@ -92,9 +92,14 @@ public class OccupancyDualContouringEditor : VoxelizerEditor {
 
         var occupancyDualContouring = this.target as OccupancyDualContouring;
 
-        // there is no managed implementation of occupancy-based dual contouring, and no GPU one yet
-        if( occupancyDualContouring.implementationType != ImplementationType.Burst ) {
+        // there is no managed implementation of occupancy-based dual contouring
+        if( occupancyDualContouring.implementationType == ImplementationType.Managed ) {
             occupancyDualContouring.implementationType = ImplementationType.Burst;
+        }
+
+        // only SVD solver is available for GPU implementation
+        if( occupancyDualContouring.implementationType == ImplementationType.GPU ) {
+            occupancyDualContouring.qefSolverType = QEFSolver.Type.SVD;
         }
     }
 

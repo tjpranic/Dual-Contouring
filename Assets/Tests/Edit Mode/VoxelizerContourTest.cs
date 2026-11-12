@@ -17,7 +17,8 @@ public class VoxelizerContourTest : TopologyTest {
     public enum Algorithm {
         Uniform,
         Adaptive,
-        Manifold
+        Manifold,
+        Occupancy
     }
 
     // an algorithm with one of its implementations
@@ -44,10 +45,12 @@ public class VoxelizerContourTest : TopologyTest {
         new( Algorithm.Adaptive, ImplementationType.Managed ),
         new( Algorithm.Adaptive, ImplementationType.Burst ),
         new( Algorithm.Manifold, ImplementationType.Managed ),
-        new( Algorithm.Manifold, ImplementationType.Burst )
+        new( Algorithm.Manifold, ImplementationType.Burst ),
+        new( Algorithm.Occupancy, ImplementationType.Burst ),
+        new( Algorithm.Occupancy, ImplementationType.GPU )
     };
 
-    // 16^3 cells for Uniform, 16^3 leaves for the octrees
+    // 16^3 cells for the uniform grids, 16^3 leaves for the octrees
     private const int resolution = 4;
 
     private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Shared ) {
@@ -55,6 +58,7 @@ public class VoxelizerContourTest : TopologyTest {
             Algorithm.Uniform  => this.createVoxelizer<UniformDualContouring>  ( resolution,     QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive => this.createVoxelizer<AdaptiveDualContouring> ( resolution + 1, QEFSolverType.SVD, shapes ),
             Algorithm.Manifold => this.createVoxelizer<ManifoldDualContouring> ( resolution + 1, QEFSolverType.SVD, shapes ),
+            Algorithm.Occupancy => this.createVoxelizer<OccupancyDualContouring>( resolution,     QEFSolverType.SVD, shapes ),
             _                  => throw new Exception( "Unknown algorithm specified" )
         };
 
@@ -243,8 +247,8 @@ public class VoxelizerContourTest : TopologyTest {
 
     // reading back only the mesh gives what reading back everything gives
     [Test]
-    public void gpuMeshReadBackMatchesConvert( [Values] Model model, [Values] VertexNormals normals ) {
-        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.GPU ), shapesOf( model ), normals );
+    public void gpuMeshReadBackMatchesConvert( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] Model model, [Values] VertexNormals normals ) {
+        var voxelizer = this.create( new( algorithm, ImplementationType.GPU ), shapesOf( model ), normals );
 
         voxelizer.voxelize( voxelizer.GetComponentsInChildren<Volume>( ) ).visit(
             ( cpu ) => { Assert.Fail( "the GPU implementation gave a CPU voxelization" ); return 0; },
@@ -275,7 +279,7 @@ public class VoxelizerContourTest : TopologyTest {
     // the GPU implementation keeps its buffers from one contour to the next. Whatever came before, a contour gives
     // what a voxelizer that never contoured anything gives
     [Test]
-    public void gpuContoursInARowMatchFreshContours( ) {
+    public void gpuContoursInARowMatchFreshContours( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm ) {
         var sequence = new ( Shape[] shapes, int resolution )[] {
             ( shapesOf( Model.ThreeBalls ),     4 ),
             ( shapesOf( Model.CubesAndSphere ), 4 ), // same resolution, same number of shapes
@@ -286,10 +290,10 @@ public class VoxelizerContourTest : TopologyTest {
             ( shapesOf( Model.ThreeBalls ),     4 )  // back to the start
         };
 
-        var reused = this.create( new( Algorithm.Uniform, ImplementationType.GPU ), new Shape[0] );
+        var reused = this.create( new( algorithm, ImplementationType.GPU ), new Shape[0] );
 
         foreach( var ( shapes, cellsExponent ) in sequence ) {
-            var fresh = this.create( new( Algorithm.Uniform, ImplementationType.GPU ), shapes );
+            var fresh = this.create( new( algorithm, ImplementationType.GPU ), shapes );
 
             fresh.resolution  = cellsExponent;
             reused.resolution = cellsExponent;
@@ -306,8 +310,8 @@ public class VoxelizerContourTest : TopologyTest {
 
     // once its buffers are released, as when it is disabled or destroyed, the GPU implementation can still contour
     [Test]
-    public void gpuContoursAfterReleasingItsBuffers( ) {
-        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.GPU ), shapesOf( Model.ThreeBalls ) );
+    public void gpuContoursAfterReleasingItsBuffers( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm ) {
+        var voxelizer = this.create( new( algorithm, ImplementationType.GPU ), shapesOf( Model.ThreeBalls ) );
 
         voxelizer.contour( drawFromGPU: false );
 

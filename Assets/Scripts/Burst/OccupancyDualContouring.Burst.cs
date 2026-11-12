@@ -71,6 +71,7 @@ public partial class OccupancyDualContouring {
         public BurstOccupancy.Searches searches;
         public QEFSolverType           qefSolverType;
         public int                     minimizerIterations;
+        public bool                    keepVerticesInCells;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>    vertexStarts;
         [NativeDisableParallelForRestriction] public NativeArray<float3> positions;
@@ -105,6 +106,7 @@ public partial class OccupancyDualContouring {
                         this.searches,
                         this.qefSolverType,
                         this.minimizerIterations,
+                        this.keepVerticesInCells,
                         this.materials,
                         this.densityFunctions,
                         out var position,
@@ -125,8 +127,9 @@ public partial class OccupancyDualContouring {
     private static class BurstOccupancyCells {
 
         // section 5.3, one vertex of a cell: the minimizer of the QEF of the planes at the 1D points of its piece of the
-        // contour, kept inside the cell. Its normal is the sum of the normals of those planes. A piece that has no plane
-        // at all has its vertex at the average of its 1D points, facing the way its edges run from solid to empty
+        // contour, kept inside the cell unless that is turned off. Its normal is the sum of the normals of those planes.
+        // A piece that has no plane at all has its vertex at the average of its 1D points, facing the way its edges run
+        // from solid to empty
         public static unsafe void solve(
             in BurstGrid                      grid,
             int3                              cell,
@@ -136,6 +139,7 @@ public partial class OccupancyDualContouring {
             in BurstOccupancy.Searches        searches,
             QEFSolverType                     qefSolverType,
             int                               minimizerIterations,
+            bool                              keepVerticesInCells,
             NativeArray<MaterialIndex>        materials,
             NativeArray<BurstDensityFunction> densityFunctions,
             out float3                        position,
@@ -179,7 +183,7 @@ public partial class OccupancyDualContouring {
 
             qef.solve( grid.centerOf( cell ), out var minimizer, out _ );
 
-            position = BurstOccupancy.intoCell( grid, cell, lookup, vertex, average, minimizer );
+            position = keepVerticesInCells ? BurstOccupancy.intoCell( grid, cell, lookup, vertex, average, minimizer ) : minimizer;
             normal   = BurstSurfaceExtractor.normalize( normal );
         }
 
@@ -606,6 +610,7 @@ public partial class OccupancyDualContouring {
             searches            = searches,
             qefSolverType       = this.qefSolverType,
             minimizerIterations = this.minimizerIterations,
+            keepVerticesInCells = this.keepVerticesInCells,
             vertexStarts        = vertexStarts,
             positions           = positions,
             normals             = normals
@@ -628,7 +633,7 @@ public partial class OccupancyDualContouring {
                 positions            = positions,
                 grid                 = grid,
                 edgeSearchIterations = this.edgeSearchIterations,
-                splitQuads           = this.splitQuads,
+                splitQuads           = this.splitQuads && this.keepVerticesInCells,
                 quads                = quads
             }.Schedule( grid.cellCount, BurstBatches.cells );
 

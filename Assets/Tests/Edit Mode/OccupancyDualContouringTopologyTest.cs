@@ -13,14 +13,14 @@ using QEFSolverType      = QEFSolver.Type;
 // each implementation in the fixtures at the end
 public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
 
-    private const int resolution = 4; // 16^3 cells
+    protected const int resolution = 4; // 16^3 cells
 
     // a ring lying at an angle, its hole more than three cells of 1 / 16 across and its tube as thick
     private static readonly Shape[] torus = {
         new Shape( DensityFunction.Type.Torus, new Vector3( 0.013f, -0.021f, 0.017f ), Quaternion.Euler( 20.0f, 0.0f, 30.0f ), new Vector3( 0.3f, 0.1f, 0.3f ), Combination.Union, MaterialIndex.Material0 )
     };
 
-    private OccupancyDualContouring create( int resolution, Shape[] shapes ) {
+    protected OccupancyDualContouring create( int resolution, Shape[] shapes ) {
         return this.createVoxelizer<OccupancyDualContouring>( resolution, QEFSolverType.SVD, shapes );
     }
 
@@ -312,6 +312,14 @@ public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
         Assert.IsTrue( corners.Any( ( corner ) => corner.density < 0.0f ) && corners.Any( ( corner ) => corner.density > 0.0f ), "corners on both sides" );
     }
 
+}
+
+public class BurstOccupancyDualContouringTopologyTest : OccupancyDualContouringTopologyTest {
+
+    public BurstOccupancyDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.Burst;
+    }
+
     // the corners, edges and voxels are copied out of the native buffers only when debug drawing is on or someone asked
     // for them
     [Test]
@@ -342,10 +350,10 @@ public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
 
 }
 
-public class BurstOccupancyDualContouringTopologyTest : OccupancyDualContouringTopologyTest {
+public class GPUOccupancyDualContouringTopologyTest : OccupancyDualContouringTopologyTest {
 
-    public BurstOccupancyDualContouringTopologyTest( ) {
-        this.implementation = ImplementationType.Burst;
+    public GPUOccupancyDualContouringTopologyTest( ) {
+        this.implementation = ImplementationType.GPU;
     }
 
 }

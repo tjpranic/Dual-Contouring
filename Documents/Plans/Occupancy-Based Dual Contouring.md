@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12 and waits for review, with what it measured for that question (finding 15).
+**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12, with what it measured for that question (finding 15). The user then decided it ("We'll make it a setting, on by default, as you suggest") and asked for step 4, which was done on 2026-11-13 and waits for review.
 
 ## Goal
 
@@ -90,6 +90,11 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
     - **Cells with several vertices,** which the paper says its argument does not cover. With every vertex only kept in its cell, the two models of shapes that cut into each other had 32 and 7 crossings at 32³, every one between triangles with vertices in the same cell. With each vertex also kept on its own side of a plane between the pieces of its cell, they have none. The reference code keeps them apart with planes from a table (finding 4); here the planes are derived from `DualMarchingCubes`.
     - **So the choice of finding 14 is a real one:** the clamp costs edges on turned shapes, and it is all that stands between this algorithm and the crossings Manifold Dual Contouring has.
 
+16. **On the GPU this algorithm is far faster than in Burst, and four times faster than Uniform Dual Contouring's shader.** Found in step 4: a whole remesh of the three balls at 128³ takes 32 ms, against 83 ms in Burst and 133 ms for Uniform's GPU implementation (Measurements).
+    - The searches are what costs, and they are what a GPU does well: every edge and every cell at once.
+    - The shader keeps a material per corner, a 1D point per edge and two numbers per cell, 24 bytes a cell in all. Uniform's shader keeps 540: the voxels, and eight corners and twelve edges for each.
+    - Every edge's 1D point is found once and read by the cells around it, which the Burst implementation does not do yet (step 6).
+
 ## Design
 
 ### The component
@@ -100,6 +105,7 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 - **Implementations:** Burst and GPU. A new component starts as Burst. Managed throws `NotSupportedException`, and the inspector turns it into Burst, as Manifold's turns GPU into Managed. Until step 4 the inspector turns GPU into Burst as well.
 - **Settings it uses from `Voxelizer`:** resolution, QEF solver, minimizer iterations, vertex normals, the debug view. On the GPU the solver is SVD, as for Uniform.
 - **Settings it hides** (finding 10): binary search iterations, intersection approximation, surface correction iterations.
+- **`keepVerticesInCells`** = true (decision 6, added with step 4): off, vertices stay where the QEF puts them, and the split and the planes between the vertices of a cell are left out with it.
 - **Its own settings,** with the paper's values. Each is added in the step that first uses it:
   - `edgeSearchIterations` = 15: bisections for a 1D point.
   - `faceSearchSamples` = 4 and `faceSearchIterations` = 11: the first search of a 2D point. The two searches along the line take one sample fewer and one bisection more, as in the paper, so all three cost the same.
@@ -177,13 +183,22 @@ Profiler markers are named `OccupancyDualContouring.Burst.<Stage>`.
 
 ### GPU
 
-`Assets/Scripts/GPU/OccupancyDualContouring.GPU.cs` and `Assets/Resources/Shaders/OccupancyDualContouring.compute`.
+`Assets/Scripts/GPU/OccupancyDualContouring.GPU.cs` and `Assets/Resources/Shaders/OccupancyDualContouring.compute`, as built in step 4.
 
-- **Shared shader code:** the shape functions and the density function struct move from `UniformDualContouring.compute` into `DensityFunctions.hlsl`, which both shaders include. The `Start` hashes and the remesh timing show whether that changes Uniform's GPU output or speed. It should change neither.
-- **Buffers:** a material per corner, a 1D point per edge, a record per cell (lookup index, first vertex, vertex count), and the vertex, normal, quad, count and argument buffers that `Voxelizer` already reads and draws. Vertices are appended with an atomic counter, as now.
-- **Kernels:** sample corners; classify cells; search edges; solve cells, each working out its own 2D points; contour, which writes two or four triangles as one or two quads (finding 9) and makes split normals itself, as Uniform's does.
-- **Thread groups** of 4³, where Uniform's shader uses groups of one. Measured in step 4.
-- **Readback:** `readMesh` is Uniform's, moved to where both can call it. `convert` reads back materials, 1D points and vertices for the debug view.
+- **Shared shader code:** the shape functions and the density function struct are in `DensityFunctions.hlsl`, which both compute shaders include. Uniform's GPU output and speed did not change.
+- **What the shader keeps,** laid out as `BurstGrid` lays out corners and cells: a material per corner, a 1D point per edge (three for every corner), and for every cell its solid corners, what it looks its vertices up with, how many it has and where they start.
+- **The tables** of `DualMarchingCubes` go up as one buffer of numbers, filled in C# from the lookups, so the shader has no table of its own.
+- **Kernels,** each doing what the job of the same name does in Burst:
+  1. `sampleCorners`;
+  2. `classifyCells`: solid corners, the complement rule, and room for each cell's vertices. It also counts the polygons;
+  3. `searchEdges`: the 1D point of every crossed edge, once;
+  4. `solveCells`: 2D points, planes, the QEF and the clamp, for every vertex of a cell;
+  5. `contourShared` or `contourSplit`: the split of each polygon and its triangles, two or four, as one or two quads (finding 9). With split normals every triangle gets three vertices of its own and the normal of its face, as in Uniform's shader.
+- **One readback in the middle.** After `classifyCells` the C# side reads how many vertices and polygons there are, and makes the vertex and quad buffers larger if they need to be. They are kept from one contour to the next. Uniform's shader sizes its buffers by the grid instead, which is what makes them large.
+- **Thread groups** are 4 x 4 x 4 cells or corners. Group sizes were not compared.
+- **A kernel may write to eight buffers at most** on this platform, so the buffers of the grid are declared twice: to write, for the kernel that fills each, and to read, for the others.
+- **Vertices of the mesh:** with shared normals the vertices of the cells are the mesh's vertices, followed by the 1D points that fans add. The order of what is appended varies from run to run, as with Uniform's shader.
+- **Readback:** `SurfaceExtractor.readMesh` reads the mesh of either algorithm. `convert` reads back materials, 1D points, cells and vertices for the debug view. The shader does not keep its planes, so an edge shows the direction from its solid end to its empty one where Burst shows the plane.
 
 ### Debug view
 
@@ -383,7 +398,35 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - Edit mode 1570 of 1570, play mode 21 of 21.
      - The 416 `Start` hashes are identical to step 0.
      - Compiling gave no errors.
-4. **GPU (large).** `DensityFunctions.hlsl` first, with Uniform's GPU hashes and timing checked. Then the shader, its buffers, readback, drawing straight from the GPU and split normals. The Burst-against-GPU tests.
+   **3a. The setting for keeping vertices in their cells (small).** Decision 6, 2026-11-12. **Done 2026-11-13:**
+   - `keepVerticesInCells`, on unless set. Off, a vertex stays at the minimizer of its QEF, and every polygon is split along the same diagonal: the split's test and the planes between the vertices of a cell both assume vertices in their cells.
+   - **New test,** `withoutKeepingVerticesInTheirCellsEdgesAreSharperAndTrianglesCross`, on the turned cuboid and hexagonal prism: on, no vertex is outside its cell, the farthest is more than 0.2 of a cell from the shape and no triangles cross; off, more than 20 are outside, the farthest is within 0.05, the mesh is within 0.06 of the edges at nine points in ten, and triangles cross.
+   - `VoxelizerDefaultsTest` holds the defaults of all five settings.
+
+4. **GPU (large).** `DensityFunctions.hlsl` first, with Uniform's GPU hashes and timing checked. Then the shader, its buffers, readback, drawing straight from the GPU and split normals. The Burst-against-GPU tests. **Done 2026-11-13:**
+   - **`DensityFunctions.hlsl`:** the 291 lines of shape functions moved out of `UniformDualContouring.compute`, which includes them. Uniform's GPU remesh took 132.5 and 134.6 ms at 128³ before and 133.5 and 135.2 after, and its `Start` hashes are unchanged.
+   - **The shader and its C# side** as Design describes them. The component dispatches to it, releases its buffers with the voxelizer, and its inspector now only turns Managed into Burst, and the solver into SVD on the GPU.
+   - **`SurfaceExtractor.readMesh`** (`Assets/Scripts/GPU/SurfaceExtractor.GPU.cs`) is Uniform's mesh readback, which both algorithms call. It now reads nothing where a count is zero.
+   - **`DualMarchingCubes`** gained `lookupEdgeCorner` and `lookupCornerOffset`, for the shader's tables.
+   - **New tests:**
+     - **`OccupancyDualContouringGPUTest` (12),** the shader against Burst on eight models and with vertices not kept in their cells:
+       - the same cells have the same number of vertices;
+       - every 1D point is within one step of the search, 2^-15 of a cell;
+       - every vertex is within 0.02 of a cell and every normal within half a degree. The farthest were 0.0048 and 0.13, and most vertices are within 0.0001;
+       - the meshes have the same number of vertices and indices in every sub-mesh, so every polygon is split the same way;
+       - split normals give every triangle three vertices with the normal of its face, and the same triangles;
+       - the contour can be drawn straight from the GPU, with as many indices as the mesh has.
+     - **`GPUOccupancyDualContouringTopologyTest` (36) and `GPUOccupancyShapeContourTest` (66):** the fixtures of steps 1 to 3 for the GPU, with the same tolerances. Two tests stay with Burst: debug information only when wanted, and the planes of a cube, which the shader does not keep.
+     - **`VoxelizerContourTest`** has Occupancy in Burst and on the GPU among its variants, and its three GPU tests run for both algorithms: 141 in all.
+     - **`SubMeshTest`** has Occupancy on the GPU.
+   - **The tests catch mistakes.** In the shader, a search returning its far end, the wrong edge for two of the cells around an edge along z and a fan going around the wrong way were put in together. They failed 10 of the 12 comparison tests and all 36 topology tests. With the shader restored the comparison passes again.
+   - **Speed:** finding 16.
+   - **Not done:** comparing thread group sizes, and example scenes, which are step 5.
+   - **Verification of steps 3a and 4:**
+     - Edit mode 1724 of 1724, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0, the 32 GPU lines of Uniform Dual Contouring among them.
+     - The Burst timings are those of step 3: Occupancy 79 ms at 128³, Uniform 28 ms, Manifold 33 ms.
+     - Compiling gave no errors, and the shader no messages.
 5. **Interactive editor and scenes (medium).** The fourth algorithm in the editor and its tests, the component in `Interactive Editor.unity`, the example scenes.
 6. **Tuning and documentation (medium).** Sharing 1D and 2D points between cells in Burst if step 2's timings call for it, with the output held bit for bit. README (algorithms, implementations table, code layout, the editor), `AGENTS.md`, and this plan marked complete.
 
@@ -445,6 +488,20 @@ Occupancy-Based Dual Contouring as step 1 leaves it, with 15 halvings for every 
 - The face searches and the QEF took the vertices from 18.7 ms in step 1 to 61 ms at 128³.
 - Manifold Dual Contouring in the same session: 33.5 and 34.0 ms upright, 35.6 and 35.8 turned.
 - At 128³ a contour is past the 50 ms up to which the interactive editor follows a drag live.
+
+### GPU remesh (step 4, 2026-11-13)
+
+A whole remesh of the three balls with shared normals, as `Voxelizer.contour` does it without drawing from the GPU: contour, read the mesh back, bounds and reordering. Mean of 5 after a warm-up, in ms, two runs each, with Unity in front:
+
+| | 64³ | 128³ |
+|---|---|---|
+| Occupancy, GPU | 11.3, 12.1 | 32.1, 32.7 |
+| Occupancy, GPU, split normals | | 34.1 |
+| Occupancy, Burst | 20.4 | 83.1 |
+| Uniform, GPU, before `DensityFunctions.hlsl` | 29.0, 29.0 | 132.5, 134.6 |
+| Uniform, GPU, after | 28.6, 30.9 | 133.5, 135.2 |
+
+Of Occupancy's 32 ms on the GPU, about 2 ms are dispatching, with the readback of the two counts in the middle, 13 ms waiting for the GPU, and the rest reading back and building the mesh.
 
 ### How far vertices are from single shapes (step 2, 2026-11-12)
 
@@ -539,6 +596,6 @@ All five were decided as recommended on 2026-11-12.
 4. **Manifold Dual Contouring's non-manifold case** (finding 3). Recommended: leave it out of this plan, and decide once step 0's test shows it on the project's own table. The rule would then be a small change to its leaves. **Decided after step 0, 2026-11-12:** the rule is added, as step 0a.
 5. **Editor and scenes in this plan?** Recommended: yes, as step 5.
 
-### Open after step 2
+### Asked after step 2
 
-6. **Should keeping vertices in their cells be a setting?** Decision 3 has the clamp always on, as the reference code has it. Step 2 measured what it costs on turned shapes with edges (finding 14), and step 3 what it buys (finding 15): with it there are no crossings to speak of, and without it as many as Manifold Dual Contouring has, whatever the split. Recommended: a setting, on unless turned off. Curved models lose nothing to the clamp, and models of turned boxes lose their edges to it, so which is better depends on the model. Off, the component would also leave the split and the planes between vertices out, which do nothing for vertices outside their cells.
+6. **Should keeping vertices in their cells be a setting?** Decision 3 has the clamp always on, as the reference code has it. Step 2 measured what it costs on turned shapes with edges (finding 14), and step 3 what it buys (finding 15): with it there are no crossings to speak of, and without it as many as Manifold Dual Contouring has, whatever the split. Recommended: a setting, on unless turned off. Curved models lose nothing to the clamp, and models of turned boxes lose their edges to it, so which is better depends on the model. Off, the component would also leave the split and the planes between vertices out, which do nothing for vertices outside their cells. **Decided 2026-11-12:** a setting, on by default ("We'll make it a setting, on by default, as you suggest"). Built as step 3a.

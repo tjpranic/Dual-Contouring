@@ -275,27 +275,8 @@ public partial class UniformDualContouring {
 
     }
 
-    // reads the two counters first, then only as many vertices, normals and quads as the contour wrote
     public override Mesh readMesh( GPUVoxelization voxelization ) {
-        var countsData = new int[2];
-
-        voxelization.counts.GetData( countsData );
-
-        var verticesData = new Vector3[countsData[0]];
-        var normalsData  = new Vector3[countsData[0]];
-        var quadsData    = new Quad.Data[countsData[1]];
-
-        voxelization.vertices.GetData ( verticesData, 0, 0, countsData[0] );
-        voxelization.normals.GetData  ( normalsData,  0, 0, countsData[0] );
-        voxelization.quads.GetData    ( quadsData,    0, 0, countsData[1] );
-
-        var quads = quadsData.Select( ( quadData ) => new Quad( quadData ) );
-
-        return SurfaceExtractor.createMesh(
-            verticesData,
-            normalsData,
-            quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
-        );
+        return SurfaceExtractor.readMesh( voxelization );
     }
 
     public override CPUVoxelization convert( GPUVoxelization voxelization ) {

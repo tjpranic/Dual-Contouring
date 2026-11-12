@@ -87,6 +87,16 @@ public static class DualMarchingCubes {
         return vertexEdges[solidCorners];
     }
 
+    // where a corner of a cell is along an axis, 0 at the minimum of the cell and 1 at its maximum, and the corner at
+    // either end of an edge, as the corner and edge layouts of the voxels have them
+    public static int lookupCornerOffset( int corner, int axis ) {
+        return cornerOffsets[corner, axis];
+    }
+
+    public static int lookupEdgeCorner( int edge, int end ) {
+        return edgeCorners[edge, end];
+    }
+
     public static int lookupFaceAxis( int face ) {
         return faceAxes[face];
     }

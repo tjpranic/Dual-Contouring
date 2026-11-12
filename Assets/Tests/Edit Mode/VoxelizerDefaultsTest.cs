@@ -38,7 +38,7 @@ public class VoxelizerDefaultsTest {
         assertDefaults<ManifoldDualContouring>( );
     }
 
-    // it has no managed implementation, and searches as the paper does: an edge is halved fifteen times
+    // it has no managed implementation, and searches as the paper does
     [Test]
     public void occupancyDualContouring( ) {
         assertDefaults<OccupancyDualContouring>( ImplementationType.Burst );
@@ -46,7 +46,15 @@ public class VoxelizerDefaultsTest {
         var gameObject = new GameObject( nameof( OccupancyDualContouring ) ) { hideFlags = HideFlags.HideAndDontSave };
 
         try {
-            Assert.AreEqual( 15, gameObject.AddComponent<OccupancyDualContouring>( ).edgeSearchIterations, "edge search iterations" );
+            var voxelizer = gameObject.AddComponent<OccupancyDualContouring>( );
+
+            Assert.AreEqual( 15, voxelizer.edgeSearchIterations, "edge search iterations" );
+            Assert.AreEqual( 4,  voxelizer.faceSearchSamples,    "face search samples" );
+            Assert.AreEqual( 11, voxelizer.faceSearchIterations, "face search iterations" );
+
+            // and as its reference implementation does: vertices are kept in their cells and polygons split
+            Assert.IsTrue( voxelizer.keepVerticesInCells, "keep vertices in cells" );
+            Assert.IsTrue( voxelizer.splitQuads,          "split quads" );
         }
         finally {
             Object.DestroyImmediate( gameObject );

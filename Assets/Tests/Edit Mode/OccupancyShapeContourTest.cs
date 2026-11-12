@@ -31,11 +31,11 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
     public static readonly DensityFunction.Type[] cornered = { DensityFunction.Type.Cuboid, DensityFunction.Type.Cone, DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron, DensityFunction.Type.HexagonalPrism };
     public static readonly DensityFunction.Type[] edged    = { DensityFunction.Type.Cuboid, DensityFunction.Type.Cylinder, DensityFunction.Type.Cone, DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron, DensityFunction.Type.HexagonalPrism };
 
-    private static Vector3 extentsOf( DensityFunction.Type type ) {
+    protected static Vector3 extentsOf( DensityFunction.Type type ) {
         return type == DensityFunction.Type.Ellipsoid ? new Vector3( 0.3f, 0.25f, 0.2f ) : ShapeContourTest.extentsOf( type );
     }
 
-    private OccupancyDualContouring create( DensityFunction.Type type, Turn turn ) {
+    protected OccupancyDualContouring create( DensityFunction.Type type, Turn turn ) {
         var shape = new Shape( type, ShapeContourTest.center, extentsOf( type ), Combination.Union, MaterialIndex.Material0 ).rotated( ShapeContourTest.rotationOf( turn ) );
 
         return this.createVoxelizer<OccupancyDualContouring>( resolution, QEFSolverType.SVD, new[] { shape } );
@@ -226,9 +226,67 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
         Assert.Greater( MeshIntersections.count( this.voxelize( voxelizer ).mesh ), 0, "pairs of triangles that pass through each other without the split" );
     }
 
+    // with vertices left where the QEF puts them, the turned shapes with edges keep those edges: no vertex is moved, the
+    // farthest is a tenth as far from the shape as with the clamp, and the mesh is 0.05 of a cell from the edges at nine
+    // points in ten instead of 0.2. Triangles pass through each other again, and no polygon is split into four
+    [Test]
+    public void withoutKeepingVerticesInTheirCellsEdgesAreSharperAndTrianglesCross( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.HexagonalPrism )] DensityFunction.Type type ) {
+        var voxelizer = this.create( type, Turn.Turned );
+        var volume    = voxelizer.GetComponentInChildren<Volume>( );
+
+        ( float farthest, float alongEdges, int outside, int crossings, int onEdges ) contour( ) {
+            var voxelization = this.voxelize( voxelizer );
+            var mesh         = voxelization.mesh;
+            var voxels       = voxelization.voxels.ToArray( );
+
+            var vertices  = mesh.vertices;
+            var triangles = mesh.triangles;
+
+            var distances = edgePointsOf( type, extentsOf( type ) ).Select(
+                ( local ) => distanceToMesh( ShapeContourTest.toWorld( volume, local ), vertices, triangles ) / cell
+            ).OrderBy( ( distance ) => distance ).ToArray( );
+
+            return (
+                voxels.Max( ( voxel ) => Mathf.Abs( volume.sample( voxel.vertex ) ) ) / cell,
+                distances[( int )( distances.Length * 0.9f )],
+                voxels.Count( ( voxel ) => Enumerable.Range( 0, 3 ).Any( ( axis ) => voxel.vertex[axis] < voxel.minimum[axis] || voxel.vertex[axis] > voxel.maximum[axis] ) ),
+                MeshIntersections.count( mesh ),
+                mesh.vertexCount - voxels.Length
+            );
+        }
+
+        var kept = contour( );
+
+        voxelizer.keepVerticesInCells = false;
+
+        var free = contour( );
+
+        Assert.AreEqual( 0, kept.outside, "vertices outside their cells, kept in" );
+        Assert.Greater( free.outside, 20, "vertices outside their cells, not kept in" );
+
+        Assert.Greater( kept.farthest, 0.2f,     "how far the farthest vertex is from the shape, kept in, in cells" );
+        Assert.LessOrEqual( free.farthest, 0.05f, "how far the farthest vertex is from the shape, not kept in, in cells" );
+
+        Assert.Greater( kept.alongEdges, 0.1f,       "how far the mesh is from the edges at nine points in ten, kept in, in cells" );
+        Assert.LessOrEqual( free.alongEdges, 0.06f, "how far the mesh is from the edges at nine points in ten, not kept in, in cells" );
+
+        Assert.AreEqual( 0, kept.crossings, "pairs of triangles that pass through each other, kept in" );
+        Assert.Greater( free.crossings, 0,  "pairs of triangles that pass through each other, not kept in" );
+
+        Assert.AreEqual( 0, free.onEdges, "vertices of the mesh on edges of the grid, not kept in" );
+    }
+
+}
+
+public class BurstOccupancyShapeContourTest : OccupancyShapeContourTest {
+
+    public BurstOccupancyShapeContourTest( ) {
+        this.implementation = ImplementationType.Burst;
+    }
+
     // section 5.3: the plane at a 1D point goes through it and the two 2D points next to it. On a cube those are on the
-    // face the 1D point is on, or at an edge of that face, so the plane is the face. The debug view shows the normal of
-    // the plane with the edge
+    // face the 1D point is on, or at an edge of that face, so the plane is the face. The debug view of the Burst
+    // implementation shows the normal of the plane with the edge; the GPU implementation does not keep its planes
     [Test]
     public void thePlanesOfACubeAreItsFaces( [Values] Turn turn ) {
         var voxelizer = this.create( DensityFunction.Type.Cuboid, turn );
@@ -265,10 +323,10 @@ public abstract class OccupancyShapeContourTest : TopologyTest {
 
 }
 
-public class BurstOccupancyShapeContourTest : OccupancyShapeContourTest {
+public class GPUOccupancyShapeContourTest : OccupancyShapeContourTest {
 
-    public BurstOccupancyShapeContourTest( ) {
-        this.implementation = ImplementationType.Burst;
+    public GPUOccupancyShapeContourTest( ) {
+        this.implementation = ImplementationType.GPU;
     }
 
 }

@@ -1,0 +1,878 @@
+#pragma kernel sampleCorners
+#pragma kernel classifyCells
+#pragma kernel searchEdges
+#pragma kernel solveCells
+#pragma kernel contourShared
+#pragma kernel contourSplit
+
+// Occupancy-Based Dual Contouring (Hwang and Sung, 2024) on the GPU, kernel for kernel what
+// OccupancyDualContouring.Burst.cs and BurstOccupancy.cs do in jobs: the comments there say why, the ones here what.
+// The only question asked of the volumes is whether a point is inside: whether they give it a material
+
+#include "DensityFunctions.hlsl"
+#include "QEF.hlsl"
+
+#define MATERIAL_INDEX_VOID 0
+
+#define VERTEX_NORMALS_SHARED 0
+#define VERTEX_NORMALS_SPLIT 1
+
+// OccupancyDualContouring.GPUImplementation.Configuration in C#, field for field
+cbuffer Configuration {
+    uint resolution;
+    uint minimizerIterations;
+    uint edgeSearchIterations;
+    uint faceSearchSamples;
+    uint faceSearchIterations;
+    uint splitQuads;
+    uint keepVerticesInCells;
+    uint densityFunctionCount;
+}
+
+StructuredBuffer<DensityFunction> densityFunctions;
+
+// the tables of DualMarchingCubes, one after the other, as OccupancyDualContouring.GPUImplementation fills them in
+StructuredBuffer<int> tables;
+
+#define TABLE_VERTEX_COUNTS  0     // 256: how many vertices a cell has
+#define TABLE_EDGE_VERTICES  256   // 256 x 12: the vertex each edge belongs to, or -1
+#define TABLE_JOINED_FACES   3328  // 256: the joined face, or -1
+#define TABLE_EDGES_ACROSS   3584  // 256 x 12 x 2: the edge that follows an edge around its piece, across either face
+#define TABLE_SEPARATIONS    9728  // 256 x 6 x 4: the plane between each pair of vertices, normal and twice its offset
+#define TABLE_EDGE_FACES     15872 // 12 x 2: the two faces of each edge
+#define TABLE_FACE_AXES      15896 // 6
+#define TABLE_FACE_SIDES     15902 // 6
+#define TABLE_EDGE_CORNERS   15908 // 12 x 2: the corners at the ends of each edge
+#define TABLE_CORNER_OFFSETS 15932 // 8 x 3: where each corner is in its cell
+
+// BurstOccupancy: how far the rays of a 2D point reach, what counts as nothing, when three points lie on a line and how
+// far inside its cell a vertex is kept, all in cells
+#define ACROSS_RANGE 0.8f
+#define ALONG_RANGE  0.70710678f
+#define TOLERANCE    1e-5f
+#define FLATNESS     1e-4f
+#define MARGIN       1e-3f
+
+// BurstOccupancy: how the polygon around an edge is made into triangles
+#define NO_POLYGON      0
+#define FIRST_DIAGONAL  1
+#define SECOND_DIAGONAL 2
+#define FAN             3
+
+// the material at every corner of the grid, the corners and cells in the order of BurstGrid
+StructuredBuffer<uint> materials;
+
+// for every cell: its solid corners in the low byte, what it looks its vertices up with in the next, and how many
+// vertices it has above that. And where its vertices start
+StructuredBuffer<uint> cells;
+StructuredBuffer<uint> vertexStarts;
+
+// how far along each edge of the grid the contour crosses it: three edges for every corner, along x, y and z from it
+StructuredBuffer<float> edgePoints;
+
+// the same four buffers for the kernels that write them. A kernel may write to eight buffers at most, so every other
+// kernel has them as above, to read
+RWStructuredBuffer<uint>  materialsOut;
+RWStructuredBuffer<uint>  cellsOut;
+RWStructuredBuffer<uint>  vertexStartsOut;
+RWStructuredBuffer<float> edgePointsOut;
+
+// how many vertices the cells have between them, and how many polygons there are
+RWStructuredBuffer<uint> totals;
+
+#define TOTAL_CELL_VERTICES 0
+#define TOTAL_POLYGONS      1
+
+// the vertices of the cells, followed by those on edges that fans add
+RWStructuredBuffer<float3> vertices;
+RWStructuredBuffer<float3> normals;
+
+// with split normals, the vertices of the mesh: three of its own for every triangle
+RWStructuredBuffer<float3> splitVertices;
+RWStructuredBuffer<float3> splitNormals;
+
+// two triangles each, as the mesh is read back and drawn from: UniformDualContouring.Quad.Data in C#
+struct Quad {
+    uint indices[6];
+    uint subMeshIndex;
+};
+
+RWStructuredBuffer<Quad> quads;
+RWStructuredBuffer<uint> counts;
+RWStructuredBuffer<uint> arguments;
+
+#define VERTEX_COUNT_INDEX 0
+#define QUAD_COUNT_INDEX   1
+#define INDEX_COUNT_INDEX  0
+
+uint3 unitOf( uint axis ) {
+    return uint3( axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0 );
+}
+
+// BurstGrid.cornerIndex and cellIndex
+uint cornerIndexOf( uint3 corner ) {
+    return ( ( ( corner.x * ( resolution + 1 ) ) + corner.y ) * ( resolution + 1 ) ) + corner.z;
+}
+
+uint cellIndexOf( uint3 cell ) {
+    return ( ( ( cell.x * resolution ) + cell.y ) * resolution ) + cell.z;
+}
+
+// BurstGrid.positionOf
+float3 positionOf( uint3 corner ) {
+    return ( float3( corner ) / ( float )resolution ) - 0.5f;
+}
+
+uint3 cornerOfCell( uint3 cell, uint corner ) {
+    return cell + uint3( tables[TABLE_CORNER_OFFSETS + ( corner * 3 )], tables[TABLE_CORNER_OFFSETS + ( corner * 3 ) + 1], tables[TABLE_CORNER_OFFSETS + ( corner * 3 ) + 2] );
+}
+
+// SurfaceExtractor.calculateMaterial
+uint materialAt( float3 position ) {
+    uint materialIndex = MATERIAL_INDEX_VOID;
+
+    [loop]
+    for( uint densityFunctionIndex = 0; densityFunctionIndex < densityFunctionCount; ++densityFunctionIndex ) {
+        DensityFunction densityFunction = densityFunctions[densityFunctionIndex];
+
+        float density = sampleDensityFunction( position, densityFunction );
+
+        // set material bit if the corner is inside of the shape
+        if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_UNION && density < 0.0f ) {
+            materialIndex |= densityFunction.materialIndex;
+        }
+        // unset material bit if the corner is outside of the shape
+        if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_INTERSECTION && density > 0.0f ) {
+            materialIndex &= ~densityFunction.materialIndex;
+        }
+        // unset material bit if the corner is inside of the shape
+        if( densityFunction.combination == DENSITY_FUNCTION_COMBINATION_SUBTRACTION && density < 0.0f ) {
+            materialIndex &= ~densityFunction.materialIndex;
+        }
+    }
+
+    return materialIndex;
+}
+
+bool isSolid( float3 position ) {
+    return materialAt( position ) != MATERIAL_INDEX_VOID;
+}
+
+[numthreads( 4, 4, 4 )]
+void sampleCorners( uint3 corner : SV_DispatchThreadID ) {
+    if( all( corner <= resolution ) ) {
+        materialsOut[cornerIndexOf( corner )] = materialAt( positionOf( corner ) );
+    }
+}
+
+uint solidCornersOf( uint3 cell ) {
+    uint solid = 0;
+
+    [unroll]
+    for( uint corner = 0; corner < 8; ++corner ) {
+        if( materials[cornerIndexOf( cornerOfCell( cell, corner ) )] != MATERIAL_INDEX_VOID ) {
+            solid |= 1u << corner;
+        }
+    }
+
+    return solid;
+}
+
+// BurstCells.vertexLookupOf
+uint lookupOf( uint3 cell, uint solid ) {
+    uint lookup = solid;
+    int  face   = tables[TABLE_JOINED_FACES + solid];
+
+    if( face >= 0 ) {
+        uint axis = tables[TABLE_FACE_AXES + face];
+        int  side = tables[TABLE_FACE_SIDES + face];
+
+        // the cell across the face, unless the face is on the outside of the grid
+        int3 neighbor = int3( cell ) + ( int3( unitOf( axis ) ) * ( side == 1 ? 1 : -1 ) );
+
+        if( neighbor[axis] >= 0 && neighbor[axis] < ( int )resolution ) {
+            int other = tables[TABLE_JOINED_FACES + solidCornersOf( uint3( neighbor ) )];
+
+            if( other >= 0 && tables[TABLE_FACE_AXES + other] == ( int )axis && tables[TABLE_FACE_SIDES + other] != side ) {
+                lookup = ~solid & 255;
+            }
+        }
+    }
+
+    return lookup;
+}
+
+// BurstQuads.clusterOf: whether the four cells around the edge of a cell along the axis at its maximum are in the grid
+bool startsPolygon( uint3 cell, uint axis ) {
+    uint3 next = cell + uint3( 1, 1, 1 ) - unitOf( axis );
+
+    return all( next < resolution );
+}
+
+// that edge runs from the corner of the cell at its maximum but for the axis to the corner at its maximum
+uint3 edgeStartOf( uint3 cell, uint axis ) {
+    return cell + uint3( 1, 1, 1 ) - unitOf( axis );
+}
+
+bool intersectsContour( uint material, uint otherMaterial ) {
+    return ( material == MATERIAL_INDEX_VOID ) != ( otherMaterial == MATERIAL_INDEX_VOID );
+}
+
+[numthreads( 4, 4, 4 )]
+void classifyCells( uint3 cell : SV_DispatchThreadID ) {
+    uint index  = cellIndexOf( cell );
+    uint solid  = solidCornersOf( cell );
+    uint lookup = solid;
+    uint count  = 0;
+    uint start  = 0;
+
+    if( solid != 0 && solid != 255 ) {
+        lookup = lookupOf( cell, solid );
+        count  = tables[TABLE_VERTEX_COUNTS + lookup];
+
+        InterlockedAdd( totals[TOTAL_CELL_VERTICES], count, start );
+
+        uint polygons = 0;
+
+        [unroll]
+        for( uint axis = 0; axis < 3; ++axis ) {
+            uint3 edgeStart = edgeStartOf( cell, axis );
+
+            if( startsPolygon( cell, axis ) && intersectsContour( materials[cornerIndexOf( edgeStart )], materials[cornerIndexOf( cell + uint3( 1, 1, 1 ) )] ) ) {
+                ++polygons;
+            }
+        }
+
+        if( polygons > 0 ) {
+            InterlockedAdd( totals[TOTAL_POLYGONS], polygons );
+        }
+    }
+
+    cellsOut[index]        = solid | ( lookup << 8 ) | ( count << 16 );
+    vertexStartsOut[index] = start;
+}
+
+// BurstOccupancy.positionOnEdge
+float3 positionOnEdge( uint3 start, uint axis, float along ) {
+    return ( ( float3( start ) + ( float3( unitOf( axis ) ) * along ) ) / ( float )resolution ) - 0.5f;
+}
+
+// BurstOccupancy.searchEdge, section 5.1
+float searchEdge( uint3 start, uint axis, bool startIsSolid ) {
+    float solid = startIsSolid ? 0.0f : 1.0f;
+    float empty = startIsSolid ? 1.0f : 0.0f;
+
+    [loop]
+    for( uint iteration = 0; iteration < edgeSearchIterations; ++iteration ) {
+        float middle = ( solid + empty ) * 0.5f;
+
+        if( isSolid( positionOnEdge( start, axis, middle ) ) ) {
+            solid = middle;
+        }
+        else {
+            empty = middle;
+        }
+    }
+
+    return solid;
+}
+
+[numthreads( 4, 4, 4 )]
+void searchEdges( uint3 corner : SV_DispatchThreadID ) {
+    if( all( corner <= resolution ) ) {
+        uint index    = cornerIndexOf( corner );
+        uint material = materials[index];
+
+        [loop]
+        for( uint axis = 0; axis < 3; ++axis ) {
+            uint3 end = corner + unitOf( axis );
+
+            if( end[axis] <= resolution && intersectsContour( material, materials[cornerIndexOf( end )] ) ) {
+                edgePointsOut[( index * 3 ) + axis] = searchEdge( corner, axis, material != MATERIAL_INDEX_VOID );
+            }
+        }
+    }
+}
+
+// BurstOccupancy.positionOnFace
+float3 positionOnFace( uint3 corner, uint axis, float2 point2 ) {
+    float3 offset = ( float3( unitOf( ( axis + 1 ) % 3 ) ) * point2.x ) + ( float3( unitOf( ( axis + 2 ) % 3 ) ) * point2.y );
+
+    return positionOf( corner ) + ( offset / ( float )resolution );
+}
+
+// BurstOccupancy.searchLine, appendix A.1.3
+float searchLine( uint3 corner, uint axis, float2 start, float2 direction, bool startIsSolid, float range, uint samples, uint iterations ) {
+    float spacing = range / samples;
+    float nearEnd = spacing * ( samples - 1 );
+
+    [loop]
+    for( uint taken = 1; taken <= samples; ++taken ) {
+        if( isSolid( positionOnFace( corner, axis, start + ( direction * ( spacing * taken ) ) ) ) != startIsSolid ) {
+            nearEnd = spacing * ( taken - 1 );
+
+            break;
+        }
+    }
+
+    float farEnd = nearEnd + spacing;
+
+    [loop]
+    for( uint iteration = 0; iteration < iterations; ++iteration ) {
+        float middle = ( nearEnd + farEnd ) * 0.5f;
+
+        if( isSolid( positionOnFace( corner, axis, start + ( direction * middle ) ) ) == startIsSolid ) {
+            nearEnd = middle;
+        }
+        else {
+            farEnd = middle;
+        }
+    }
+
+    return nearEnd;
+}
+
+// BurstOccupancy.searchFace, section 5.2
+float2 searchFace( uint3 corner, uint axis, float2 first, float2 second, uint solidCorners ) {
+    float2 middle = ( first + second ) * 0.5f;
+    float2 chord  = first - second;
+    float  span   = length( chord );
+    float2 found  = middle;
+
+    if( span >= TOLERANCE ) {
+        float2 along  = chord / span;
+        float2 across = float2( -along.y, along.x );
+
+        bool middleIsSolid = isSolid( positionOnFace( corner, axis, middle ) );
+
+        int votes = 0;
+
+        [unroll]
+        for( uint faceCorner = 0; faceCorner < 4; ++faceCorner ) {
+            float offset = dot( float2( faceCorner & 1, faceCorner >> 1 ) - middle, across );
+
+            if( abs( offset ) >= TOLERANCE ) {
+                bool onOtherSide = ( ( solidCorners & ( 1u << faceCorner ) ) != 0 ) != middleIsSolid;
+
+                votes += ( offset > 0.0f ) == onOtherSide ? 1 : -1;
+            }
+        }
+
+        if( votes < 0 ) {
+            across = -across;
+        }
+
+        float height = searchLine( corner, axis, middle, across, middleIsSolid, ACROSS_RANGE, faceSearchSamples, faceSearchIterations );
+
+        if( height >= TOLERANCE ) {
+            float2 top          = middle + ( across * height );
+            uint   alongSamples = max( 1, faceSearchSamples - 1 );
+
+            float towardFirst  = searchLine( corner, axis, top,  along, middleIsSolid, ALONG_RANGE, alongSamples, faceSearchIterations + 1 );
+            float towardSecond = searchLine( corner, axis, top, -along, middleIsSolid, ALONG_RANGE, alongSamples, faceSearchIterations + 1 );
+
+            float narrowing = span - towardFirst - towardSecond;
+
+            if( narrowing >= TOLERANCE ) {
+                float scale = span / narrowing;
+
+                found = middle + ( along * ( scale * ( towardFirst - towardSecond ) * 0.5f ) ) + ( across * ( scale * height ) );
+            }
+        }
+    }
+
+    return found;
+}
+
+// BurstGrid.edgeOfCell: a number for each edge of the grid, which orders the two 1D points of a face
+uint edgeNumberOf( uint3 start, uint axis ) {
+    uint3 size = uint3( resolution + 1, resolution + 1, resolution + 1 ) - unitOf( axis );
+
+    return ( axis * resolution * ( resolution + 1 ) * ( resolution + 1 ) ) + ( ( ( start.x * size.y ) + start.y ) * size.z ) + start.z;
+}
+
+// DualMarchingCubes.lookupSeparation
+bool lookupSeparation( uint lookup, uint vertex, uint other, out float3 normal, out float offset ) {
+    uint count = tables[TABLE_VERTEX_COUNTS + lookup];
+
+    normal = float3( 0.0f, 0.0f, 0.0f );
+    offset = 0.0f;
+
+    bool found = vertex != other && vertex < count && other < count;
+
+    if( found ) {
+        uint lower  = min( vertex, other );
+        uint higher = max( vertex, other );
+        uint entry  = TABLE_SEPARATIONS + ( ( ( lookup * 6 ) + ( lower * ( 7 - lower ) / 2 ) + ( higher - lower - 1 ) ) * 4 );
+        float turned = vertex < other ? 1.0f : -1.0f;
+
+        normal = float3( tables[entry], tables[entry + 1], tables[entry + 2] ) * turned;
+        offset = tables[entry + 3] * 0.5f * turned;
+    }
+
+    return found;
+}
+
+// BurstOccupancy.intoCell
+float3 intoCell( uint3 cell, uint lookup, uint index, float3 anchor, float3 vertex ) {
+    float3 origin = positionOf( cell );
+    float3 from   = ( anchor - origin ) * ( float )resolution;
+    float3 to     = ( vertex - origin ) * ( float )resolution;
+
+    from = clamp( from, MARGIN, 1.0f - MARGIN );
+
+    float3 normal;
+    float  offset;
+    uint   other;
+
+    [loop]
+    for( other = 0; other < 4; ++other ) {
+        if( lookupSeparation( lookup, index, other, normal, offset ) ) {
+            float past = dot( normal, from ) - ( offset - MARGIN );
+
+            if( past > 0.0f ) {
+                from -= normal * ( past / dot( normal, normal ) );
+            }
+        }
+    }
+
+    float part = 1.0f;
+
+    [unroll]
+    for( uint axis = 0; axis < 3; ++axis ) {
+        if( to[axis] > 1.0f - MARGIN ) {
+            part = min( part, ( 1.0f - MARGIN - from[axis] ) / ( to[axis] - from[axis] ) );
+        }
+        else if( to[axis] < MARGIN ) {
+            part = min( part, ( MARGIN - from[axis] ) / ( to[axis] - from[axis] ) );
+        }
+    }
+
+    [loop]
+    for( other = 0; other < 4; ++other ) {
+        if( lookupSeparation( lookup, index, other, normal, offset ) ) {
+            float limit = offset - MARGIN;
+            float past  = dot( normal, to ) - limit;
+
+            if( past > 0.0f ) {
+                float inside = limit - dot( normal, from );
+
+                part = min( part, inside > 0.0f ? inside / ( inside + past ) : 0.0f );
+            }
+        }
+    }
+
+    float3 moved = vertex;
+
+    if( part < 1.0f ) {
+        moved = origin + ( clamp( from + ( ( to - from ) * max( part, 0.0f ) ), MARGIN, 1.0f - MARGIN ) / ( float )resolution );
+    }
+
+    return moved;
+}
+
+// BurstSurfaceExtractor.normalize, which leaves a vector too short to have a direction at zero
+float3 normalizeOrZero( float3 vector3 ) {
+    float size = length( vector3 );
+
+    return size > 1e-5f ? vector3 / size : float3( 0.0f, 0.0f, 0.0f );
+}
+
+// BurstOccupancy.planesOf and BurstOccupancyCells.solve, section 5.3: one vertex of a cell
+void solveVertex( uint3 cell, uint solid, uint lookup, uint vertex, out float3 position, out float3 normal ) {
+    // the edges of the piece in the order they go around it, the face each is left through, the 1D points in object
+    // space and in cells from the minimum of the cell, and the 2D point between each edge and the next
+    uint   ringEdges[12];
+    uint   ringFaces[12];
+    float3 points[12];
+    float3 local[12];
+    float3 facePoints[12];
+
+    uint index;
+
+    for( index = 0; index < 12; ++index ) {
+        ringEdges[index]  = 0;
+        ringFaces[index]  = 0;
+        points[index]     = float3( 0.0f, 0.0f, 0.0f );
+        local[index]      = float3( 0.0f, 0.0f, 0.0f );
+        facePoints[index] = float3( 0.0f, 0.0f, 0.0f );
+    }
+
+    uint first = 0;
+
+    [loop]
+    for( index = 0; index < 12; ++index ) {
+        if( tables[TABLE_EDGE_VERTICES + ( lookup * 12 ) + index] == ( int )vertex ) {
+            first = index;
+
+            break;
+        }
+    }
+
+    uint count = 0;
+    uint edge  = first;
+    uint side  = 0;
+
+    [loop]
+    for( index = 0; index < 12; ++index ) {
+        uint axis        = edge / 4;
+        uint startCorner = tables[TABLE_EDGE_CORNERS + ( edge * 2 )];
+        uint3 start      = cornerOfCell( cell, startCorner );
+        float along      = edgePoints[( cornerIndexOf( start ) * 3 ) + axis];
+
+        ringEdges[count] = edge;
+        ringFaces[count] = tables[TABLE_EDGE_FACES + ( edge * 2 ) + side];
+        points[count]    = positionOnEdge( start, axis, along );
+        local[count]     = float3( start - cell ) + ( float3( unitOf( axis ) ) * along );
+
+        // on to the next edge across that face, which the piece leaves through its other face
+        edge = tables[TABLE_EDGES_ACROSS + ( ( ( lookup * 12 ) + edge ) * 2 ) + side];
+        side = tables[TABLE_EDGE_FACES + ( edge * 2 )] == ( int )ringFaces[count] ? 1 : 0;
+
+        ++count;
+
+        if( edge == first ) {
+            break;
+        }
+    }
+
+    [loop]
+    for( index = 0; index < count; ++index ) {
+        uint next = ( index + 1 ) % count;
+
+        uint axis   = tables[TABLE_FACE_AXES + ringFaces[index]];
+        uint faceAt = tables[TABLE_FACE_SIDES + ringFaces[index]];
+        uint across = ( axis + 1 ) % 3;
+        uint other  = ( axis + 2 ) % 3;
+
+        uint3 corner = cell + ( unitOf( axis ) * faceAt );
+
+        uint faceCorners = 0;
+
+        [unroll]
+        for( uint faceCorner = 0; faceCorner < 4; ++faceCorner ) {
+            uint3 at = corner + ( unitOf( across ) * ( faceCorner & 1 ) ) + ( unitOf( other ) * ( faceCorner >> 1 ) );
+
+            if( materials[cornerIndexOf( at )] != MATERIAL_INDEX_VOID ) {
+                faceCorners |= 1u << faceCorner;
+            }
+        }
+
+        float2 from = float2( local[index][across], local[index][other] );
+        float2 to   = float2( local[next][across],  local[next][other] );
+
+        uint3 edgeStart = cornerOfCell( cell, tables[TABLE_EDGE_CORNERS + ( ringEdges[index] * 2 )] );
+        uint3 nextStart = cornerOfCell( cell, tables[TABLE_EDGE_CORNERS + ( ringEdges[next] * 2 )] );
+
+        bool ordered = edgeNumberOf( edgeStart, ringEdges[index] / 4 ) < edgeNumberOf( nextStart, ringEdges[next] / 4 );
+
+        float2 found = searchFace( corner, axis, ordered ? from : to, ordered ? to : from, faceCorners );
+
+        facePoints[index] = ( float3( unitOf( axis ) ) * faceAt ) + ( float3( unitOf( across ) ) * found.x ) + ( float3( unitOf( other ) ) * found.y );
+    }
+
+    SVDQEF qef       = createSVDQEF( );
+    float3 sum       = float3( 0.0f, 0.0f, 0.0f );
+    float3 direction = float3( 0.0f, 0.0f, 0.0f );
+    float3 total     = float3( 0.0f, 0.0f, 0.0f );
+    uint   planes    = 0;
+
+    [loop]
+    for( index = 0; index < count; ++index ) {
+        uint axis         = ringEdges[index] / 4;
+        bool startIsSolid = ( solid & ( 1u << tables[TABLE_EDGE_CORNERS + ( ringEdges[index] * 2 )] ) ) != 0;
+
+        sum       += points[index];
+        direction += float3( unitOf( axis ) ) * ( startIsSolid ? 1.0f : -1.0f );
+
+        float3 toPrevious = facePoints[( index + count - 1 ) % count] - local[index];
+        float3 toNext     = facePoints[index] - local[index];
+
+        float3 plane = cross( toPrevious, toNext );
+        float  size  = length( plane );
+
+        if( size > FLATNESS * length( toPrevious ) * length( toNext ) ) {
+            plane /= size;
+
+            if( ( plane[axis] > 0.0f ) != startIsSolid ) {
+                plane = -plane;
+            }
+
+            addToQEF( qef, points[index], plane );
+
+            total += plane;
+
+            ++planes;
+        }
+    }
+
+    float3 average = sum / count;
+
+    if( planes == 0 ) {
+        position = average;
+        normal   = normalizeOrZero( direction );
+    }
+    else {
+        float3 minimizer;
+        float  error;
+
+        solveQEF( qef, minimizer, error, minimizerIterations );
+
+        position = keepVerticesInCells != 0 ? intoCell( cell, lookup, vertex, average, minimizer ) : minimizer;
+        normal   = normalizeOrZero( total );
+    }
+}
+
+[numthreads( 4, 4, 4 )]
+void solveCells( uint3 cell : SV_DispatchThreadID ) {
+    uint index = cellIndexOf( cell );
+    uint data  = cells[index];
+    uint count = data >> 16;
+    uint start = vertexStarts[index];
+
+    [loop]
+    for( uint vertex = 0; vertex < count; ++vertex ) {
+        float3 position;
+        float3 normal;
+
+        solveVertex( cell, data & 255, ( data >> 8 ) & 255, vertex, position, normal );
+
+        vertices[start + vertex] = position;
+        normals[start + vertex]  = normal;
+    }
+}
+
+// BurstOccupancy.isConcave, appendix A.1.5, equations 3 and 4
+bool isConcave( float3 vertex, float3 previous, float3 next, float3 solidEnd, float3 emptyEnd ) {
+    return dot( vertex - emptyEnd, cross( previous - emptyEnd, next - emptyEnd ) ) < 0.0f ||
+           dot( vertex - solidEnd, cross( previous - solidEnd, next - solidEnd ) ) > 0.0f;
+}
+
+// BurstOccupancy.distanceToTriangle
+float distanceToTriangle( float3 point3, float3 a, float3 b, float3 c ) {
+    float3 ab = b - a;
+    float3 ac = c - a;
+    float3 ap = point3 - a;
+
+    float d1 = dot( ab, ap );
+    float d2 = dot( ac, ap );
+
+    float3 bp = point3 - b;
+    float  d3 = dot( ab, bp );
+    float  d4 = dot( ac, bp );
+
+    float3 cp = point3 - c;
+    float  d5 = dot( ab, cp );
+    float  d6 = dot( ac, cp );
+
+    float vc = ( d1 * d4 ) - ( d3 * d2 );
+    float vb = ( d5 * d2 ) - ( d1 * d6 );
+    float va = ( d3 * d6 ) - ( d5 * d4 );
+
+    float distance3;
+
+    if( d1 <= 0.0f && d2 <= 0.0f ) {
+        distance3 = length( ap );
+    }
+    else if( d3 >= 0.0f && d4 <= d3 ) {
+        distance3 = length( bp );
+    }
+    else if( vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f ) {
+        distance3 = length( point3 - ( a + ( ab * ( d1 / ( d1 - d3 ) ) ) ) );
+    }
+    else if( d6 >= 0.0f && d5 <= d6 ) {
+        distance3 = length( cp );
+    }
+    else if( vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f ) {
+        distance3 = length( point3 - ( a + ( ac * ( d2 / ( d2 - d6 ) ) ) ) );
+    }
+    else if( va <= 0.0f && ( d4 - d3 ) >= 0.0f && ( d5 - d6 ) >= 0.0f ) {
+        distance3 = length( point3 - ( b + ( ( c - b ) * ( ( d4 - d3 ) / ( ( d4 - d3 ) + ( d5 - d6 ) ) ) ) ) );
+    }
+    else {
+        float denominator = 1.0f / ( va + vb + vc );
+
+        distance3 = length( point3 - ( a + ( ab * ( vb * denominator ) ) + ( ac * ( vc * denominator ) ) ) );
+    }
+
+    return distance3;
+}
+
+// BurstOccupancy.splitOf, section 5.4
+uint splitOf( float3 vertex0, float3 vertex1, float3 vertex2, float3 vertex3, float3 solidEnd, float3 emptyEnd, float3 edgePoint, float nothing ) {
+    bool first  = !isConcave( vertex1, vertex0, vertex2, solidEnd, emptyEnd ) && !isConcave( vertex3, vertex2, vertex0, solidEnd, emptyEnd );
+    bool second = !isConcave( vertex0, vertex3, vertex1, solidEnd, emptyEnd ) && !isConcave( vertex2, vertex1, vertex3, solidEnd, emptyEnd );
+
+    uint split = FAN;
+
+    if( first != second ) {
+        split = first ? FIRST_DIAGONAL : SECOND_DIAGONAL;
+    }
+    else if( first ) {
+        float alongFirst  = min( distanceToTriangle( edgePoint, vertex0, vertex1, vertex2 ), distanceToTriangle( edgePoint, vertex0, vertex2, vertex3 ) );
+        float alongSecond = min( distanceToTriangle( edgePoint, vertex0, vertex1, vertex3 ), distanceToTriangle( edgePoint, vertex1, vertex2, vertex3 ) );
+
+        split = alongFirst < alongSecond - nothing ? FIRST_DIAGONAL : SECOND_DIAGONAL;
+    }
+
+    return split;
+}
+
+// the index of the highest material of a corner, which is the sub-mesh its surface goes to
+uint subMeshOf( uint material ) {
+    return material == 0 ? 0 : firstbithigh( material );
+}
+
+// two triangles of the mesh, between vertices of the cells and of fans
+void addQuad( uint a, uint b, uint c, uint d, uint e, uint f, uint subMeshIndex, bool splitNormalsWanted ) {
+    Quad quad;
+
+    quad.subMeshIndex = subMeshIndex;
+
+    if( splitNormalsWanted ) {
+        // every triangle gets three vertices of its own, with the normal of its face
+        uint corners[6] = { a, b, c, d, e, f };
+
+        uint firstVertex;
+        InterlockedAdd( counts[VERTEX_COUNT_INDEX], 6, firstVertex );
+
+        [unroll]
+        for( uint triangleIndex = 0; triangleIndex < 2; ++triangleIndex ) {
+            float3 p0 = vertices[corners[triangleIndex * 3]];
+            float3 p1 = vertices[corners[( triangleIndex * 3 ) + 1]];
+            float3 p2 = vertices[corners[( triangleIndex * 3 ) + 2]];
+
+            float3 faceNormal = normalize( cross( p1 - p0, p2 - p0 ) );
+
+            splitVertices[firstVertex + ( triangleIndex * 3 )]     = p0;
+            splitVertices[firstVertex + ( triangleIndex * 3 ) + 1] = p1;
+            splitVertices[firstVertex + ( triangleIndex * 3 ) + 2] = p2;
+
+            splitNormals[firstVertex + ( triangleIndex * 3 )]     = faceNormal;
+            splitNormals[firstVertex + ( triangleIndex * 3 ) + 1] = faceNormal;
+            splitNormals[firstVertex + ( triangleIndex * 3 ) + 2] = faceNormal;
+        }
+
+        [unroll]
+        for( uint corner = 0; corner < 6; ++corner ) {
+            quad.indices[corner] = firstVertex + corner;
+        }
+    }
+    else {
+        quad.indices[0] = a;
+        quad.indices[1] = b;
+        quad.indices[2] = c;
+        quad.indices[3] = d;
+        quad.indices[4] = e;
+        quad.indices[5] = f;
+    }
+
+    uint quadIndex;
+    InterlockedAdd( counts[QUAD_COUNT_INDEX], 1, quadIndex );
+
+    quads[quadIndex] = quad;
+
+    // the total index count, for drawing straight from these buffers
+    uint indexCount;
+    InterlockedAdd( arguments[INDEX_COUNT_INDEX], 6, indexCount );
+}
+
+// BurstQuads.edgeOf: which of its own edges the edge four cells have in common is to each of them, for each axis
+static const uint EDGE_OF[3][4] = {
+    { 3,  2, 1,  0 },
+    { 7,  6, 5,  4 },
+    { 11, 9, 10, 8 }
+};
+
+// SplitQuadsJob and ContourJob in one: the polygons a cell starts, split into triangles
+void contourCell( uint3 cell, bool splitNormalsWanted ) {
+    uint solid = cells[cellIndexOf( cell )] & 255;
+
+    if( solid != 0 && solid != 255 ) {
+        [loop]
+        for( uint axis = 0; axis < 3; ++axis ) {
+            uint3 start = edgeStartOf( cell, axis );
+            uint3 end   = cell + uint3( 1, 1, 1 );
+
+            uint startMaterial = materials[cornerIndexOf( start )];
+            uint endMaterial   = materials[cornerIndexOf( end )];
+
+            if( startsPolygon( cell, axis ) && intersectsContour( startMaterial, endMaterial ) ) {
+                bool startIsSolid = startMaterial != MATERIAL_INDEX_VOID;
+
+                // BurstQuads.clusterOf: the four cells around the edge, row by row. For the axes x, y and z the second
+                // cell is the one along z, x and y, and the third the one along y, z and x
+                uint3 across = unitOf( ( axis + 2 ) % 3 );
+                uint3 other  = unitOf( ( axis + 1 ) % 3 );
+
+                uint3 cluster[4] = { cell, cell + across, cell + other, cell + across + other };
+
+                uint around[4];
+
+                [unroll]
+                for( uint place = 0; place < 4; ++place ) {
+                    uint clusterIndex = cellIndexOf( cluster[place] );
+                    uint lookup       = ( cells[clusterIndex] >> 8 ) & 255;
+
+                    around[place] = vertexStarts[clusterIndex] + tables[TABLE_EDGE_VERTICES + ( lookup * 12 ) + EDGE_OF[axis][place]];
+                }
+
+                // BurstOccupancyCells.aroundEdge: going around the edge so that the first three face its empty end
+                uint v0 = around[0];
+                uint v1 = startIsSolid ? around[2] : around[1];
+                uint v2 = around[3];
+                uint v3 = startIsSolid ? around[1] : around[2];
+
+                float  along     = edgePoints[( cornerIndexOf( start ) * 3 ) + axis];
+                float3 edgePoint = positionOnEdge( start, axis, along );
+
+                uint split = SECOND_DIAGONAL;
+
+                if( splitQuads != 0 && keepVerticesInCells != 0 ) {
+                    split = splitOf(
+                        vertices[v0], vertices[v1], vertices[v2], vertices[v3],
+                        positionOf( startIsSolid ? start : end ),
+                        positionOf( startIsSolid ? end : start ),
+                        edgePoint,
+                        TOLERANCE / ( float )resolution
+                    );
+                }
+
+                uint subMeshIndex = subMeshOf( startIsSolid ? startMaterial : endMaterial );
+
+                if( split == FIRST_DIAGONAL ) {
+                    addQuad( v0, v1, v2, v0, v2, v3, subMeshIndex, splitNormalsWanted );
+                }
+                else if( split == SECOND_DIAGONAL ) {
+                    addQuad( v0, v1, v3, v3, v1, v2, subMeshIndex, splitNormalsWanted );
+                }
+                else {
+                    // the 1D point of the edge becomes a vertex, after those of the cells
+                    uint middle;
+                    InterlockedAdd( totals[TOTAL_CELL_VERTICES], 1, middle );
+
+                    vertices[middle] = edgePoint;
+                    normals[middle]  = normalizeOrZero( normals[v0] + normals[v1] + normals[v2] + normals[v3] );
+
+                    if( !splitNormalsWanted ) {
+                        uint counted;
+                        InterlockedAdd( counts[VERTEX_COUNT_INDEX], 1, counted );
+                    }
+
+                    addQuad( middle, v0, v1, middle, v1, v2, subMeshIndex, splitNormalsWanted );
+                    addQuad( middle, v2, v3, middle, v3, v0, subMeshIndex, splitNormalsWanted );
+                }
+            }
+        }
+    }
+}
+
+[numthreads( 4, 4, 4 )]
+void contourShared( uint3 cell : SV_DispatchThreadID ) {
+    contourCell( cell, false );
+}
+
+[numthreads( 4, 4, 4 )]
+void contourSplit( uint3 cell : SV_DispatchThreadID ) {
+    contourCell( cell, true );
+}
