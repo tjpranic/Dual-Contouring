@@ -22,7 +22,8 @@ public class ContouringPerformanceTest : TopologyTest {
     public enum Algorithm {
         Uniform,
         Adaptive,
-        Manifold
+        Manifold,
+        Occupancy
     }
 
     // the three overlapping balls of the "Simplification" scenes, curved with creases where the balls meet
@@ -45,6 +46,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Uniform,  ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
             ( Algorithm.Adaptive, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh" },
             ( Algorithm.Manifold, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Cluster", "Validate", "Contour", "BuildMesh" },
+            ( Algorithm.Occupancy, ImplementationType.Burst )  => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
 
@@ -62,6 +64,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Uniform,  ImplementationType.Burst )   => 8,
             ( Algorithm.Adaptive, ImplementationType.Burst )   => 7,
             ( Algorithm.Manifold, ImplementationType.Burst )   => 7,
+            ( Algorithm.Occupancy, ImplementationType.Burst )  => 8,
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
     }
@@ -91,6 +94,13 @@ public class ContouringPerformanceTest : TopologyTest {
 
                 return voxelizer;
             }
+            case Algorithm.Occupancy: {
+                var voxelizer = this.createVoxelizer<OccupancyDualContouring>( cellsExponent, QEFSolverType.SVD, model );
+
+                voxelizer.implementationType = implementation;
+
+                return voxelizer;
+            }
             default: {
                 throw new Exception( "Unknown algorithm specified" );
             }
@@ -110,7 +120,10 @@ public class ContouringPerformanceTest : TopologyTest {
         [Values( 4, 5, 6, 7, 8 )] int cellsExponent,
         [Values( false, true )] bool turned
     ) {
-        if( algorithm != Algorithm.Uniform && cellsExponent > 7 ) {
+        if( algorithm == Algorithm.Occupancy && implementation == ImplementationType.Managed ) {
+            Assert.Ignore( "occupancy-based dual contouring has no managed implementation" );
+        }
+        if( ( algorithm == Algorithm.Adaptive || algorithm == Algorithm.Manifold ) && cellsExponent > 7 ) {
             Assert.Ignore( "an octree is at most 2^7 leaves across" );
         }
         if( cellsExponent > largestGridOf( algorithm, implementation ) ) {

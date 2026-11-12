@@ -273,6 +273,36 @@ public partial class ManifoldDualContouring {
     private static readonly ProfilerMarker buildMeshMarker     = new( "ManifoldDualContouring.Managed.BuildMesh" );
     private static readonly ProfilerMarker debugMarker         = new( "ManifoldDualContouring.Managed.DebugInformation" );
 
+    // what a leaf looks its vertices up with in the dual marching cubes table: its solid corners, or their complement
+    // where the leaf across its joined face has that face joined too. Otherwise the edge between the vertices of those
+    // two leaves would be part of four polygons (DualMarchingCubes.lookupJoinedFace). The octree keeps no way from a
+    // leaf to the one next to it, so the corners of that leaf are sampled here, for the few leaves that have a joined
+    // face
+    private static int vertexLookupOf( Voxel voxel, IEnumerable<DensityFunction> densityFunctions ) {
+        var solidCorners = DualMarchingCubes.solidCornersOf( voxel.corners.Select( ( corner ) => corner.materialIndex ).ToArray( ) );
+        var face         = DualMarchingCubes.lookupJoinedFace( solidCorners );
+
+        if( face == -1 ) {
+            return solidCorners;
+        }
+
+        var axis   = DualMarchingCubes.lookupFaceAxis( face );
+        var offset = Vector3.zero;
+
+        offset[axis] = DualMarchingCubes.lookupFaceSide( face ) == 1 ? voxel.size[axis] : -voxel.size[axis];
+
+        // the face is on the outside of the grid, which reaches from -0.5 to 0.5 and where no polygon crosses it
+        if( Mathf.Abs( voxel.center[axis] + offset[axis] ) > 0.5f ) {
+            return solidCorners;
+        }
+
+        var across = DualMarchingCubes.solidCornersOf(
+            voxel.corners.Select( ( corner ) => SurfaceExtractor.calculateMaterial( corner.position + offset, densityFunctions ) ).ToArray( )
+        );
+
+        return DualMarchingCubes.sharesJoinedFace( solidCorners, across ) ? DualMarchingCubes.complement( solidCorners ) : solidCorners;
+    }
+
     private Either<CPUVoxelization, GPUVoxelization> voxelizeManaged( IEnumerable<DensityFunction> densityFunctions ) {
 
         // volumes work out where they are from their transforms on every sample
@@ -351,9 +381,7 @@ public partial class ManifoldDualContouring {
                     edge.normal       = SurfaceExtractor.calculateNormal         ( edge, densityFunctions );
                 }
 
-                var materialIndices = voxel.corners.Select( ( corner ) => corner.materialIndex ).ToArray( );
-
-                var vertexEdges = DualMarchingCubes.lookupVertexEdges( materialIndices );
+                var vertexEdges = DualMarchingCubes.lookupVertexEdges( vertexLookupOf( voxel, densityFunctions ) );
 
                 if( vertexEdges.Length == 0 ) {
                     // the contour does not pass through the cell

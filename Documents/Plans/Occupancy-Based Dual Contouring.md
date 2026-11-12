@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** draft. No code has been written. The five decisions at the end are open, each with a recommendation.
+**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12 and wait for review.
 
 ## Goal
 
@@ -36,7 +36,9 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
    - **The cause:** in 36 of the 256 configurations (24 with five solid corners, 12 with six) one face is ambiguous and all four of its edges belong to the same piece. Where two such cells share that face, the edge between their two vertices is used by four quads.
    - **The size of it:** 458 edges that are not used exactly twice, in 68,308 quads.
    - **The fix:** a cell whose such face is shared with a cell that has it too looks its pieces up under the complement of its solid corners, which pairs the edges on ambiguous faces the other way. The complement of each of the 36 has no such face, and no configuration has more than one. With the rule, the same 300 grids gave no edge used other than twice and no pinched vertex.
-   - **Manifold Dual Contouring has the same table.** Its leaves can form such a pair. The existing topology tests pass, so their models do not contain one. This was checked on a re-statement of the table's rule, not by running the project's code.
+   - **Manifold Dual Contouring has the same table.** Its leaves can form such a pair. The existing topology tests pass, so their models do not contain one. It has the rule since step 0a.
+   - **Confirmed on the project's own table in step 0.** `DualMarchingCubesTest` goes through every pair of cells that share a face, all 12,288 of them. Without the rule, the edge between two vertices is part of four polygons exactly where both cells have the shared face joined, and of two everywhere else. With the rule it is two everywhere.
+   - **Why the complement is safe,** also from step 0: in each of the 36, the joined face is the cell's only ambiguous face. So the complement connects edges differently on that face alone, where the neighbour takes its complement too, and the two still agree across every face.
 4. **The paper leaves out things the authors' code does.** I read the reference implementation (github.com/KAIST-Visual-AI-Group/ODC) for what the paper does not say.
    - **Vertices are kept inside their cells.** The QEF's minimizer is pulled back along a line from a point inside the cell until it is inside, less a margin of a thousandth of a cell. The intersection-free argument needs that: the envelope is built from the cells' corners.
    - **The QEF is regularized,** by a pull of weight 0.05 toward the average of the piece's 1D points, and solved by least squares. This project's solvers truncate small singular values or iterate instead.
@@ -71,10 +73,10 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 `OccupancyDualContouring : Voxelizer`, in `Assets/Scripts/OccupancyDualContouring.cs`, a partial class like the others.
 
 - **Grid:** uniform, 2^resolution cells across, as `UniformDualContouring`.
-- **Implementations:** Burst and GPU. A new component starts as Burst. Managed throws `NotSupportedException`, and the inspector turns it into Burst, as Manifold's turns GPU into Managed.
+- **Implementations:** Burst and GPU. A new component starts as Burst. Managed throws `NotSupportedException`, and the inspector turns it into Burst, as Manifold's turns GPU into Managed. Until step 4 the inspector turns GPU into Burst as well.
 - **Settings it uses from `Voxelizer`:** resolution, QEF solver, minimizer iterations, vertex normals, the debug view. On the GPU the solver is SVD, as for Uniform.
 - **Settings it hides** (finding 10): binary search iterations, intersection approximation, surface correction iterations.
-- **Its own settings,** with the paper's values:
+- **Its own settings,** with the paper's values. Each is added in the step that first uses it:
   - `edgeSearchIterations` = 15: bisections for a 1D point.
   - `faceSearchSamples` = 4 and `faceSearchIterations` = 11: the first search of a 2D point. The two searches along the line take one sample fewer and one bisection more, as in the paper, so all three cost the same.
   - `splitQuads` = true: the intersection-free split. Off gives the plain split of Manifold Dual Contouring, which is the paper's ablation and shows what the split does.
@@ -87,10 +89,12 @@ A point is inside when `calculateMaterial` gives it any material (finding 1). Co
 ### Pieces, and the manifold rule
 
 - **Pieces:** `DualMarchingCubes`' table, as Manifold Dual Contouring uses it.
-- **New in `DualMarchingCubes`:**
+- **New in `DualMarchingCubes`** (built in step 0):
   - `lookupJoinedFace( solidCorners )`: the face whose four edges belong to one piece, or none (finding 3).
-  - For each intersected edge of a configuration, the two edges next to it around its piece and the face each lies across. A piece is a cycle of 1D and 2D points in turn, and this is the cycle.
+  - `lookupEdgeAcrossFace( solidCorners, edge, side )`: the edge next to an intersected edge around its piece, across either of the edge's two faces, which `lookupEdgeFace( edge, side )` names. A piece is a cycle of 1D and 2D points in turn, and this is the cycle.
+  - `complement( solidCorners )`, and `lookupFaceAxis` and `lookupFaceSide`, which say where the cell across a face is.
 - **The rule:** a cell with a joined face whose neighbour across it has it joined too uses the table under the complement of its solid corners. Both cells do, so it does not depend on the order cells are visited in, and Burst and the GPU decide alike.
+- **In Burst** the rule is `BurstCells.vertexLookupOf`, which gives what a cell looks its vertices up with. It is worked out wherever it is needed instead of being stored: only a cell with a joined face looks at its neighbour, and few have one.
 - **Burst and GPU copies:** constant data in `BurstTables`, generated from `DualMarchingCubes` and held to it by `BurstTablesTest`. The GPU gets buffers filled from `DualMarchingCubes`, as it gets its vertex counts now.
 
 ### 1D points
@@ -107,7 +111,7 @@ For a crossing of a face between the 1D points `a` and `b`, in the face's two co
 4. The 2D point is where the line through `a` and `q1` meets the line through `b` and `q2`. It is `m` when they are parallel or meet behind `m`.
 
 - **A search** (appendix A.1.3) samples evenly out to its range, takes the first interval whose far end differs from the start, or the last interval when none does, and bisects it. It returns the end nearer the start, which is on the start's side of the surface.
-- **Each cell works out the 2D points of its own pieces** in the first version (finding 7), written from the face's own corner so the two cells of a face agree. A cell under the complement rule pairs the 1D points of an ambiguous face the other way from its neighbour, which then needs no special case.
+- **Each cell works out the 2D points of its own pieces** in the first version (finding 7), written from the face's own corner so the two cells of a face find the same points. The two always connect the same pairs of 1D points, under the complement rule too (finding 3).
 
 ### Vertices
 
@@ -207,8 +211,86 @@ There is no managed implementation to compare against, so the tests hold the cod
 
 Each step compiles, passes every test, and is reviewed before the next one starts. Nothing is committed for you.
 
-0. **Baseline and tables (small).** Both suites green, the 416 `Start` hashes and the Burst timings recorded with Unity in front. The two additions to `DualMarchingCubes`, their Burst copies and their tests.
-1. **Component and a first Burst contour (medium).** The component, its settings and inspector, defaults and dispatch. Burst: materials, pieces with the manifold rule, 1D points, a vertex at the average of each piece's 1D points, the plain split, debug information. This is a closed, manifold mesh without sharp features. The table, 1D point, topology and material tests.
+0. **Baseline and tables (small).** Both suites green, the 416 `Start` hashes and the Burst timings recorded with Unity in front. The two additions to `DualMarchingCubes`, their Burst copies and their tests. **Done 2026-11-12:**
+   - **Baseline, before any change:**
+     - Edit mode 1392 of 1392, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to those at the end of New Shapes, the GPU lines included. They are the baseline for every later step.
+     - The Burst timings are under Measurements. Unity was in front for every case.
+   - **`DualMarchingCubes`:** the lookups listed under Design. They are built once from the table that was there, which is unchanged.
+   - **Faces are numbered as the octrees number them,** the order of `BurstTables.lookupFaceEdge`. The generator of the table keeps its own order of the faces beside it. Going through the faces in the octrees' order would number the vertices of 13 configurations differently, which would change meshes.
+   - **`BurstTables`:** `lookupJoinedFace`, `lookupEdgeAcrossFace`, `lookupEdgeFace`, `lookupFaceAxis`, `lookupFaceSide` and `complement`, as constant data. The two tables over the 256 configurations were written out by a probe from `DualMarchingCubes`.
+   - **New tests:**
+     - **`DualMarchingCubesTest`,** 7 tests before and 36 now:
+       - every edge lies in the two faces that hold both of its corners;
+       - the edge across a face is another edge of the same vertex in that face, and leads back;
+       - the edges of every vertex form one ring;
+       - the complement cuts off the empty corners of an ambiguous face where the cell cuts off the solid ones;
+       - the joined faces, worked out in the test from the vertices: 36 configurations, 12 with six solid corners and 24 with five, never two in a cell;
+       - the complement of such a cell has no joined face and differs from the cell on that face only;
+       - the two tests over every pair of cells of finding 3;
+       - 20 grids of 6³ cells with random corners are manifold with the rule: every edge is part of two polygons and the polygons around every vertex form one fan. Without the rule the same grids are not.
+     - **`BurstTablesTest`:** `tablesAreTheManagedOnes` reads the new tables in a Burst job and holds them to `DualMarchingCubes`, 10,308 entries in all. The face test also holds the axis and side of each face and the faces of each edge to the corners.
+   - **The tests catch mistakes.**
+     - In `DualMarchingCubes`, cutting off the empty corner across an ambiguous face and counting every ambiguous face as joined were put in together. They failed 8 of the 10 new tests, 27 of the 36 cases of the fixture.
+     - In `BurstTables`, one entry of each new table was changed. `tablesAreTheManagedOnes` failed.
+   - **Verification:**
+     - Edit mode 1421 of 1421, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to the baseline.
+     - Compiling gave no errors.
+   - **Not timed again:** no job changed.
+   **0a. The rule in Manifold Dual Contouring (small).** Added to the plan on 2026-11-12, when the user decided decision 4 after step 0. **Done 2026-11-12:**
+   - **Shared:** `DualMarchingCubes.sharesJoinedFace( solidCorners, solidCornersAcross )` says whether a cell and the one across its joined face have that face joined in both, with a copy in `BurstTables`. `DualMarchingCubes.solidCornersOf` gives the solid corners of a cell from its materials.
+   - **Burst:** `BurstCells.vertexLookupOf` (Design). The Burst implementation looks the vertices of a leaf up with it in all four places it used the solid corners for that: counting them, solving them, clustering and contouring.
+   - **Managed:** `vertexLookupOf` in `ManifoldDualContouring.Managed.cs`. The managed octree keeps no way from a leaf to the one next to it, so a leaf with a joined face samples the four corners beyond that face. Leaves without one sample nothing more.
+   - **At the outside of the grid** a joined face has no leaf across it, and no polygon crosses it, so the leaf keeps its solid corners. Both implementations do this.
+   - **Uniform and Adaptive Dual Contouring** are not changed. They have one vertex in a cell and only take the number of pieces from the table.
+   - **The test model,** `TopologyTest.hollowsAcrossFaces`: a block with six small hollows, each around one corner of a grid of 16³ cells. They come in three pairs, around corners diagonally across a face of a cell, once for each direction a face can face. The two cells on either side of such a face have it joined.
+   - **New tests:**
+     - `surfaceIsManifoldWhereTwoLeavesHaveAJoinedFaceInCommon`, for Managed and Burst: the block and its six hollows are seven separate manifold surfaces.
+     - `clusteredSurfaceIsManifoldWhereTwoLeavesHaveAJoinedFaceInCommon`, for both and both solvers.
+     - `contourIsTheManagedOneWhereTwoLeavesHaveAJoinedFaceInCommon`: Burst against Managed, both solvers and every amount of clustering (8).
+     - `twoCellsShareAJoinedFaceWhenTheirJoinedFacesFaceEachOther` in `DualMarchingCubesTest`, over all 65,536 pairs of configurations: 216 share one. `BurstTablesTest` holds the Burst copy to it.
+   - **What it was like without the rule.** With `sharesJoinedFace` made to say no, both implementations contour the model with three edges that more than two triangles share and six conflicts of facing, and the hollows of each pair hang together: four pieces of surface instead of seven. The three topology tests fail in each implementation.
+   - **The tests catch mistakes.** With the Burst code looking at the cell on the wrong side of the joined face, the three Burst topology tests and all eight parity tests fail, and so does one of the parity tests of the three balls on other grid sizes.
+   - **No change for the example models:** the 416 `Start` hashes are identical to step 0.
+   - **No cost that shows:** Burst Manifold at 128³ takes 34.8 and 34.7 ms, against 34.4 and 35.2 in step 0 (Measurements).
+
+1. **Component and a first Burst contour (medium).** The component, its settings and inspector, defaults and dispatch. Burst: materials, pieces with the manifold rule, 1D points, a vertex at the average of each piece's 1D points, the plain split, debug information. This is a closed, manifold mesh without sharp features. The table, 1D point, topology and material tests. **Done 2026-11-12:**
+   - **The component:** `OccupancyDualContouring` in `Assets/Scripts/OccupancyDualContouring.cs`, with `edgeSearchIterations` (15, from 1 to 20). It starts as Burst. Managed throws `NotSupportedException`, GPU `NotImplementedException` until step 4.
+   - **The inspector** leaves out the three settings of `Voxelizer` that place points by distance, and turns Managed and GPU into Burst.
+   - **`BurstOccupancy`** (`Assets/Scripts/Burst/BurstOccupancy.cs`): `isSolid`, `positionOnEdge` and `searchEdge`, the 1D point search. The later searches go here too.
+   - **`OccupancyDualContouring.Burst.cs`,** its jobs in order:
+     - the materials of the corners;
+     - solid corners (`BurstSolidCornersJob`), the vertices of each row counted and laid out;
+     - the vertices: for each piece of each cell, the 1D points of its edges and their average;
+     - the polygons each cell starts, then the mesh in the order of the cells;
+     - debug information when wanted.
+   - **The vertex's normal** in this step is the sum of the directions of its edges, each from its solid end to its empty one. It is what a vertex without any plane will keep in step 2.
+   - **Sample positions are exact.** A point that up to 15 halvings come to is a position a float holds exactly on grids of up to 256³ cells, when it is worked out as the corners are: its number along the axis, divided by the cells across, less a half. So the search samples exactly the points it means to, and the corners of an edge exactly where the grid has them.
+   - **Moved to where both can use them:** Uniform's three helpers for the cells around an edge are `BurstQuads` in `BurstGrid.cs`, and Manifold's job that lays out rows is `BurstLayoutRowsJob` there. Neither changed.
+   - **The debug view** gets a voxel for every vertex, with the corners and edges of the cells that have one. A corner shows -1 inside and 1 outside. An edge the contour crosses shows its 1D point and the direction from its solid end to its empty one.
+   - **New tests:**
+     - **`OccupancySearchTest` (15):**
+       - the 1D point of every crossed edge of a 16³ grid is within 2^-n of a cell of where the surface is, on its solid side, for a box, a turned box and a sphere and n of 1, 4, 8 and 15. The crossing is worked out from the shape in double precision.
+       - points on an edge are exactly where the grid has them, on grids of 4³, 16³ and 256³.
+     - **`BurstOccupancyDualContouringTopologyTest` (22),** an abstract fixture that the GPU joins in step 4:
+       - every model is one closed manifold surface without handles;
+       - the three balls are manifold on grids from 4³ to 128³;
+       - two spheres in one cell stay two, the block with six hollows is seven surfaces, the turned shapes and the new shapes are manifold, and a torus keeps its handle;
+       - every vertex lies in its cell;
+       - the intersections the debug view shows are on their edges and within the last halving of the sphere, from inside, with 3 and with 15 halvings;
+       - a voxel for every vertex, corners that show their side, and debug information only when wanted.
+     - `thereIsNoManagedImplementation`, `VoxelizerDefaultsTest.occupancyDualContouring`, and `SubMeshTest` with Occupancy in Burst.
+     - `ContouringPerformanceTest` has Occupancy, in Burst.
+   - **The tests catch mistakes.**
+     - Returning the empty end of a search, contouring without the complement and a corner's side the wrong way round were put in together. They failed all 12 search tests and 4 of the topology tests: the intersections, the block with six hollows and the corners.
+     - Taking the wrong edge of two of the four cells around an edge failed all 22 topology tests.
+   - **Not in this step:** the face searches and `splitQuads`, which steps 2 and 3 add with their settings.
+   - **Speed:** a contour of the three balls at 128³ takes 31 ms, about what Uniform Dual Contouring takes (Measurements). The searches of step 2 are what will cost.
+   - **Verification of steps 0a and 1:**
+     - Edit mode 1477 of 1477, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0.
+     - Compiling gave no errors.
 2. **2D points and the QEF (large).** The searches, 2D points, planes, the QEF and the clamp. The search and vertex tests. Measurements: how far vertices are from each shape against Manifold Dual Contouring on the same grid, the float thresholds, and timings against the estimate of finding 7.
 3. **Intersection-free polygons (medium).** The concave test, the choice of diagonal, four triangles around a 1D point, `splitQuads`. The crossing-triangles helper and the polygon tests. The count of crossings on cells with several vertices (Design, Vertices).
 4. **GPU (large).** `DensityFunctions.hlsl` first, with Uniform's GPU hashes and timing checked. Then the shader, its buffers, readback, drawing straight from the GPU and split normals. The Burst-against-GPU tests.
@@ -217,7 +299,48 @@ Each step compiles, passes every test, and is reviewed before the next one start
 
 ## Measurements
 
-Filled in as the steps are done.
+### Before any change (step 0, 2026-11-12)
+
+`ContouringPerformanceTest` on the three balls, Burst, with Unity in front. Each figure is the median of three contours, in ms, from two rounds in one session.
+
+| Algorithm | Cells | Model | Voxelize | SampleCorners | SolveVertices |
+|---|---|---|---|---|---|
+| Uniform | 128³ | upright | 31.3, 29.2 | 8.2, 8.1 | 14.3, 13.3 |
+| Uniform | 256³ | upright | 183.4, 182.4 | 62.9, 63.1 | 64.4, 65.1 |
+| Adaptive | 128³ | upright | 33.6, 32.7 | 8.1, 7.9 | 15.5, 15.2 |
+| Manifold | 128³ | upright | 34.4, 35.2 | 8.1, 8.2 | 14.4, 14.6 |
+| Uniform | 128³ | turned | 31.3, 31.7 | 8.9, 8.9 | 15.0, 14.9 |
+| Adaptive | 128³ | turned | 35.7, 35.1 | 9.2, 9.0 | 16.5, 16.1 |
+| Manifold | 128³ | turned | 37.8, 37.0 | 9.3, 9.0 | 16.9, 16.3 |
+
+These are 3 to 9% above the last session of New Shapes, which is within what sessions have differed by before (up to 13%). The estimate of finding 7 was made from the older figures.
+
+### After steps 0a and 1 (2026-11-12)
+
+The same test, in a later session, with Unity in front for all 20 cases. Voxelize in ms, the two rounds:
+
+| Algorithm | Cells | Model | Step 0 | Now |
+|---|---|---|---|---|
+| Uniform | 128³ | upright | 31.3, 29.2 | 28.6, 28.4 |
+| Uniform | 256³ | upright | 183.4, 182.4 | 179.5, 178.8 |
+| Adaptive | 128³ | upright | 33.6, 32.7 | 32.0, 33.7 |
+| Manifold | 128³ | upright | 34.4, 35.2 | 34.8, 34.7 |
+| Uniform | 128³ | turned | 31.3, 31.7 | 31.6, 30.4 |
+| Adaptive | 128³ | turned | 35.7, 35.1 | 36.5, 34.5 |
+| Manifold | 128³ | turned | 37.8, 37.0 | 36.5, 36.6 |
+
+Moving Uniform's helpers and giving Manifold the rule changed neither by more than the rounds differ.
+
+Occupancy-Based Dual Contouring as step 1 leaves it, with 15 halvings for every 1D point and no face searches yet:
+
+| Cells | Model | Vertices | Voxelize | SampleCorners | SolveVertices | Contour |
+|---|---|---|---|---|---|---|
+| 128³ | upright | 52,252 | 31.1, 31.4 | 6.7, 6.8 | 18.7, 18.8 | 4.4, 4.4 |
+| 256³ | upright | 208,940 | 175.6, 174.2 | 54.1, 53.1 | 85.7, 86.0 | 27.0, 28.1 |
+| 128³ | turned | 52,252 | 34.2, 34.1 | 8.2, 8.0 | 20.4, 20.3 | 4.2, 4.4 |
+
+- It has 28 vertices more than Uniform Dual Contouring's 52,224 at 128³: the cells along the creases that hold two pieces of surface.
+- Sampling the corners takes a sixth less than in the other algorithms, which also work out a density there.
 
 ## Out of scope
 
@@ -226,12 +349,13 @@ Filled in as the steps are done.
 - **Hermite data on the boundary between two materials.** See decision 2.
 - **The gradient as an option for the normals,** the paper's second ablation. It needs distances.
 - **2D points in the debug view.**
-- **Changing Manifold Dual Contouring** (finding 3). See decision 4.
 
-## Decisions for you
+## Decisions
+
+All five were decided as recommended on 2026-11-12.
 
 1. **A component of its own?** Recommended: yes, `OccupancyDualContouring`, on a uniform grid without simplification, as the paper has it. The other way is an option on `ManifoldDualContouring`, which would put it on an octree with a managed implementation beside it.
 2. **Boundaries between materials.** The other algorithms pull a vertex to where two materials meet on the surface, with a gradient. Recommended: ODC gives each material its sub-mesh and leaves that pull out, so a boundary between two materials follows the grid, as it did before the audit's last item. Adding it later, with the existing gradient code or by searching on the material, would be a step of its own.
 3. **The QEF.** Recommended: the project's solvers, so the solver setting means what it does elsewhere, plus the clamp into the cell. The other way is the reference code's regularized least squares, which would be a third solver that only ODC uses.
-4. **Manifold Dual Contouring's non-manifold case** (finding 3). Recommended: leave it out of this plan, and decide once step 0's test shows it on the project's own table. The rule would then be a small change to its leaves.
+4. **Manifold Dual Contouring's non-manifold case** (finding 3). Recommended: leave it out of this plan, and decide once step 0's test shows it on the project's own table. The rule would then be a small change to its leaves. **Decided after step 0, 2026-11-12:** the rule is added, as step 0a.
 5. **Editor and scenes in this plan?** Recommended: yes, as step 5.

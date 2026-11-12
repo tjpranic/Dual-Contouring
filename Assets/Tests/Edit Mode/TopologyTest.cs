@@ -61,6 +61,21 @@ public abstract class TopologyTest : ContouringTest {
         new Shape( DensityFunction.Type.HexagonalPrism, new Vector3(  0.22f, -0.2f,   0.22f ), Quaternion.Euler( 40.0f,  0.0f,  -20.0f ), new Vector3( 0.13f, 0.1f,  0.12f ), Combination.Union,       MaterialIndex.Material0 )
     };
 
+    // a block with six small hollows in it, each around one corner of a grid of 16^3 cells and no other. They come in
+    // three pairs, around corners that lie diagonally across a face of a cell: once for each direction a face can
+    // face. The two cells on either side of such a face hold both hollows of a pair and are otherwise solid, which
+    // makes that face a joined face of both (DualMarchingCubes.lookupJoinedFace). A grid corner n is at n / 16 - 0.5
+    protected static readonly Shape[] hollowsAcrossFaces = {
+        cube( Vector3.zero, 0.4f ),
+        hollowAt(  9,  9,  9 ), hollowAt( 10, 10,  9 ), // across a face that faces along z
+        hollowAt(  5,  5,  5 ), hollowAt(  5,  6,  6 ), // along x
+        hollowAt( 12,  5, 11 ), hollowAt( 13,  5, 12 )  // along y
+    };
+
+    private static Shape hollowAt( int x, int y, int z ) {
+        return cube( ( new Vector3( x, y, z ) / 16.0f ) - ( Vector3.one * 0.5f ), 0.02f, Combination.Subtraction );
+    }
+
     protected static Shape[] shapesOf( Model model ) {
         return model switch {
             // sits off the grid lines so no corner or edge of the grid lands exactly on the surface
@@ -237,6 +252,22 @@ public abstract class TopologyTest : ContouringTest {
         Assert.AreEqual( 0, topology.nonManifoldEdges, $"edges shared by more than two triangles in: {topology}" );
         Assert.AreEqual( 0, topology.windingConflicts, $"neighboring triangles facing opposite ways in: {topology}" );
         Assert.AreEqual( 0, topology.pinchedVertices,  $"vertices with more than one fan of triangles in: {topology}" );
+    }
+
+    // two closed manifold surfaces without handles, apart from each other
+    protected static void assertTwoSpheres( MeshTopology topology ) {
+        assertManifold( topology );
+
+        Assert.AreEqual( 2, topology.components,          $"separate pieces of surface in: {topology}" );
+        Assert.AreEqual( 4, topology.eulerCharacteristic, $"euler characteristic of: {topology}" );
+    }
+
+    // the block and each of its six hollows, every one a manifold surface without handles and apart from the others
+    protected static void assertBlockWithSixHollows( MeshTopology topology ) {
+        assertManifold( topology );
+
+        Assert.AreEqual( 7,  topology.components,          $"separate pieces of surface in: {topology}" );
+        Assert.AreEqual( 14, topology.eulerCharacteristic, $"euler characteristic of: {topology}" );
     }
 
     // one manifold surface without handles, which is what every Model is

@@ -44,14 +44,6 @@ public abstract class ManifoldDualContouringTopologyTest : TopologyTest {
         return voxelizer;
     }
 
-    // two closed manifold surfaces without handles, apart from each other
-    private static void assertTwoSpheres( MeshTopology topology ) {
-        assertManifold( topology );
-
-        Assert.AreEqual( 2, topology.components,          $"separate pieces of surface in: {topology}" );
-        Assert.AreEqual( 4, topology.eulerCharacteristic, $"euler characteristic of: {topology}" );
-    }
-
     // with a threshold of zero no vertex is collapsible and the octree contours like a uniform grid
     [Test]
     public void surfaceIsClosedAndManifoldWithoutClustering( [Values] Model model, [Values] QEFSolverType solver ) {
@@ -86,6 +78,23 @@ public abstract class ManifoldDualContouringTopologyTest : TopologyTest {
         var voxelizer = this.create( resolution, solver, twoSpheres, clusteringThreshold );
 
         assertTwoSpheres( this.contour( voxelizer ) );
+    }
+
+    // Occupancy-Based Dual Contouring, appendix A.1.1: the table of dual marching cubes by itself leaves an edge that
+    // four polygons run along between two cells that have a joined face in common. The two hollows of each pair would
+    // hang together along such an edge
+    [Test]
+    public void surfaceIsManifoldWhereTwoLeavesHaveAJoinedFaceInCommon( ) {
+        var voxelizer = this.create( resolution, QEFSolverType.SVD, hollowsAcrossFaces, 0.0f );
+
+        assertBlockWithSixHollows( this.contour( voxelizer ) );
+    }
+
+    [Test]
+    public void clusteredSurfaceIsManifoldWhereTwoLeavesHaveAJoinedFaceInCommon( [Values] QEFSolverType solver ) {
+        var voxelizer = this.create( resolution, solver, hollowsAcrossFaces, clusteringThreshold );
+
+        assertManifold( this.contour( voxelizer ) );
     }
 
     [Test]

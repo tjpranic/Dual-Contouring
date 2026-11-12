@@ -83,9 +83,9 @@ public partial class ManifoldDualContouring {
     }
 
     // how many vertices every leaf has: one for every piece of the contour that passes through it, which its solid
-    // corners tell. They also tell which of those vertices each intersected edge of the leaf is associated with, so that
-    // does not need to be kept for every leaf. The leaves are gone through a row along z at a time, and each row adds up
-    // its own vertices
+    // corners tell, with those of the leaf across its joined face if it has one (BurstCells.vertexLookupOf). They also
+    // tell which of those vertices each intersected edge of the leaf is associated with, so that does not need to be
+    // kept for every leaf. The leaves are gone through a row along z at a time, and each row adds up its own vertices
     [BurstCompile( CompileSynchronously = true )]
     private struct CountLeafVerticesJob : IJobParallelFor {
 
@@ -104,7 +104,7 @@ public partial class ManifoldDualContouring {
             var total      = 0;
 
             for( var z = 0; z < resolution; ++z ) {
-                var count = BurstTables.lookupVertexCount( this.solidCorners[first + z] );
+                var count = BurstTables.lookupVertexCount( BurstCells.vertexLookupOf( this.octree.grid, this.solidCorners, first + z ) );
 
                 this.vertexCounts[firstNode + z] = count;
 
@@ -112,31 +112,6 @@ public partial class ManifoldDualContouring {
             }
 
             this.rowCounts[row] = total;
-        }
-
-    }
-
-    // where the vertices of every row of leaves go: row after row. Within its row a leaf finds its own place
-    [BurstCompile( CompileSynchronously = true )]
-    private struct LayoutRowsJob : IJob {
-
-        [ReadOnly] public NativeArray<int> rowCounts;
-
-        [WriteOnly] public NativeArray<int> rowStarts;
-
-        // how many vertices there is room for, before and after
-        public NativeArray<int> room;
-
-        public void Execute( ) {
-            var next = this.room[0];
-
-            for( var row = 0; row < this.rowCounts.Length; ++row ) {
-                this.rowStarts[row] = next;
-
-                next += this.rowCounts[row];
-            }
-
-            this.room[0] = next;
         }
 
     }
@@ -328,10 +303,12 @@ public partial class ManifoldDualContouring {
         private unsafe void solve( int local, int first, int count ) {
             const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
 
-            var node  = this.octree.levelStart( this.octree.depth ) + local;
-            var grid  = this.octree.grid;
-            var cell  = grid.cellOf( local );
-            var solid = this.solidCorners[local];
+            var node = this.octree.levelStart( this.octree.depth ) + local;
+            var grid = this.octree.grid;
+            var cell = grid.cellOf( local );
+
+            // what the leaf looks its vertices up with
+            var lookup = BurstCells.vertexLookupOf( grid, this.solidCorners, local );
 
             // the hermite data of the edges the contour intersects, and of the boundaries between materials that pass
             // through the cell
@@ -367,7 +344,7 @@ public partial class ManifoldDualContouring {
                 }
 
                 for( var edge = 0; edge < EdgeCount; ++edge ) {
-                    if( BurstTables.lookupEdgeVertex( solid, edge ) >= 0 && BurstTables.edgesShareCorner( edge, boundary ) ) {
+                    if( BurstTables.lookupEdgeVertex( lookup, edge ) >= 0 && BurstTables.edgesShareCorner( edge, boundary ) ) {
                         reached |= 1 << boundary;
                     }
                 }
@@ -379,7 +356,7 @@ public partial class ManifoldDualContouring {
                 var averageNormal = float3.zero;
 
                 for( var edge = 0; edge < EdgeCount; ++edge ) {
-                    if( BurstTables.lookupEdgeVertex( solid, edge ) != index ) {
+                    if( BurstTables.lookupEdgeVertex( lookup, edge ) != index ) {
                         this.intersections[( vertex * EdgeCount ) + edge] = 0;
 
                         continue;
@@ -405,7 +382,7 @@ public partial class ManifoldDualContouring {
                     var reaches = false;
 
                     for( var edge = 0; edge < EdgeCount; ++edge ) {
-                        if( BurstTables.lookupEdgeVertex( solid, edge ) == index && BurstTables.edgesShareCorner( edge, boundary ) ) {
+                        if( BurstTables.lookupEdgeVertex( lookup, edge ) == index && BurstTables.edgesShareCorner( edge, boundary ) ) {
                             reaches = true;
                         }
                     }
@@ -573,17 +550,20 @@ public partial class ManifoldDualContouring {
                             }
 
                             var otherLeafIndex = grid.cellIndex( otherLeaf );
-                            var otherSolid     = this.solidCorners[otherLeafIndex];
+
+                            // what each leaf looks its vertices up with
+                            var lookup      = BurstCells.vertexLookupOf( grid, this.solidCorners, leafIndex );
+                            var otherLookup = BurstCells.vertexLookupOf( grid, this.solidCorners, otherLeafIndex );
 
                             for( var edge = 0; edge < 4; ++edge ) {
-                                var vertex = BurstTables.lookupEdgeVertex( solid, BurstTables.lookupEdgeIndexWithinFacePair( axis, 0, edge ) );
+                                var vertex = BurstTables.lookupEdgeVertex( lookup, BurstTables.lookupEdgeIndexWithinFacePair( axis, 0, edge ) );
 
                                 // only an intersected edge has a vertex, on either side
                                 if( vertex < 0 ) {
                                     continue;
                                 }
 
-                                var otherVertex = BurstTables.lookupEdgeVertex( otherSolid, BurstTables.lookupEdgeIndexWithinFacePair( axis, 1, edge ) );
+                                var otherVertex = BurstTables.lookupEdgeVertex( otherLookup, BurstTables.lookupEdgeIndexWithinFacePair( axis, 1, edge ) );
 
                                 var member      = memberOffsets[child] + ( this.rootOf( this.vertexStarts[leafStart + leafIndex]      + vertex      ) - this.vertexStarts[children[child]] );
                                 var otherMember = memberOffsets[other] + ( this.rootOf( this.vertexStarts[leafStart + otherLeafIndex] + otherVertex ) - this.vertexStarts[children[other]] );
@@ -876,7 +856,7 @@ public partial class ManifoldDualContouring {
         // associated with in one of them
         private int contourVertexOf( BurstNode leaf, int axis, int place ) {
             var local  = this.octree.grid.cellIndex( leaf.coordinates );
-            var vertex = BurstTables.lookupEdgeVertex( this.solidCorners[local], BurstTables.lookupEdgeIndexWithinEdgeNodes( axis, place ) );
+            var vertex = BurstTables.lookupEdgeVertex( BurstCells.vertexLookupOf( this.octree.grid, this.solidCorners, local ), BurstTables.lookupEdgeIndexWithinEdgeNodes( axis, place ) );
 
             return BurstManifold.contourVertexOf(
                 this.vertexStarts[this.octree.levelStart( this.octree.depth ) + local] + vertex,
@@ -1147,7 +1127,7 @@ public partial class ManifoldDualContouring {
                 rowCounts    = rowCounts
             }.Schedule( grid.rowCount, BurstBatches.rows, findSolidCorners );
 
-            new LayoutRowsJob {
+            new BurstLayoutRowsJob {
                 rowCounts = rowCounts,
                 rowStarts = rowStarts,
                 room      = room

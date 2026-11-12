@@ -90,9 +90,9 @@ public partial class UniformDualContouring {
             var quads = 0;
 
             for( var axis = 0; axis < 3; ++axis ) {
-                if( clusterOf( this.grid, cell, axis, out var cluster ) &&
+                if( BurstQuads.clusterOf( this.grid, cell, axis, out var cluster ) &&
                     this.hasVertex[cluster.y] && this.hasVertex[cluster.z] && this.hasVertex[cluster.w] &&
-                    BurstSurfaceExtractor.intersectsContour( this.materials[edgeStartOf( this.grid, cell, axis )], this.materials[edgeEndOf( this.grid, cell )] )
+                    BurstSurfaceExtractor.intersectsContour( this.materials[BurstQuads.edgeStartOf( this.grid, cell, axis )], this.materials[BurstQuads.edgeEndOf( this.grid, cell )] )
                 ) {
                     quads |= 1 << axis;
                 }
@@ -101,46 +101,6 @@ public partial class UniformDualContouring {
             this.quads[index] = ( byte )quads;
         }
 
-    }
-
-    // the four cells around the edge of a cell along the given axis at its maximum, in the order the managed
-    // implementation takes them, if they are all in the grid
-    private static bool clusterOf( BurstGrid grid, int3 cell, int axis, out int4 cluster ) {
-        var n = grid.resolution;
-
-        cluster = int4.zero;
-
-        switch( axis ) {
-            case 0:
-                if( cell.y + 1 >= n || cell.z + 1 >= n ) {
-                    return false;
-                }
-                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 0, 0, 1 ) ), grid.cellIndex( cell + new int3( 0, 1, 0 ) ), grid.cellIndex( cell + new int3( 0, 1, 1 ) ) );
-                return true;
-            case 1:
-                if( cell.x + 1 >= n || cell.z + 1 >= n ) {
-                    return false;
-                }
-                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 1, 0, 0 ) ), grid.cellIndex( cell + new int3( 0, 0, 1 ) ), grid.cellIndex( cell + new int3( 1, 0, 1 ) ) );
-                return true;
-            default:
-                if( cell.x + 1 >= n || cell.y + 1 >= n ) {
-                    return false;
-                }
-                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 0, 1, 0 ) ), grid.cellIndex( cell + new int3( 1, 0, 0 ) ), grid.cellIndex( cell + new int3( 1, 1, 0 ) ) );
-                return true;
-        }
-    }
-
-    // that edge is edge 3, 7 or 11 of the cell, which run from corner 4, 2 and 6 to corner 7
-    private static int edgeStartOf( BurstGrid grid, int3 cell, int axis ) {
-        var corner = axis == 0 ? 4 : axis == 1 ? 2 : 6;
-
-        return grid.cornerIndex( grid.cornerOfCell( cell, corner ) );
-    }
-
-    private static int edgeEndOf( BurstGrid grid, int3 cell ) {
-        return grid.cornerIndex( grid.cornerOfCell( cell, 7 ) );
     }
 
     // the vertices and triangles of the mesh, in the order the managed implementation creates them: cell by cell and axis
@@ -197,10 +157,10 @@ public partial class UniformDualContouring {
                         continue;
                     }
 
-                    clusterOf( this.grid, cell, axis, out var cluster );
+                    BurstQuads.clusterOf( this.grid, cell, axis, out var cluster );
 
-                    var startMaterial = this.materials[edgeStartOf( this.grid, cell, axis )];
-                    var endMaterial   = this.materials[edgeEndOf( this.grid, cell )];
+                    var startMaterial = this.materials[BurstQuads.edgeStartOf( this.grid, cell, axis )];
+                    var endMaterial   = this.materials[BurstQuads.edgeEndOf( this.grid, cell )];
                     var materialIndex = startMaterial == MaterialIndex.Void ? endMaterial : startMaterial;
                     var subMeshIndex  = BurstSurfaceExtractor.findHighestMaterialBit( materialIndex );
 

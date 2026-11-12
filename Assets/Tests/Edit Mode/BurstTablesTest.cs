@@ -81,6 +81,27 @@ public class BurstTablesTest {
                     }
                 }
             }
+            for( var face = 0; face < 6; ++face ) {
+                this.entries.Add( BurstTables.lookupFaceAxis( face ) );
+                this.entries.Add( BurstTables.lookupFaceSide( face ) );
+            }
+            for( var edge = 0; edge < 12; ++edge ) {
+                for( var side = 0; side < 2; ++side ) {
+                    this.entries.Add( BurstTables.lookupEdgeFace( edge, side ) );
+                }
+            }
+            for( var solidCorners = 0; solidCorners < 256; ++solidCorners ) {
+                this.entries.Add( BurstTables.lookupJoinedFace( solidCorners ) );
+                this.entries.Add( BurstTables.complement( solidCorners ) );
+                for( var across = 0; across < 256; ++across ) {
+                    this.entries.Add( BurstTables.sharesJoinedFace( solidCorners, across ) ? 1 : 0 );
+                }
+                for( var edge = 0; edge < 12; ++edge ) {
+                    for( var side = 0; side < 2; ++side ) {
+                        this.entries.Add( BurstTables.lookupEdgeAcrossFace( solidCorners, edge, side ) );
+                    }
+                }
+            }
         }
 
     }
@@ -173,6 +194,28 @@ public class BurstTablesTest {
             }
         }
 
+        for( var face = 0; face < 6; ++face ) {
+            entries.Add( DualMarchingCubes.lookupFaceAxis( face ) );
+            entries.Add( DualMarchingCubes.lookupFaceSide( face ) );
+        }
+        for( var edge = 0; edge < 12; ++edge ) {
+            for( var side = 0; side < 2; ++side ) {
+                entries.Add( DualMarchingCubes.lookupEdgeFace( edge, side ) );
+            }
+        }
+        for( var solidCorners = 0; solidCorners < 256; ++solidCorners ) {
+            entries.Add( DualMarchingCubes.lookupJoinedFace( solidCorners ) );
+            entries.Add( DualMarchingCubes.complement( solidCorners ) );
+            for( var across = 0; across < 256; ++across ) {
+                entries.Add( DualMarchingCubes.sharesJoinedFace( solidCorners, across ) ? 1 : 0 );
+            }
+            for( var edge = 0; edge < 12; ++edge ) {
+                for( var side = 0; side < 2; ++side ) {
+                    entries.Add( DualMarchingCubes.lookupEdgeAcrossFace( solidCorners, edge, side ) );
+                }
+            }
+        }
+
         return entries;
     }
 
@@ -222,6 +265,13 @@ public class BurstTablesTest {
             Assert.AreEqual( 1, shared.Length, $"planes the corners of face {face} lie in" );
 
             planes.Add( ( shared[0], BurstTables.lookupCornerOffset( corners[0], shared[0] ) ) );
+
+            Assert.AreEqual( shared[0], BurstTables.lookupFaceAxis( face ), $"axis of face {face}" );
+            Assert.AreEqual( BurstTables.lookupCornerOffset( corners[0], shared[0] ), BurstTables.lookupFaceSide( face ), $"side of face {face}" );
+
+            foreach( var edge in edges ) {
+                Assert.IsTrue( BurstTables.lookupEdgeFace( edge, 0 ) == face || BurstTables.lookupEdgeFace( edge, 1 ) == face, $"edge {edge} lies in face {face}" );
+            }
         }
 
         Assert.AreEqual( 6, planes.Count, "faces" );

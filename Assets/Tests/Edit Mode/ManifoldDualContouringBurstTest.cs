@@ -78,6 +78,12 @@ public class ManifoldDualContouringBurstTest : TopologyTest {
         this.assertSameContour( 5, solver, twoSpheres, clustering );
     }
 
+    // two leaves that have a joined face in common take their vertices from their complements
+    [Test]
+    public void contourIsTheManagedOneWhereTwoLeavesHaveAJoinedFaceInCommon( [Values] QEFSolverType solver, [Values] Clustering clustering ) {
+        this.assertSameContour( 5, solver, hollowsAcrossFaces, clustering );
+    }
+
     // the boundary between two materials is part of the QEFs that clustering adds up
     [Test]
     public void contourIsTheManagedOneAlongAMaterialBoundary( [Values] QEFSolverType solver, [Values] Clustering clustering ) {

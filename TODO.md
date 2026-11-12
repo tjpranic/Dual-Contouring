@@ -1,6 +1,7 @@
 # Dual Contouring
 
 ## TODO
+- See if it's possible to parallelize Manifold Dual Contouring
 
 ## IN PROGRESS
 

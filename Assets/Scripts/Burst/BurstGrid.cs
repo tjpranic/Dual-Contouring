@@ -199,12 +199,115 @@ public struct BurstSolidCornersJob : IJobParallelFor {
 
 }
 
+// where the vertices of every row of cells go, given how many each row has: row after row. Within its row a cell finds
+// its own place
+[BurstCompile( CompileSynchronously = true )]
+public struct BurstLayoutRowsJob : IJob {
+
+    [ReadOnly] public NativeArray<int> rowCounts;
+
+    [WriteOnly] public NativeArray<int> rowStarts;
+
+    // how many vertices there is room for, before and after
+    public NativeArray<int> room;
+
+    public void Execute( ) {
+        var next = this.room[0];
+
+        for( var row = 0; row < this.rowCounts.Length; ++row ) {
+            this.rowStarts[row] = next;
+
+            next += this.rowCounts[row];
+        }
+
+        this.room[0] = next;
+    }
+
+}
+
+// the polygons of a uniform grid: one around every edge inside the grid that the contour crosses, between the four cells
+// around that edge. The cell that has the edge at its maximum starts the polygon
+public static class BurstQuads {
+
+    // the four cells around the edge of a cell along the given axis at its maximum, in the order the managed
+    // implementation takes them, if they are all in the grid
+    public static bool clusterOf( BurstGrid grid, int3 cell, int axis, out int4 cluster ) {
+        var n = grid.resolution;
+
+        cluster = int4.zero;
+
+        switch( axis ) {
+            case 0:
+                if( cell.y + 1 >= n || cell.z + 1 >= n ) {
+                    return false;
+                }
+                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 0, 0, 1 ) ), grid.cellIndex( cell + new int3( 0, 1, 0 ) ), grid.cellIndex( cell + new int3( 0, 1, 1 ) ) );
+                return true;
+            case 1:
+                if( cell.x + 1 >= n || cell.z + 1 >= n ) {
+                    return false;
+                }
+                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 1, 0, 0 ) ), grid.cellIndex( cell + new int3( 0, 0, 1 ) ), grid.cellIndex( cell + new int3( 1, 0, 1 ) ) );
+                return true;
+            default:
+                if( cell.x + 1 >= n || cell.y + 1 >= n ) {
+                    return false;
+                }
+                cluster = new int4( grid.cellIndex( cell ), grid.cellIndex( cell + new int3( 0, 1, 0 ) ), grid.cellIndex( cell + new int3( 1, 0, 0 ) ), grid.cellIndex( cell + new int3( 1, 1, 0 ) ) );
+                return true;
+        }
+    }
+
+    // that edge is edge 3, 7 or 11 of the cell, which run from corner 4, 2 and 6 to corner 7
+    public static int edgeStartOf( BurstGrid grid, int3 cell, int axis ) {
+        var corner = axis == 0 ? 4 : axis == 1 ? 2 : 6;
+
+        return grid.cornerIndex( grid.cornerOfCell( cell, corner ) );
+    }
+
+    public static int edgeEndOf( BurstGrid grid, int3 cell ) {
+        return grid.cornerIndex( grid.cornerOfCell( cell, 7 ) );
+    }
+
+    // which of its own edges that edge is to each of the four cells, in the order clusterOf gives them: they are the
+    // order an octree goes around an edge in
+    public static int edgeOf( int axis, int place ) {
+        return BurstTables.lookupEdgeIndexWithinEdgeNodes( axis, place );
+    }
+
+}
+
 // the vertex of a cell of the grid as the managed implementations find it in a cell of a uniform grid or in a leaf of an
 // octree: the hermite data of the edges of the cell in the order of the edge layout, the vertex placed from the QEF of
 // those samples, and the average of the normals of the contour samples. The cell works out the hermite data of its own
 // edges, so an edge that the contour crosses is worked out by each of the cells around it, as it is in the managed
 // implementations too. That keeps the data of the edges, almost all of which the contour does not cross, out of memory
 public static class BurstCells {
+
+    // what a cell looks its vertices up with in the dual marching cubes table: its solid corners, or their complement
+    // where the cell across its joined face has that face joined too. Otherwise the edge between the vertices of those
+    // two cells would be part of four polygons (DualMarchingCubes.lookupJoinedFace). Few cells have a joined face, and
+    // only those look at their neighbor. The solid corners are those BurstSolidCornersJob found
+    public static int vertexLookupOf( in BurstGrid grid, NativeArray<byte> solidCorners, int index ) {
+        var solid = solidCorners[index];
+        var face  = BurstTables.lookupJoinedFace( solid );
+
+        if( face < 0 ) {
+            return solid;
+        }
+
+        var axis     = BurstTables.lookupFaceAxis( face );
+        var neighbor = grid.cellOf( index );
+
+        neighbor[axis] += BurstTables.lookupFaceSide( face ) == 1 ? 1 : -1;
+
+        // the face is on the outside of the grid, where no polygon crosses it
+        if( neighbor[axis] < 0 || neighbor[axis] >= grid.resolution ) {
+            return solid;
+        }
+
+        return BurstTables.sharesJoinedFace( solid, solidCorners[grid.cellIndex( neighbor )] ) ? BurstTables.complement( solid ) : solid;
+    }
 
     // whether the cell has a vertex: the contour passes through it. The QEF is as the vertex left it, solved or not.
     // The solid corners of the cell are those BurstSolidCornersJob found

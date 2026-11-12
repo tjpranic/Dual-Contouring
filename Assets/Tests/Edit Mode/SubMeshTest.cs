@@ -20,7 +20,8 @@ public class SubMeshTest : ContouringTest {
         Adaptive,
         AdaptiveBurst,
         Manifold,
-        ManifoldBurst
+        ManifoldBurst,
+        OccupancyBurst
     }
 
     // a cube of only the second material
@@ -50,6 +51,7 @@ public class SubMeshTest : ContouringTest {
             Algorithm.AdaptiveBurst  => burst( this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
             Algorithm.Manifold       => this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ),
             Algorithm.ManifoldBurst  => burst( this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes ) ),
+            Algorithm.OccupancyBurst => burst( this.createVoxelizer<OccupancyDualContouring>( 4, QEFSolverType.SVD, shapes ) ),
             _                        => throw new Exception( "Unknown algorithm specified" )
         };
     }
