@@ -32,6 +32,11 @@ public readonly struct BurstGrid {
         get { return this.resolution * this.resolution; }
     }
 
+    // rows of corners along z, which are next to each other in the order of the corners
+    public int cornerRowCount {
+        get { return ( this.resolution + 1 ) * ( this.resolution + 1 ); }
+    }
+
     // edges along each axis: n of them along the axis times n + 1 across each of the other two
     public int edgesPerAxis {
         get { return this.resolution * ( this.resolution + 1 ) * ( this.resolution + 1 ); }
@@ -68,15 +73,18 @@ public readonly struct BurstGrid {
         return cell + new int3( BurstTables.lookupCornerOffset( corner, 0 ), BurstTables.lookupCornerOffset( corner, 1 ), BurstTables.lookupCornerOffset( corner, 2 ) );
     }
 
-    // the edge of the grid that the given edge of a cell is
-    public int edgeOfCell( int3 cell, int edge ) {
-        var axis  = edge / 4;
-        var start = this.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) );
-        var size  = new int3( this.resolution + 1 );
+    // the edge of the grid that starts at the given corner and runs along the axis
+    public int edgeIndex( int3 start, int axis ) {
+        var size = new int3( this.resolution + 1 );
 
         size[axis] = this.resolution;
 
         return ( axis * this.edgesPerAxis ) + ( ( ( ( start.x * size.y ) + start.y ) * size.z ) + start.z );
+    }
+
+    // the edge of the grid that the given edge of a cell is
+    public int edgeOfCell( int3 cell, int edge ) {
+        return this.edgeIndex( this.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) ), edge / 4 );
     }
 
     public void cornersOfEdge( int edge, out int3 start, out int3 end ) {

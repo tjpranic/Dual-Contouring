@@ -57,21 +57,145 @@ public partial class OccupancyDualContouring {
 
     }
 
-    // the vertices of the cells: one for every piece of the contour in a cell. The vertices of a cell follow each other,
-    // in the order the table numbers them, and those of the cells of a row follow each other from where the row starts
+    // how many numbers the 1D and 2D points of the corners of every row along z take up between them
+    // (BurstOccupancy.Points)
+    [BurstCompile( CompileSynchronously = true )]
+    private struct CountPointsJob : IJobParallelFor {
+
+        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte>          solidCorners;
+
+        public BurstGrid grid;
+
+        [WriteOnly] public NativeArray<int> rowCounts;
+
+        public void Execute( int row ) {
+            var corners = this.grid.resolution + 1;
+            var total   = 0;
+
+            for( var z = 0; z < corners; ++z ) {
+                var corner = this.grid.cornerOf( ( row * corners ) + z );
+
+                if( BurstOccupancy.mayHavePoints( this.grid, this.solidCorners, corner ) ) {
+                    total += BurstOccupancy.offsetOf( this.grid, this.materials, corner, 3, 3 );
+                }
+            }
+
+            this.rowCounts[row] = total;
+        }
+
+    }
+
+    // section 5.1: the 1D point of every edge of the grid that the contour crosses, and where the points of every
+    // corner start. The points of the corners of a row follow each other from where the row starts
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
-    private struct SolveCellsJob : IJobParallelFor {
+    private struct SearchEdgesJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
         [ReadOnly] public NativeArray<MaterialIndex>        materials;
         [ReadOnly] public NativeArray<byte>                 solidCorners;
         [ReadOnly] public NativeArray<int>                  rowStarts;
 
+        public BurstGrid grid;
+        public int       edgeSearchIterations;
+
+        [NativeDisableParallelForRestriction] public NativeArray<int>   starts;
+        [NativeDisableParallelForRestriction] public NativeArray<float> values;
+
+        public void Execute( int row ) {
+            var corners = this.grid.resolution + 1;
+            var next    = this.rowStarts[row];
+
+            for( var z = 0; z < corners; ++z ) {
+                var index  = ( row * corners ) + z;
+                var corner = this.grid.cornerOf( index );
+
+                this.starts[index] = next;
+
+                if( !BurstOccupancy.mayHavePoints( this.grid, this.solidCorners, corner ) ) {
+                    continue;
+                }
+
+                var edges = 0;
+
+                for( var axis = 0; axis < 3; ++axis ) {
+                    if( BurstOccupancy.isCrossed( this.grid, this.materials, corner, axis ) ) {
+                        var startIsSolid = this.materials[index] != MaterialIndex.Void;
+
+                        this.values[next + edges] = BurstOccupancy.searchEdge( this.grid, corner, axis, startIsSolid, this.densityFunctions, this.edgeSearchIterations );
+
+                        ++edges;
+                    }
+                }
+
+                next += BurstOccupancy.offsetOf( this.grid, this.materials, corner, 3, 3 );
+            }
+        }
+
+    }
+
+    // section 5.2: the 2D point of every line the contour draws across a face of the grid, after the 1D points of the
+    // corner the face has its minimum at. It reads the 1D points at the ends of each line, which are all there by now,
+    // and writes only the 2D points of its own rows
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct SearchFacesJob : IJobParallelFor {
+
+        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
+        [ReadOnly] public NativeArray<MaterialIndex>        materials;
+        [ReadOnly] public NativeArray<byte>                 solidCorners;
+        [ReadOnly] public NativeArray<int>                  starts;
+
         public BurstGrid               grid;
         public BurstOccupancy.Searches searches;
-        public QEFSolverType           qefSolverType;
-        public int                     minimizerIterations;
-        public bool                    keepVerticesInCells;
+
+        [NativeDisableParallelForRestriction] public NativeArray<float> values;
+
+        public void Execute( int row ) {
+            var corners = this.grid.resolution + 1;
+
+            for( var z = 0; z < corners; ++z ) {
+                var index  = ( row * corners ) + z;
+                var corner = this.grid.cornerOf( index );
+
+                if( !BurstOccupancy.mayHavePoints( this.grid, this.solidCorners, corner ) ) {
+                    continue;
+                }
+
+                var at = this.starts[index] + BurstOccupancy.offsetOf( this.grid, this.materials, corner, 3, 0 );
+
+                for( var axis = 0; axis < 3; ++axis ) {
+                    if( !BurstOccupancy.hasFace( this.grid, corner, axis ) ) {
+                        continue;
+                    }
+
+                    var faceCorners = BurstOccupancy.faceCornersOf( this.grid, this.materials, corner, axis );
+                    var lines       = BurstOccupancy.linesOf( faceCorners );
+
+                    if( lines > 0 ) {
+                        BurstOccupancy.searchFaceLines( this.grid, corner, axis, faceCorners, this.searches, this.materials, this.solidCorners, this.densityFunctions, this.starts, this.values, at );
+
+                        at += 2 * lines;
+                    }
+                }
+            }
+        }
+
+    }
+
+    // the vertices of the cells: one for every piece of the contour in a cell. The vertices of a cell follow each other,
+    // in the order the table numbers them, and those of the cells of a row follow each other from where the row starts
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct SolveCellsJob : IJobParallelFor {
+
+        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte>          solidCorners;
+        [ReadOnly] public NativeArray<int>           rowStarts;
+
+        public BurstGrid             grid;
+        public BurstOccupancy.Points points;
+        public QEFSolverType         qefSolverType;
+        public int                   minimizerIterations;
+        public bool                  keepVerticesInCells;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>    vertexStarts;
         [NativeDisableParallelForRestriction] public NativeArray<float3> positions;
@@ -103,12 +227,11 @@ public partial class OccupancyDualContouring {
                         solid,
                         lookup,
                         vertex,
-                        this.searches,
+                        this.points,
                         this.qefSolverType,
                         this.minimizerIterations,
                         this.keepVerticesInCells,
                         this.materials,
-                        this.densityFunctions,
                         out var position,
                         out var normal
                     );
@@ -131,19 +254,18 @@ public partial class OccupancyDualContouring {
         // A piece that has no plane at all has its vertex at the average of its 1D points, facing the way its edges run
         // from solid to empty
         public static unsafe void solve(
-            in BurstGrid                      grid,
-            int3                              cell,
-            int                               solid,
-            int                               lookup,
-            int                               vertex,
-            in BurstOccupancy.Searches        searches,
-            QEFSolverType                     qefSolverType,
-            int                               minimizerIterations,
-            bool                              keepVerticesInCells,
-            NativeArray<MaterialIndex>        materials,
-            NativeArray<BurstDensityFunction> densityFunctions,
-            out float3                        position,
-            out float3                        normal
+            in BurstGrid               grid,
+            int3                       cell,
+            int                        solid,
+            int                        lookup,
+            int                        vertex,
+            in BurstOccupancy.Points   found,
+            QEFSolverType              qefSolverType,
+            int                        minimizerIterations,
+            bool                       keepVerticesInCells,
+            NativeArray<MaterialIndex> materials,
+            out float3                 position,
+            out float3                 normal
         ) {
             const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
 
@@ -151,7 +273,7 @@ public partial class OccupancyDualContouring {
             var points  = stackalloc float3[EdgeCount];
             var normals = stackalloc float3[EdgeCount];
 
-            var count = BurstOccupancy.planesOf( grid, cell, solid, lookup, vertex, searches, materials, densityFunctions, edges, points, normals );
+            var count = BurstOccupancy.planesOf( grid, cell, solid, lookup, vertex, found, materials, edges, points, normals );
 
             var qef       = BurstQEF.create( qefSolverType, minimizerIterations );
             var sum       = float3.zero;
@@ -249,15 +371,14 @@ public partial class OccupancyDualContouring {
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SplitQuadsJob : IJobParallelFor {
 
-        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
-        [ReadOnly] public NativeArray<MaterialIndex>        materials;
-        [ReadOnly] public NativeArray<byte>                 solidCorners;
-        [ReadOnly] public NativeArray<int>                  vertexStarts;
-        [ReadOnly] public NativeArray<float3>               positions;
+        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte>          solidCorners;
+        [ReadOnly] public NativeArray<int>           vertexStarts;
+        [ReadOnly] public NativeArray<float3>        positions;
 
-        public BurstGrid grid;
-        public int       edgeSearchIterations;
-        public bool      splitQuads;
+        public BurstGrid             grid;
+        public BurstOccupancy.Points points;
+        public bool                  splitQuads;
 
         [WriteOnly] public NativeArray<byte> quads;
 
@@ -283,7 +404,7 @@ public partial class OccupancyDualContouring {
 
                     if( this.splitQuads ) {
                         var around = BurstOccupancyCells.aroundEdge( this.grid, cluster, axis, edge.startIsSolid, this.solidCorners, this.vertexStarts );
-                        var along  = BurstOccupancy.searchEdge( this.grid, edge.start, axis, edge.startIsSolid, this.densityFunctions, this.edgeSearchIterations );
+                        var along  = this.points.alongEdge( this.grid, this.materials, edge.start, axis );
 
                         split = BurstOccupancy.splitOf(
                             this.positions[around.x],
@@ -311,16 +432,15 @@ public partial class OccupancyDualContouring {
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct ContourJob : IJob {
 
-        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
-        [ReadOnly] public NativeArray<MaterialIndex>        materials;
-        [ReadOnly] public NativeArray<byte>                 solidCorners;
-        [ReadOnly] public NativeArray<int>                  vertexStarts;
-        [ReadOnly] public NativeArray<float3>               positions;
-        [ReadOnly] public NativeArray<float3>               normals;
-        [ReadOnly] public NativeArray<byte>                 quads;
+        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte>          solidCorners;
+        [ReadOnly] public NativeArray<int>           vertexStarts;
+        [ReadOnly] public NativeArray<float3>        positions;
+        [ReadOnly] public NativeArray<float3>        normals;
+        [ReadOnly] public NativeArray<byte>          quads;
 
-        public BurstGrid grid;
-        public int       edgeSearchIterations;
+        public BurstGrid             grid;
+        public BurstOccupancy.Points points;
 
         // the index each vertex has in the mesh plus one, zero until a polygon uses it
         public NativeArray<int> meshVertices;
@@ -395,7 +515,7 @@ public partial class OccupancyDualContouring {
                         }
                         default: {
                             // the 1D point of the edge becomes a vertex, between the normals of the four around it
-                            var along = BurstOccupancy.searchEdge( this.grid, edge.start, axis, edge.startIsSolid, this.densityFunctions, this.edgeSearchIterations );
+                            var along = this.points.alongEdge( this.grid, this.materials, edge.start, axis );
 
                             this.meshPositions.Add( BurstOccupancy.positionOnEdge( this.grid, edge.start, axis, along ) );
                             this.meshNormals.Add( BurstSurfaceExtractor.normalize( this.normals[around.x] + this.normals[around.y] + this.normals[around.z] + this.normals[around.w] ) );
@@ -424,15 +544,14 @@ public partial class OccupancyDualContouring {
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct DebugInformationJob : IJob {
 
-        [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
-        [ReadOnly] public NativeArray<MaterialIndex>        materials;
-        [ReadOnly] public NativeArray<byte>                 solidCorners;
-        [ReadOnly] public NativeArray<int>                  vertexStarts;
-        [ReadOnly] public NativeArray<float3>               positions;
-        [ReadOnly] public NativeArray<float3>               normals;
+        [ReadOnly] public NativeArray<MaterialIndex> materials;
+        [ReadOnly] public NativeArray<byte>          solidCorners;
+        [ReadOnly] public NativeArray<int>           vertexStarts;
+        [ReadOnly] public NativeArray<float3>        positions;
+        [ReadOnly] public NativeArray<float3>        normals;
 
-        public BurstGrid               grid;
-        public BurstOccupancy.Searches searches;
+        public BurstGrid             grid;
+        public BurstOccupancy.Points points;
 
         public NativeList<BurstDebugInformation.CornerData> corners;
         public NativeList<BurstDebugInformation.EdgeData>   edges;
@@ -509,7 +628,7 @@ public partial class OccupancyDualContouring {
                 }
 
                 for( var vertex = 0; vertex < count; ++vertex ) {
-                    var pieceEdges = BurstOccupancy.planesOf( this.grid, cell, solid, lookup, vertex, this.searches, this.materials, this.densityFunctions, edges, points, normals );
+                    var pieceEdges = BurstOccupancy.planesOf( this.grid, cell, solid, lookup, vertex, this.points, this.materials, edges, points, normals );
 
                     for( var pieceEdge = 0; pieceEdge < pieceEdges; ++pieceEdge ) {
                         var hasPlane = math.any( normals[pieceEdge] != float3.zero );
@@ -544,6 +663,7 @@ public partial class OccupancyDualContouring {
     }
 
     private static readonly ProfilerMarker burstSampleCornersMarker = new( "OccupancyDualContouring.Burst.SampleCorners" );
+    private static readonly ProfilerMarker burstSearchPointsMarker  = new( "OccupancyDualContouring.Burst.SearchPoints" );
     private static readonly ProfilerMarker burstSolveVerticesMarker = new( "OccupancyDualContouring.Burst.SolveVertices" );
     private static readonly ProfilerMarker burstContourMarker       = new( "OccupancyDualContouring.Burst.Contour" );
     private static readonly ProfilerMarker burstBuildMeshMarker     = new( "OccupancyDualContouring.Burst.BuildMesh" );
@@ -577,7 +697,13 @@ public partial class OccupancyDualContouring {
         using var rowCounts = new NativeArray<int>( grid.rowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var rowStarts = new NativeArray<int>( grid.rowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
-        burstSolveVerticesMarker.Begin( );
+        // the 1D and 2D points, laid out by rows of corners as the vertices are by rows of cells
+        using var pointRowCounts = new NativeArray<int>( grid.cornerRowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var pointRowStarts = new NativeArray<int>( grid.cornerRowCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var pointStarts    = new NativeArray<int>( grid.cornerCount,    Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var pointRoom      = new NativeArray<int>( 1, Allocator.TempJob );
+
+        burstSearchPointsMarker.Begin( );
 
         var findSolidCorners = new BurstSolidCornersJob {
             materials    = materials,
@@ -591,32 +717,76 @@ public partial class OccupancyDualContouring {
             rowCounts    = rowCounts
         }.Schedule( grid.rowCount, BurstBatches.rows, findSolidCorners );
 
-        new BurstLayoutRowsJob {
+        var countPoints = new CountPointsJob {
+            materials    = materials,
+            solidCorners = solidCorners,
+            grid         = grid,
+            rowCounts    = pointRowCounts
+        }.Schedule( grid.cornerRowCount, BurstBatches.rows, findSolidCorners );
+
+        var layoutVertices = new BurstLayoutRowsJob {
             rowCounts = rowCounts,
             rowStarts = rowStarts,
             room      = room
-        }.Schedule( countVertices ).Complete( );
+        }.Schedule( countVertices );
+
+        var layoutPoints = new BurstLayoutRowsJob {
+            rowCounts = pointRowCounts,
+            rowStarts = pointRowStarts,
+            room      = pointRoom
+        }.Schedule( countPoints );
+
+        JobHandle.CombineDependencies( layoutVertices, layoutPoints ).Complete( );
+
+        using var pointValues = new NativeArray<float>( pointRoom[0], Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+
+        var searchEdges = new SearchEdgesJob {
+            densityFunctions     = functions,
+            materials            = materials,
+            solidCorners         = solidCorners,
+            rowStarts            = pointRowStarts,
+            grid                 = grid,
+            edgeSearchIterations = this.edgeSearchIterations,
+            starts               = pointStarts,
+            values               = pointValues
+        }.Schedule( grid.cornerRowCount, BurstBatches.rows );
+
+        new SearchFacesJob {
+            densityFunctions = functions,
+            materials        = materials,
+            solidCorners     = solidCorners,
+            starts           = pointStarts,
+            grid             = grid,
+            searches         = searches,
+            values           = pointValues
+        }.Schedule( grid.cornerRowCount, BurstBatches.rows, searchEdges ).Complete( );
+
+        burstSearchPointsMarker.End( );
+
+        var points = new BurstOccupancy.Points {
+            starts = pointStarts,
+            values = pointValues
+        };
 
         // every vertex of every cell, row after row
         using var positions = new NativeArray<float3>( room[0], Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var normals   = new NativeArray<float3>( room[0], Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
-        new SolveCellsJob {
-            densityFunctions    = functions,
-            materials           = materials,
-            solidCorners        = solidCorners,
-            rowStarts           = rowStarts,
-            grid                = grid,
-            searches            = searches,
-            qefSolverType       = this.qefSolverType,
-            minimizerIterations = this.minimizerIterations,
-            keepVerticesInCells = this.keepVerticesInCells,
-            vertexStarts        = vertexStarts,
-            positions           = positions,
-            normals             = normals
-        }.Schedule( grid.rowCount, BurstBatches.rows ).Complete( );
-
-        burstSolveVerticesMarker.End( );
+        using( burstSolveVerticesMarker.Auto( ) ) {
+            new SolveCellsJob {
+                materials           = materials,
+                solidCorners        = solidCorners,
+                rowStarts           = rowStarts,
+                grid                = grid,
+                points              = points,
+                qefSolverType       = this.qefSolverType,
+                minimizerIterations = this.minimizerIterations,
+                keepVerticesInCells = this.keepVerticesInCells,
+                vertexStarts        = vertexStarts,
+                positions           = positions,
+                normals             = normals
+            }.Schedule( grid.rowCount, BurstBatches.rows ).Complete( );
+        }
 
         using var quads         = new NativeArray<byte>( grid.cellCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var meshVertices  = new NativeArray<int>( positions.Length, Allocator.TempJob );
@@ -626,19 +796,17 @@ public partial class OccupancyDualContouring {
 
         using( burstContourMarker.Auto( ) ) {
             var findQuads = new SplitQuadsJob {
-                densityFunctions     = functions,
-                materials            = materials,
-                solidCorners         = solidCorners,
-                vertexStarts         = vertexStarts,
-                positions            = positions,
-                grid                 = grid,
-                edgeSearchIterations = this.edgeSearchIterations,
-                splitQuads           = this.splitQuads && this.keepVerticesInCells,
-                quads                = quads
+                materials    = materials,
+                solidCorners = solidCorners,
+                vertexStarts = vertexStarts,
+                positions    = positions,
+                grid         = grid,
+                points       = points,
+                splitQuads   = this.splitQuads && this.keepVerticesInCells,
+                quads        = quads
             }.Schedule( grid.cellCount, BurstBatches.cells );
 
             new ContourJob {
-                densityFunctions     = functions,
                 materials            = materials,
                 solidCorners         = solidCorners,
                 vertexStarts         = vertexStarts,
@@ -646,7 +814,7 @@ public partial class OccupancyDualContouring {
                 normals              = normals,
                 quads                = quads,
                 grid                 = grid,
-                edgeSearchIterations = this.edgeSearchIterations,
+                points               = points,
                 meshVertices         = meshVertices,
                 meshPositions        = meshPositions,
                 meshNormals          = meshNormals,
@@ -676,14 +844,13 @@ public partial class OccupancyDualContouring {
                 using var edgeIndices   = new NativeHashMap<int, int>( 1024, Allocator.TempJob );
 
                 new DebugInformationJob {
-                    densityFunctions     = functions,
                     materials            = materials,
                     solidCorners         = solidCorners,
                     vertexStarts         = vertexStarts,
                     positions            = positions,
                     normals              = normals,
                     grid                 = grid,
-                    searches             = searches,
+                    points               = points,
                     corners              = debugCorners,
                     edges                = debugEdges,
                     voxels               = debugVoxels,

@@ -46,7 +46,7 @@ public class ContouringPerformanceTest : TopologyTest {
             ( Algorithm.Uniform,  ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
             ( Algorithm.Adaptive, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Simplify", "Contour", "BuildMesh" },
             ( Algorithm.Manifold, ImplementationType.Burst )   => new[] { "SampleCorners", "SolveVertices", "Cluster", "Validate", "Contour", "BuildMesh" },
-            ( Algorithm.Occupancy, ImplementationType.Burst )  => new[] { "SampleCorners", "SolveVertices", "Contour", "BuildMesh" },
+            ( Algorithm.Occupancy, ImplementationType.Burst )  => new[] { "SampleCorners", "SearchPoints", "SolveVertices", "Contour", "BuildMesh" },
             _                                                  => throw new Exception( "Unknown implementation specified" )
         };
 

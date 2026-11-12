@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12, with what it measured for that question (finding 15). The user then decided it ("We'll make it a setting, on by default, as you suggest") and asked for step 4, which was done on 2026-11-13. The user approved it, gave the go-ahead for the scene and asked for step 5 ("All looks good to me. You can add the algorithm to the interactive editor scene. Continue with step 5."). Step 5 was done on 2026-11-13 and waits for review.
+**Status:** complete, 2026-11-13, apart from the user's review of step 6. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12, with what it measured for that question (finding 15). The user then decided it ("We'll make it a setting, on by default, as you suggest") and asked for step 4, which was done on 2026-11-13. The user approved it, gave the go-ahead for the scene and asked for step 5 ("All looks good to me. You can add the algorithm to the interactive editor scene. Continue with step 5."). Step 5 was done on 2026-11-13, and the user asked for step 6 ("Proceed with step 6"), which was done the same day and waits for review.
 
 ## Goal
 
@@ -60,7 +60,7 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
    - **Each cell working out its own points,** as the Burst implementations do now: 244 samples, against 48.
    - **Sharing them between the cells around an edge or face:** about 107.
 
-   From Manifold's 12.8 ms for its vertices at 128³, I estimate a Burst contour of the three balls at 128³ at about 85 ms without sharing and 45 ms with, against 33 ms. That is an estimate, to be replaced by the measurement of step 2.
+   From Manifold's 12.8 ms for its vertices at 128³, I estimate a Burst contour of the three balls at 128³ at about 85 ms without sharing and 45 ms with, against 33 ms. That is an estimate, to be replaced by the measurement of step 2. **Measured:** 79 ms without sharing (steps 2 to 4) and 52 ms with it (step 6), against Manifold's 34 ms.
 8. **A 1D point has up to four planes,** one in each cell around its edge, because each cell has its own two 2D points next to it. The gradient gave an edge one normal.
 9. **The quad format fits.** Four triangles around a 1D point are twelve indices, which is two of the GPU's quads, so the draw shader and the mesh readback need no change.
 10. **The voxelizer's distance settings have no meaning here.** Binary Search Iterations (6, at most 12), Intersection Approximation and Surface Correction Iterations place points by distance. ODC has its own searches, which need more steps than 12: its planes come from the positions of three points, so those have to be far more exact than an intersection that also has a gradient.
@@ -93,7 +93,14 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 16. **On the GPU this algorithm is far faster than in Burst, and four times faster than Uniform Dual Contouring's shader.** Found in step 4: a whole remesh of the three balls at 128³ takes 32 ms, against 83 ms in Burst and 133 ms for Uniform's GPU implementation (Measurements).
     - The searches are what costs, and they are what a GPU does well: every edge and every cell at once.
     - The shader keeps a material per corner, a 1D point per edge and two numbers per cell, 24 bytes a cell in all. Uniform's shader keeps 540: the voxels, and eight corners and twelve edges for each.
-    - Every edge's 1D point is found once and read by the cells around it, which the Burst implementation does not do yet (step 6).
+    - Every edge's 1D point is found once and read by the cells around it. The Burst implementation has done that too since step 6, and shares the 2D points as well, which the shader does not.
+
+17. **A subtraction that does not name a shape's material dents that shape in the other algorithms and leaves it whole here.** Found after step 6, when the user asked why the torus of the editor's starter model does not cut the capsule with this algorithm.
+    - **The cause:** a Subtraction takes away only the materials it names (`calculateMaterial`), and the scene's torus names material 2 while the capsule is material 3. By materials the capsule is not cut. The density does not look at materials: every subtraction is taken out of it.
+    - **The other three algorithms** decide which edges the contour crosses by materials and place the points on them by density. So the capsule keeps its triangles, 540 in each of them, and 36 of its vertices are drawn onto the torus, up to 0.8 of a cell into the capsule: a dent, not a cut.
+    - **This algorithm** asks for materials alone (finding 1), so its capsule is whole: the same 540 triangles, none of its vertices more than 0.04 of a cell inside the capsule, and 24 of them inside the torus.
+    - **With the torus naming material 3 as well,** all four cut the capsule: 548 triangles each, with vertices on the torus.
+    - **Not changed.** The scene is the user's, and which of the two readings a subtraction should have is a question about the other algorithms, outside this plan.
 
 ## Design
 
@@ -143,7 +150,9 @@ For a crossing of a face between the 1D points `a` and `b`, in the face's two co
 - **A search** (appendix A.1.3) samples evenly out to its range, takes the first interval whose far end differs from the start, or the last interval when none does, and bisects it. It returns the end nearer the start, which is on the start's side of the surface. It stops sampling at the first sample that differs, where the paper's code, which samples all rays at once, takes them all: the result is the same with fewer samples.
 - **Which way the first ray goes** is put to a vote of the four corners of the face: toward a corner that is on the other side of the surface from the middle, away from one that is not. On a face with two lines the corner beyond the other line is outvoted.
 - **What counts as nothing,** in cells: lengths below 1e-5, for two 1D points in one place, a first search that ends where it started, and two lines that do not come together. The searches step by 6e-5 to 1e-4, so a search that found the surface at its start returns exactly zero.
-- **Each cell works out the 2D points of its own pieces** in the first version (finding 7), written from the face's own corner so the two cells of a face find the same points. The two always connect the same pairs of 1D points, under the complement rule too (finding 3).
+- **A 2D point is searched for from its face alone:** from the face's own corner, with the 1D point of the lower numbered edge first, so the two cells of a face get the same point. The two always connect the same pairs of 1D points, under the complement rule too (finding 3).
+  - Until step 6 each cell worked out the 2D points of its own pieces in Burst, and on the GPU it still does.
+  - Since step 6 the Burst implementation finds each once (Burst, below).
 
 ### Vertices
 
@@ -173,13 +182,22 @@ For each grid edge inside the grid that the contour crosses, the four cells arou
 `Assets/Scripts/Burst/OccupancyDualContouring.Burst.cs`. The jobs, in order:
 
 1. Sample the materials of the corners (parallel).
-2. Solid corners per cell (`BurstSolidCornersJob`), then the cells that take the complement (parallel, reads neighbours only).
-3. Count and lay out the vertices per row, as Manifold's leaves do.
-4. Solve the cells: 1D points, 2D points, planes, QEF, clamp (parallel).
-5. Contour: the quads each cell starts, then the mesh in a fixed order, so the same input gives the same mesh vertex for vertex.
-6. Debug information when wanted, as `UniformDualContouring.Burst.cs` does it.
+2. Solid corners per cell (`BurstSolidCornersJob`). Which cells take the complement is worked out where it is needed.
+3. Count and lay out the vertices per row of cells, as Manifold's leaves do, and the 1D and 2D points per row of corners.
+4. Search the edges, then the faces: every 1D and every 2D point of the grid, once (parallel, step 6).
+5. Solve the cells: planes from those points, QEF, clamp (parallel).
+6. Contour: the quads each cell starts, then the mesh in a fixed order, so the same input gives the same mesh vertex for vertex.
+7. Debug information when wanted, as `UniformDualContouring.Burst.cs` does it.
 
-Profiler markers are named `OccupancyDualContouring.Burst.<Stage>`.
+Profiler markers are named `OccupancyDualContouring.Burst.<Stage>`: `SampleCorners`, `SearchPoints` (2 to 4), `SolveVertices`, `Contour`, `BuildMesh` and `DebugInformation`.
+
+**The points of the grid** (`BurstOccupancy.Points`, step 6). An edge has up to four cells around it and a face two, and until step 6 each of them searched for the same point.
+
+- **Where they are kept:** one after the other, corner by corner. A corner has the three edges that start at it and the three faces with their minimum at it. Its points are one number for each of those edges that is crossed, then two for each line across each of those faces.
+- **What that costs in memory:** a number per corner for where its points start, 8.6 MB at 128³ and 68 MB at 256³, and the points themselves, which only the surface has.
+- **Finding a point** among those of its corner needs no table: which edges are crossed and how many lines a face has follow from the materials of the corners.
+- **A face with two lines** has first the line through its first edge, the one from its corner along its first axis. Which edges a line joins is asked of the cell at that corner (`lookupEdgeAcrossFace`), which the cell on the other side agrees with.
+- **Most corners are passed over** by looking at the solid corners of the cell that has its minimum there.
 
 ### GPU
 
@@ -450,10 +468,19 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **What the scenes show,** seen while checking them and not changed in this step:
      - **The editor's starter model with the clamp on** has notches along the rim of its bite, where vertices are moved into their cells (finding 14), and a few spikes where the rim runs into the rounded cube. With `keepVerticesInCells` off the rim is clean and the spikes remain: they are where three surfaces come together (finding 13).
      - **A flat face that lies on a plane of the grid,** as the cut of `Direct To GPU` does. Every vertex of that scene is within 0.032 of a cell of the model with the clamp on, and within 0.004 with it off. The farthest are in the cells along the rim where the inner ball comes through the cut, and stick out past the cut by that much. Looking exactly along the cut, as the scene's camera does, that shows as specks a pixel wide along it, which Uniform's scene does not have.
-     - **Adaptive and Manifold Dual Contouring crease the turned capsule of the starter model,** with simplification off as well. Adaptive was not touched by this plan, so this was there before it. Occupancy's capsule is smooth.
+     - **Adaptive and Manifold Dual Contouring crease the turned capsule of the starter model,** with simplification off as well. Adaptive was not touched by this plan, so this was there before it. Occupancy's capsule is smooth. **This reading was wrong,** as the user's question after step 6 showed: the crease is the torus subtracted from the capsule, and it is Occupancy that differs (finding 17).
    - **Not done:** README and `AGENTS.md`, which are step 6.
    - **Verification:** edit mode 1766 of 1766, the 42 more all in `InteractiveEditorTest`; play mode 21 of 21; the 416 `Start` hashes identical to step 0. Compiling gave no errors. The editor scene is open as saved, with Uniform selected.
-6. **Tuning and documentation (medium).** Sharing 1D and 2D points between cells in Burst if step 2's timings call for it, with the output held bit for bit. README (algorithms, implementations table, code layout, the editor), `AGENTS.md`, and this plan marked complete.
+6. **Tuning and documentation (medium).** Sharing 1D and 2D points between cells in Burst if step 2's timings call for it, with the output held bit for bit. README (algorithms, implementations table, code layout, the editor), `AGENTS.md`, and this plan marked complete. **Done 2026-11-13:**
+   - **The timings called for it:** 79 ms at 128³, where the editor follows a drag live up to 50 ms.
+   - **Sharing** as Design describes it (Burst, the points of the grid): `BurstOccupancy.Points`, `searchFaceLines` and the layout helpers; `CountPointsJob`, `SearchEdgesJob` and `SearchFacesJob`. `planesOf` reads the points instead of searching for them, and so do the split, the fans and the debug view, which searched for the 1D point of each polygon once more. `BurstGrid` gained `edgeIndex` and `cornerRowCount`.
+   - **Bit for bit:** a probe hashed the mesh, vertex for vertex, and the debug data of 720 contours before and after: nine models, 8³ to 64³, both solvers, both kinds of normals, with and without the debug view, the clamp and the split, and with other search settings. All 720 are identical.
+   - **The hashes catch mistakes.** Taking the other of a face's two lines, and joining its edges the other way, each changed 216 of the 720, on six of the nine models, and failed 5 of the 12 Burst-against-GPU tests. So faces with two lines are among what was compared.
+   - **Speed** (Measurements): a contour of the three balls takes 52 ms at 128³ instead of 79, and 272 ms at 256³ instead of 370. A whole remesh takes 55 ms at 128³ instead of 83.
+   - **Still over the estimate of 45 ms** (finding 7). What is left is the searches themselves, 33 of the 52 ms, and making those cheaper would change the points they find.
+   - **The grid-plane case of step 5** was looked at and left as it is. My reading, from the vertex that is farthest off and not checked with a probe: the cut and the inner ball meet in a sharp inward edge that lies in a plane of the grid, so 1D points land exactly on that edge, and the searches on the faces next to them see two bends, the one case lemma 5.1 does not cover (finding 13). If that is right, it comes from the model sitting exactly on the grid, and no setting takes it away. An attempt to measure the same model moved off the grid planes did not give figures that can be trusted, and was dropped.
+   - **Verification:** edit mode 1766 of 1766, play mode 21 of 21; the 416 `Start` hashes of the other algorithms identical to step 0, and the 720 of this one identical to before the step. Compiling gave no errors.
+   - **Documentation:** README (the fourth algorithm, the implementations table and timings, a section on the algorithm with its settings and what step 2 and 3 measured, the scenes, the editor, the code layout, the paper) and `AGENTS.md` (the algorithm, and that the reference code must not be ported).
 
 ## Measurements
 
@@ -513,6 +540,21 @@ Occupancy-Based Dual Contouring as step 1 leaves it, with 15 halvings for every 
 - The face searches and the QEF took the vertices from 18.7 ms in step 1 to 61 ms at 128³.
 - Manifold Dual Contouring in the same session: 33.5 and 34.0 ms upright, 35.6 and 35.8 turned.
 - At 128³ a contour is past the 50 ms up to which the interactive editor follows a drag live.
+
+### Burst timings after step 6 (2026-11-13)
+
+`ContouringPerformanceTest` on the three balls, with Unity in front for all 20 cases. In ms, the two rounds, with step 4's figures of the same test beside them:
+
+| Cells | Model | Voxelize, step 4 | Voxelize | SampleCorners | SearchPoints | SolveVertices | Contour |
+|---|---|---|---|---|---|---|---|
+| 128³ | upright | 79.2 | 51.7, 52.2 | 6.5, 6.5 | 32.6, 32.8 | 5.1, 5.2 | 6.2, 6.4 |
+| 256³ | upright | 370.4 | 273.0, 270.4 | 52.8, 52.5 | 150.8, 149.2 | 23.7, 23.3 | 37.1, 36.7 |
+| 128³ | turned | 87.7 | 56.1, 55.9 | 7.9, 8.1 | 35.5, 35.2 | 5.2, 5.1 | 6.1, 6.2 |
+
+- Step 4's SolveVertices, 61 ms at 128³, held the searches and the QEF. They are now SearchPoints and SolveVertices, 38 ms together.
+- Contour went from 10.4 to 6.2 ms at 128³: the split no longer searches for the 1D point of every polygon.
+- The other algorithms in the same session: Uniform 27.2 and 27.6 ms, Adaptive 32.6 and 31.7, Manifold 34.6 and 33.2.
+- A whole remesh in Burst, as in the table below: 12.6 ms at 64³ and 54.9 at 128³, where it was 20.4 and 83.1.
 
 ### GPU remesh (step 4, 2026-11-13)
 

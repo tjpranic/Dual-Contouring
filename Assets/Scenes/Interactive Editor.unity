@@ -362,7 +362,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::Torus
   _combination: 2
-  _materialIndex: 4
+  _materialIndex: 8
 --- !u!1 &780293133
 GameObject:
   m_ObjectHideFlags: 0
@@ -674,7 +674,7 @@ MonoBehaviour:
   edgeSearchIterations: 15
   faceSearchSamples: 4
   faceSearchIterations: 11
-  keepVerticesInCells: 1
+  keepVerticesInCells: 0
   splitQuads: 1
 --- !u!1 &1118812346
 GameObject:

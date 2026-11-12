@@ -211,26 +211,256 @@ public static class BurstOccupancy {
         return middle + ( along * ( scale * ( towardFirst - towardSecond ) * 0.5f ) ) + ( across * ( scale * height ) );
     }
 
+    // the 1D and 2D points of a grid. An edge has up to four cells around it and a face one on either side, which all
+    // place their vertices from the same points, so each point is searched for once and kept here for them. Almost all
+    // edges and faces have none, so the points are kept one after the other, corner by corner:
+    // - a corner has the three edges that start at it and the three faces that have their minimum at it, where the
+    //   grid goes on that far;
+    // - its points are a number for each of those edges the contour crosses, x first, which is how far along the edge
+    //   the contour is, and then two numbers for each line the contour draws across each of those faces, the face at
+    //   right angles to x first, which are the 2D point as positionOnFace takes it;
+    // - starts says where the points of each corner begin.
+    // Where a point is among those of its corner follows from which edges are crossed and how many lines the faces
+    // have, which the materials of the corners tell
+    public struct Points {
+
+        [ReadOnly] public NativeArray<int>   starts;
+        [ReadOnly] public NativeArray<float> values;
+
+        // the 1D point of a crossed edge: how far along the edge from its start the contour is
+        public float alongEdge( in BurstGrid grid, NativeArray<MaterialIndex> materials, int3 start, int axis ) {
+            return this.values[this.starts[grid.cornerIndex( start )] + offsetOf( grid, materials, start, axis, 0 )];
+        }
+
+        // the 2D point of a line across the face at right angles to the axis that has its minimum at the corner. A face
+        // with two lines has first the one that goes through its first edge: the one that starts at the corner and runs
+        // along the axis that follows the face's own
+        public float2 onFace( in BurstGrid grid, NativeArray<MaterialIndex> materials, int3 corner, int axis, int line ) {
+            var at = this.starts[grid.cornerIndex( corner )] + offsetOf( grid, materials, corner, 3, axis ) + ( 2 * line );
+
+            return new float2( this.values[at], this.values[at + 1] );
+        }
+
+    }
+
+    // whether the contour crosses the edge that starts at the corner and runs along the axis, if the grid has it
+    public static bool isCrossed( in BurstGrid grid, NativeArray<MaterialIndex> materials, int3 start, int axis ) {
+        if( start[axis] >= grid.resolution ) {
+            return false;
+        }
+
+        var end = start;
+
+        end[axis] += 1;
+
+        return ( materials[grid.cornerIndex( start )] != MaterialIndex.Void ) != ( materials[grid.cornerIndex( end )] != MaterialIndex.Void );
+    }
+
+    // whether the grid has the face at right angles to the axis that has its minimum at the corner
+    public static bool hasFace( in BurstGrid grid, int3 corner, int axis ) {
+        return corner[( axis + 1 ) % 3] < grid.resolution && corner[( axis + 2 ) % 3] < grid.resolution;
+    }
+
+    // which corners of that face are inside: bit i + 2j for the corner at ( i, j ) along the two axes that follow the
+    // face's own in turn
+    public static int faceCornersOf( in BurstGrid grid, NativeArray<MaterialIndex> materials, int3 corner, int axis ) {
+        var across      = ( axis + 1 ) % 3;
+        var other       = ( axis + 2 ) % 3;
+        var faceCorners = 0;
+
+        for( var faceCorner = 0; faceCorner < 4; ++faceCorner ) {
+            var position = corner;
+
+            position[across] += faceCorner & 1;
+            position[other]  += faceCorner >> 1;
+
+            if( materials[grid.cornerIndex( position )] != MaterialIndex.Void ) {
+                faceCorners |= 1 << faceCorner;
+            }
+        }
+
+        return faceCorners;
+    }
+
+    // how many lines the contour draws across a face with those corners inside: none where they are all alike, two
+    // where the two that are inside lie diagonally across it, and otherwise one
+    public static int linesOf( int faceCorners ) {
+        return faceCorners == 0b0000 || faceCorners == 0b1111 ? 0 : faceCorners == 0b0110 || faceCorners == 0b1001 ? 2 : 1;
+    }
+
+    // how many numbers the points of a corner take up before those of its edge along the axis `edges`, with `faces` 0,
+    // or before those of its face at right angles to the axis `faces`, with `edges` 3. With both 3 that is all of them
+    public static int offsetOf( in BurstGrid grid, NativeArray<MaterialIndex> materials, int3 corner, int edges, int faces ) {
+        var offset = 0;
+
+        for( var axis = 0; axis < edges; ++axis ) {
+            offset += isCrossed( grid, materials, corner, axis ) ? 1 : 0;
+        }
+        for( var axis = 0; axis < faces; ++axis ) {
+            offset += hasFace( grid, corner, axis ) ? 2 * linesOf( faceCornersOf( grid, materials, corner, axis ) ) : 0;
+        }
+
+        return offset;
+    }
+
+    // whether a corner can have points at all. Its edges and faces are those of the cell that has its minimum there,
+    // which the contour passes through or not. A corner at the maximum of the grid has no such cell to tell
+    public static bool mayHavePoints( in BurstGrid grid, NativeArray<byte> solidCorners, int3 corner ) {
+        if( math.any( corner >= grid.resolution ) ) {
+            return true;
+        }
+
+        var solid = solidCorners[grid.cellIndex( corner )];
+
+        return solid != 0 && solid != 255;
+    }
+
+    // the 2D points of the lines across a face of the grid, written to values from the given place on: of its one line,
+    // or of its two, the one through its first edge first. The face has its minimum at the corner and is at
+    // right angles to the axis, and its 1D points are in values already.
+    // - Each point is searched for from the face and the 1D points at the ends of its line alone, the lower numbered
+    //   edge of the grid first.
+    // - Which edges the two lines of a face join is up to the cells on either side of it, which agree on it
+    //   (DualMarchingCubes.lookupEdgeAcrossFace): the one that has its minimum at the corner is asked, or at the maximum
+    //   of the grid the one before it
+    public static unsafe void searchFaceLines(
+        in BurstGrid                      grid,
+        int3                              corner,
+        int                               axis,
+        int                               faceCorners,
+        in Searches                       searches,
+        NativeArray<MaterialIndex>        materials,
+        NativeArray<byte>                 solidCorners,
+        NativeArray<BurstDensityFunction> densityFunctions,
+        NativeArray<int>                  starts,
+        NativeArray<float>                values,
+        int                               at
+    ) {
+        var across = ( axis + 1 ) % 3;
+        var other  = ( axis + 2 ) % 3;
+        var points = new Points { starts = starts, values = values };
+
+        // the four edges of the face, each with its number in the grid: the two along its first axis, at the minimum and
+        // the maximum of its second, then the two along its second axis
+        var numbers = stackalloc int[4];
+        var ends    = stackalloc float2[4];
+        var crossed = stackalloc bool[4];
+
+        for( var edge = 0; edge < 4; ++edge ) {
+            var edgeAxis = edge < 2 ? across : other;
+            var start    = corner;
+
+            if( edge == 1 ) {
+                start[other] += 1;
+            }
+            if( edge == 3 ) {
+                start[across] += 1;
+            }
+
+            numbers[edge] = grid.edgeIndex( start, edgeAxis );
+            crossed[edge] = isCrossed( grid, materials, start, edgeAxis );
+            ends[edge]    = float2.zero;
+
+            if( crossed[edge] ) {
+                var along = points.alongEdge( grid, materials, start, edgeAxis );
+
+                ends[edge] = edge == 0 ? new float2( along, 0.0f ) : edge == 1 ? new float2( along, 1.0f ) : edge == 2 ? new float2( 0.0f, along ) : new float2( 1.0f, along );
+            }
+        }
+
+        // the edges at the ends of each line
+        var from = new int2( -1, -1 );
+        var to   = new int2( -1, -1 );
+
+        if( linesOf( faceCorners ) == 1 ) {
+            for( var edge = 0; edge < 4; ++edge ) {
+                if( crossed[edge] ) {
+                    if( from[0] < 0 ) {
+                        from[0] = edge;
+                    }
+                    else {
+                        to[0] = edge;
+                    }
+                }
+            }
+        }
+        else {
+            var cell = corner;
+            var side = 0;
+
+            if( cell[axis] >= grid.resolution ) {
+                cell[axis] -= 1;
+                side        = 1;
+            }
+
+            var lookup = BurstCells.vertexLookupOf( grid, solidCorners, grid.cellIndex( cell ) );
+            var joined = -1;
+
+            for( var edge = 0; edge < SurfaceExtractor.Voxel.EdgeCount; ++edge ) {
+                if( grid.edgeOfCell( cell, edge ) != numbers[0] ) {
+                    continue;
+                }
+
+                for( var edgeSide = 0; edgeSide < 2; ++edgeSide ) {
+                    var face = BurstTables.lookupEdgeFace( edge, edgeSide );
+
+                    if( BurstTables.lookupFaceAxis( face ) == axis && BurstTables.lookupFaceSide( face ) == side ) {
+                        joined = grid.edgeOfCell( cell, BurstTables.lookupEdgeAcrossFace( lookup, edge, edgeSide ) );
+                    }
+                }
+            }
+
+            // a line cuts a corner off the face, so the first edge is joined to one of the two along the other axis,
+            // and the edge across from it to the other
+            var withFirst = joined == numbers[2] ? 2 : 3;
+
+            from = new int2( 0, 1 );
+            to   = new int2( withFirst, 5 - withFirst );
+        }
+
+        for( var line = 0; line < 2; ++line ) {
+            if( from[line] < 0 ) {
+                continue;
+            }
+
+            var ordered = numbers[from[line]] < numbers[to[line]];
+
+            var point = searchFace(
+                grid,
+                corner,
+                axis,
+                ordered ? ends[from[line]] : ends[to[line]],
+                ordered ? ends[to[line]]   : ends[from[line]],
+                faceCorners,
+                searches.faceSamples,
+                searches.faceIterations,
+                densityFunctions
+            );
+
+            values[at + ( 2 * line )]     = point.x;
+            values[at + ( 2 * line ) + 1] = point.y;
+        }
+    }
+
     // section 5.3, for one vertex of a cell: the 1D points of the edges of its piece of the contour, in the order they
     // follow each other around the piece, and at each the normal of the plane through that point and the two 2D points
     // next to it, on the two faces of the cell that the edge lies in. The normal points from the solid end of the edge
     // to the empty one. It is zero where the three points lie on a line and there is no plane.
     // - solid are the solid corners of the cell and lookup what it looks its vertices up with (BurstCells.vertexLookupOf).
+    // - found are the 1D and 2D points of the grid, which every cell around an edge or a face reads alike.
     // - edges, points and normals have room for the twelve edges of a cell. The points are in voxelizer object space.
-    // Each 2D point is searched for from the face and its two 1D points alone, the lower numbered edge of the grid
-    // first, so the cell on the other side of the face finds the same one. Returns how many edges the piece has
+    // Returns how many edges the piece has
     public static unsafe int planesOf(
-        in BurstGrid                      grid,
-        int3                              cell,
-        int                               solid,
-        int                               lookup,
-        int                               vertex,
-        in Searches                       searches,
-        NativeArray<MaterialIndex>        materials,
-        NativeArray<BurstDensityFunction> densityFunctions,
-        int*                              edges,
-        float3*                           points,
-        float3*                           normals
+        in BurstGrid               grid,
+        int3                       cell,
+        int                        solid,
+        int                        lookup,
+        int                        vertex,
+        in Points                  found,
+        NativeArray<MaterialIndex> materials,
+        int*                       edges,
+        float3*                    points,
+        float3*                    normals
     ) {
         const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
 
@@ -258,7 +488,7 @@ public static class BurstOccupancy {
             var start        = grid.cornerOfCell( cell, startCorner );
             var startIsSolid = ( solid & ( 1 << startCorner ) ) != 0;
 
-            var along = searchEdge( grid, start, axis, startIsSolid, densityFunctions, searches.edgeIterations );
+            var along = found.alongEdge( grid, materials, start, axis );
 
             edges[count]  = edge;
             points[count] = positionOnEdge( grid, start, axis, along );
@@ -288,25 +518,16 @@ public static class BurstOccupancy {
 
             corner[axis] += BurstTables.lookupFaceSide( faces[index] );
 
-            var faceCorners = 0;
+            // of the two lines of a face, the first is the one through the face's first edge (Points.onFace)
+            var line = 0;
 
-            for( var faceCorner = 0; faceCorner < 4; ++faceCorner ) {
-                var position = corner;
+            if( linesOf( faceCornersOf( grid, materials, corner, axis ) ) == 2 ) {
+                var firstEdge = grid.edgeIndex( corner, across );
 
-                position[across] += faceCorner & 1;
-                position[other]  += faceCorner >> 1;
-
-                if( materials[grid.cornerIndex( position )] != MaterialIndex.Void ) {
-                    faceCorners |= 1 << faceCorner;
-                }
+                line = grid.edgeOfCell( cell, edges[index] ) == firstEdge || grid.edgeOfCell( cell, edges[next] ) == firstEdge ? 0 : 1;
             }
 
-            var from = new float2( local[index][across], local[index][other] );
-            var to   = new float2( local[next][across],  local[next][other] );
-
-            var ordered = grid.edgeOfCell( cell, edges[index] ) < grid.edgeOfCell( cell, edges[next] );
-
-            var point = searchFace( grid, corner, axis, ordered ? from : to, ordered ? to : from, faceCorners, searches.faceSamples, searches.faceIterations, densityFunctions );
+            var point = found.onFace( grid, materials, corner, axis, line );
 
             facePoints[index] = float3.zero;
 
