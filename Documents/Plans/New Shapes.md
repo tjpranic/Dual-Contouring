@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding seven shapes from https://iquilezles.org/articles/distfunctions/ to every implementation and to the interactive editor: Cylinder, Cone, Capsule, Torus, Pyramid, Octahedron and Hexagonal Prism.
 
-**Status:** step 3 done 2026-11-12, waiting for review and for the user's decision on the GPU's cost (finding 11). The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included. Steps 1 and 2 followed the same day. The user accepted the cost of step 2: Burst contours of cuboids and ellipsoids are 8 to 15% slower (finding 10).
+**Status:** complete. Steps 0 to 5 were done on 2026-11-12, and the user accepted the work as complete the same day ("We can consider this completed"). The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included. Steps 1 and 2 followed the same day. The user accepted the cost of step 2: Burst contours of cuboids and ellipsoids are 8 to 15% slower (finding 10). Step 3 followed, and the user accepted its cost too: GPU remeshes of them are 11% slower (finding 11).
 
 ## Goal
 
@@ -38,7 +38,7 @@ The seven shapes can be added like Cuboid and Ellipsoid: as volumes in a scene, 
    - `InteractiveEditorTest.aTurnedShapeIsOutsideTheGridAsFarAsItReaches` builds an Ellipsoid for every type but Cuboid, so it is changed to build the shape it is given.
 6. **On the GPU, more cases in the shader's switch may change Cuboid and Ellipsoid in the last bits.** That happened when rotation was added (finding 7 of Shape Rotation): the compiler arranges float operations as it sees fit. The `Start` hashes show whether it happens; if so, the size is measured and the user decides, as last time.
 7. **The editor's added size suits five of the shapes.** A cube of half the grid gives a torus with no hole and a capsule that is a ball, so those two are added at sizes of their own.
-8. **It is not known whether Shapes' drawing can be clicked.** Unity selects an object from a click on its gizmo when the gizmo is drawn with `Gizmos`. Shapes draws with `Graphics.DrawMeshNow` when it is used inside a gizmo callback, and whether Unity's picking sees that is not known.
+8. **It is not known whether Shapes' drawing can be clicked.** Unity selects an object from a click on its gizmo when the gizmo is drawn with `Gizmos`. Shapes draws with `Graphics.DrawMeshNow` when it is used inside a gizmo callback, and whether Unity's picking sees that is not known. **Answered in step 4: it does not.** Unity's picking sees `Gizmos` lines even with no colour, so the outlines are drawn both ways.
 9. **How close dual contouring puts vertices to the new shapes.** Found in step 1, at 16³ with the SVD solver, from the worst vertices of `ShapeContourTest`. Three things take vertices off a shape; the shapes themselves are exact.
    - **Curved surfaces.** A vertex goes where the tangent planes of its cell's intersections come closest. On a curved surface that is off the surface by up to the sag across the cell's diagonal, `3h²/8R` for cells of size `h` and a radius of curvature `R`.
      - Capsule: up to 0.0099 off, against a sag of 0.0098.
@@ -72,6 +72,7 @@ The seven shapes can be added like Cuboid and Ellipsoid: as volumes in a scene, 
     - **How it was measured:** the shader as committed and the new one were timed alternately in one session. A probe checked which one ran: the old shader samples a cylinder as 0, which gives no surface.
     - **Not looked into:** the cause. The likely one is that a kernel takes as many registers as its largest path needs, so with the new shapes fewer threads run at once, whatever shapes are contoured.
     - **Output unchanged:** unlike rotation (finding 7 of Shape Rotation), the GPU's meshes of cuboids and ellipsoids come out bit for bit as before.
+    - **Decision:** the user accepted the cost on 2026-11-12.
 
 ## Design
 
@@ -110,13 +111,13 @@ Each shape is centred on its origin, with its axis along its own `y`, and fills 
 
 ### Interactive editor
 
-- **Buttons:** a row of three per line, under "Add", one for each of the nine types, named as the types read ("Hexagonal Prism"). A new shape's object is named after its type, as today.
+- **Buttons:** a row of three per line, under "Add", one for each of the nine types, named as the types read ("Hexagonal Prism"). A new shape's object is named after its type, as today. As built, the buttons are a `GUILayout.SelectionGrid`, so that all nine are as wide, and the shape list names types the same way.
 - **Sizes added at:** half the grid across, as today, except the capsule (a quarter of the grid across and half of it high) and the torus (half of the grid across, a fifth of it high).
 - **Outlines** are drawn with the Shapes library, for all nine types, in the colours and opacities of today:
   - Cuboid and pyramid: their edges.
   - Ellipsoid: its three principal ellipses.
   - Cylinder, cone and capsule: the rims of their caps or base, and lines along their sides; the capsule's caps as arcs.
-  - Torus: its inner, outer, top and bottom circles.
+  - Torus: its inner, outer, top and bottom circles, and, added in step 4, four cuts through its tube, so that it reads as a torus from any side.
   - Octahedron and hexagonal prism: their edges.
 
   The lines are worked out in the shape's frame by one function, which the tests check, and drawn in pixels, like the debug view.
@@ -218,10 +219,71 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - the pyramid's normals on the GPU;
      - the GPU's closed surface.
    - **Finding 6 did not happen:** the 32 GPU lines of the `Start` hashes are identical to step 0, and so are the rest.
-   - **Speed:** the GPU's remeshes of cuboids and ellipsoids take 11% longer (finding 11). Whether to accept it is for the user.
+   - **Speed:** the GPU's remeshes of cuboids and ellipsoids take 11% longer (finding 11). The user accepted it on 2026-11-12, rather than compiling the shader with and without the new shapes.
    - **Verification:** edit mode 1332 of 1332, play mode 21 of 21, the 416 `Start` hashes identical to step 0.
-4. **Interactive editor (medium).** The picking check first, then the outline function and Shapes drawing, buttons, sizes, warnings and their tests. A look at the outlines in the scene view.
-5. **Documentation (small).** README: the shapes and how each is made from its box; this plan marked complete.
+4. **Interactive editor (medium).** The picking check first, then the outline function and Shapes drawing, buttons, sizes, warnings and their tests. A look at the outlines in the scene view. **Done 2026-11-12:**
+   - **The picking check (finding 8):**
+     - **How:** a temporary scene, never saved, held an editor with one subtracted cylinder, far from the open scene. `HandleUtility.PickGameObject` picked at three points from the scene view:
+       - on the cylinder's outline;
+       - on the grid box, which `Gizmos` draws;
+       - at nothing.
+     - **Result:** the grid box gave its editor and nothing gave nothing, but the outline drawn with Shapes was not picked.
+     - **Fallback:** with the outline's lines also given to `Gizmos.DrawLineList` in a colour of no opacity, the outline picked its cylinder.
+     - The scene was closed again and the scene view put back.
+   - **Outlines:** `InteractiveEditorGizmos.outlineOf( type, extents )` gives the lines of each of the nine outlines in the shape's frame, made from its extents as the shape is. `[DrawGizmo]` methods for the nine components draw them with Shapes, 2 pixels wide, in the colours of before, and with `Gizmos` without colour for clicking.
+   - **The editor:**
+     - **Buttons:** nine Add buttons in a grid of three by three.
+     - **Sizes:** `InteractiveEditor.addedScaleOf( type )` adds the capsule at (0.25, 0.5, 0.25) and the torus at (0.5, 0.2, 0.5) of the grid, every other shape at half the grid.
+     - **Names:** `InteractiveEditor.nameOf( type )` names types with spaces, for the buttons, the shape list, the undo step and the warning. It is written out rather than using `ObjectNames`, because the warnings are not editor-only code.
+     - **The new warning:** "{name} is not as wide along x as along z. A cylinder is round across, so it is contoured as wide as the narrower of the two, as its outline shows. Scale it the same along x and z." It is for the cylinder, cone, capsule and torus, and the pyramid is "square across". Widths within `Mathf.Approximately` of each other count as the same.
+   - **New and changed tests:**
+     - `everyLineOfAnOutlineEndsOnTheShape`, for all nine types in four boxes: every line ends on the shape, within its box.
+     - `theOutlineOfAShapeWithFlatFacesIsItsEdges`: as many lines as edges, each on the shape from end to end.
+     - `atScaleOneTheContourOfTheNewShapesIsThatOfTheVolumes`: for all seven variants, the editor contours the seven new shapes, turned, as their volumes do.
+     - `aRoundOrSquareShapeOfTwoWidthsIsWarnedAbout`, both ways, and none once the widths agree; `otherShapesOfTwoWidthsAreFine` for the cuboid, ellipsoid, octahedron and hexagonal prism.
+     - `addShapeAddsAUnionOfMaterialZeroAtTheCentre` for every type, with its component and size. `aShapeIsAddedAtASizeThatShowsWhatItIs`: the capsule has a straight part, the torus a hole, and none of the nine is warned about but for materials.
+     - `aTurnedShapeIsOutsideTheGridAsFarAsItReaches` now turns a bar that is long along its own y. Before, it was long along x, which the new warning rightly named for the round shapes.
+   - **The tests catch mistakes.** These three were put in together and failed four tests:
+     - the torus' top and bottom circles at its outer radius failed the outline test;
+     - the torus left out of the warning failed both of its warning tests;
+     - the capsule added as a cube failed its size test.
+   - **Looked at:** the nine outlines from two heights, and the inspector, in a temporary scene that was closed again (the inspector of the user's scene was too long to show the buttons). Outlines and buttons look right.
+     - From a height level with the shapes' tops, a top shows as a line, as it should.
+     - The first build of the buttons gave them the widths of their names, which the grid fixed.
+   - **Verification:** edit mode 1382 of 1382, play mode 21 of 21, the 416 `Start` hashes identical to step 0, no scene changed.
+   - **After review, 2026-11-12:**
+     - **Outline thickness:** the user set the outlines to 1 pixel, then asked for the thickness to be an option. `InteractiveEditor.outlineThickness`, shown as "Outline Thickness" under Debounce, is in pixels, at least 0.5, and 1 unless set. It is not in the signature, so changing it does not contour (`theSignatureStaysTheSameWith`).
+     - **Overlaps:** the user noticed the half opaque outlines are brighter wherever two of their lines overlap: at every joint along a circle, where edges meet, and where two outlines cross. Shapes blends each line by itself.
+       - **The options:**
+         - opaque outlines, dimmed by colour rather than opacity;
+         - each circle and arc as one Shapes polyline, which would leave corners and crossings;
+         - the stencil buffer, to blend each outline once per pixel.
+       - **The user chose the first.** `InteractiveEditorGizmos.colourOf( combination, selected )` gives opaque colours, and dims a shape that is not selected half way to the grey of the scene view's ground (0.35). That is about how it looked half opaque over the ground.
+       - **Checked:** a capture of the user's scene view shows no brighter spots any more, along lines or where outlines cross. `outlinesAreOpaqueAndDimmerUnlessSelected` (3) holds the colours to that.
+       - **Not changed:** where a subtracted shape's outline lies exactly on the surface it carves, the line flickers against the mesh, which is at the same depth.
+     - **On top:** the user asked for the outlines to be drawn over the scene's geometry instead of being cut by it. They are drawn with `ZTest Always` now, which also ends the flicker above. A capture of the user's scene view shows every outline over the mesh.
+     - **Clicking an outline over the mesh:** a click there picks the contour, not the shape. Unity picks by depth, and the contour is in front of the outline's `Gizmos` lines.
+       - **`HandleUtility.pickGameObjectCustomPasses` does not help.**
+         - **Tried:** in a temporary scene, a pass found the cylinder's outline under the click. Unity gives the click in the camera's pixels from its bottom left.
+         - **Result:** Unity still returned the contour in front, so a pass cannot overrule a renderer nearer the camera.
+         - The pass was taken out again.
+       - **What would:** a handler of the scene view's clicks that registers the outlines as controls (`HandleUtility.AddControl` on Layout, select on MouseDown). It is left for the user to decide.
+       - Where nothing is in front of an outline, a click picks its shape as before.
+     - **At their depth, without the contour cutting them:** the user then asked for outlines at their proper depth without lines broken by the contour, and drawing on top as a setting.
+       - **The cause of the breaks:** the contour is only near the shapes, a fraction of a cell inside or outside them (finding 9), so it cuts through outlines wherever they lie on it.
+       - **The fix:** every point of an outline is drawn half a cell of the selected voxelizer's grid nearer the camera, along its line of sight. That leaves it where it was on the screen. `InteractiveEditorGizmos.nearerTheCamera` does it, and `InteractiveEditor.cellSize` gives the cell, scaled by the editor's largest scale.
+       - **Clicking:** the `Gizmos` lines for clicking are moved too, so a click on an outline that lies on the contour picks the shape.
+       - **The setting:** "Outlines On Top" (`InteractiveEditor.outlinesOnTop`), off unless set, draws outlines over everything instead, without the move. It is not in the signature.
+       - **New tests:**
+         - `anOutlineDrawnNearerTheCameraStaysWhereItIsOnTheScreen` checks with a Unity camera of each kind that a moved point is as far as asked from where it was, on the same pixel, and nearer;
+         - `theCellSizeIsThatOfTheSelectedGrid` for each algorithm, which also checks that the setting starts off;
+         - "outlines on top" among the changes the signature ignores.
+       - **Checked:** a capture of the user's scene view shows the outlines on the capsule and the ball whole, and hidden where the mesh is in front of them.
+5. **Documentation (small).** README: the shapes and how each is made from its box; this plan marked complete. **Done 2026-11-12:**
+   - **A "Shapes" section** with a table of the nine volumes and how each is made from its box. It also says that round and square shapes take the smaller of x and z, that the new shapes are exact distances from Inigo Quilez's article with the pyramid corrected and the octahedron made exact for any box, and what the new shapes cost Burst and the GPU over cuboids and ellipsoids.
+   - **The Burst figure** at 128³ is 28 to 33 ms now.
+   - **The interactive editor section:** the Add buttons, the warning about x and z, and the outlines' colours, thickness, depth and "Outlines On Top" setting, with the click that setting cannot make.
+   - **The code layout** names the volume components and `DensityFunction.sample`.
 
 ## Measurements
 

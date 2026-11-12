@@ -104,17 +104,48 @@ public class InteractiveEditorAuthoringTest {
         Undo.RevertAllDownToGroup( group );
     }
 
+    // half the grid across, except the capsule and the torus, which at that size would be a ball and a torus without a
+    // hole
     [Test]
-    public void addShapeAddsAUnionOfMaterialZeroAtTheCentre( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.Ellipsoid )] DensityFunction.Type type ) {
+    public void aShapeIsAddedAtASizeThatShowsWhatItIs( [Values] DensityFunction.Type type ) {
+        var volume = this.editor.addShape( type );
+
+        Assert.IsTrue( this.editor.tryGetShape( volume, out var shape ), "it is contoured" );
+
+        switch( type ) {
+            case DensityFunction.Type.Capsule: {
+                // longer than it is wide, so it has a straight part
+                Assert.Greater( shape.extents.y, shape.extents.x );
+                break;
+            }
+            case DensityFunction.Type.Torus: {
+                // the middle is outside it
+                Assert.Greater( DensityFunction.sample( type, Vector3.zero, shape.extents ), 0.0f );
+                break;
+            }
+            default: {
+                Assert.AreEqual( Vector3.one * InteractiveEditor.addedShapeScale, volume.transform.localScale );
+                break;
+            }
+        }
+
+        var warnings = this.editor.warnings( ).Where( ( warning ) => warning.Contains( volume.name ) && !warning.Contains( "material" ) ).ToArray( );
+
+        CollectionAssert.IsEmpty( warnings, "warnings about anything other than materials" );
+    }
+
+    [Test]
+    public void addShapeAddsAUnionOfMaterialZeroAtTheCentre( [Values] DensityFunction.Type type ) {
         this.addShape( "First" );
 
         var volume = this.editor.addShape( type );
 
-        Assert.AreEqual( type,                     volume.type );
-        Assert.AreEqual( type.ToString( ),         volume.name );
-        Assert.AreSame ( this.editor.transform,    volume.transform.parent );
-        Assert.AreEqual( Vector3.zero,             volume.transform.localPosition );
-        Assert.AreEqual( Vector3.one * 0.5f,       volume.transform.localScale );
+        Assert.AreEqual    ( type,                                    volume.type );
+        Assert.IsInstanceOf( Volume.componentOf( type ),              volume );
+        Assert.AreEqual    ( type.ToString( ),                        volume.name );
+        Assert.AreSame     ( this.editor.transform,                   volume.transform.parent );
+        Assert.AreEqual    ( Vector3.zero,                            volume.transform.localPosition );
+        Assert.AreEqual    ( InteractiveEditor.addedScaleOf( type ),  volume.transform.localScale );
         Assert.AreEqual( Combination.Union,        volume.combination );
         Assert.AreEqual( MaterialIndex.Material0,  volume.materialIndex );
         Assert.IsTrue  ( this.editor.tryGetShape( volume, out _ ), "it is contoured" );

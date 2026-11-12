@@ -465,6 +465,170 @@ public class InteractiveEditorTest {
         }
     }
 
+    // the shapes of the article other than the box and the ellipsoid, each turned, placed much as in TopologyTest.newShapes
+    private static void addNewShapes( Transform parent ) {
+        void add( System.Type component, Vector3 position, Vector3 rotation, Vector3 scale, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) {
+            addShape( component, parent, position, scale, combination, materialIndex ).transform.localRotation = Quaternion.Euler( rotation );
+        }
+
+        add( typeof( Cylinder ),       new Vector3( -0.2f,  0.15f,  0.0f  ), new Vector3( 20.0f,  0.0f,  30.0f  ), new Vector3( 0.24f, 0.36f, 0.24f ) );
+        add( typeof( Cone ),           new Vector3(  0.2f,  0.15f,  0.05f ), new Vector3( -30.0f, 40.0f, 10.0f  ), new Vector3( 0.28f, 0.36f, 0.28f ) );
+        add( typeof( Torus ),          new Vector3(  0.0f,  0.1f,   0.0f  ), new Vector3( 70.0f,  10.0f, 0.0f   ), new Vector3( 0.64f, 0.16f, 0.64f ), Combination.Union, MaterialIndex.Material1 );
+        add( typeof( Capsule ),        new Vector3(  0.0f, -0.22f, -0.15f ), new Vector3( 0.0f,   45.0f, 80.0f  ), new Vector3( 0.2f,  0.44f, 0.2f  ) );
+        add( typeof( Octahedron ),     new Vector3(  0.05f, -0.22f, -0.15f ), new Vector3( 10.0f,  20.0f, 30.0f  ), new Vector3( 0.2f,  0.2f,  0.2f  ), Combination.Subtraction );
+        add( typeof( Pyramid ),        new Vector3( -0.22f, -0.2f,   0.2f  ), new Vector3( 0.0f,   30.0f, 15.0f  ), new Vector3( 0.26f, 0.24f, 0.26f ) );
+        add( typeof( HexagonalPrism ), new Vector3(  0.22f, -0.2f,   0.22f ), new Vector3( 40.0f,  0.0f,  -20.0f ), new Vector3( 0.26f, 0.2f,  0.24f ) );
+    }
+
+    // and with every other type of shape
+    [Test]
+    public void atScaleOneTheContourOfTheNewShapesIsThatOfTheVolumes( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = configure( this.createEditor( ), variant );
+
+        addNewShapes( editor.transform );
+
+        editor.contour( );
+
+        var mesh = Object.Instantiate( shown( editor ) );
+
+        try {
+            Assert.Greater( mesh.vertexCount, 0, "the mesh is empty" );
+
+            editor.voxelizer.contour( drawFromGPU: false );
+
+            MeshComparison.assertSameTriangles( shown( editor ), mesh );
+        }
+        finally {
+            Object.DestroyImmediate( mesh );
+        }
+    }
+
+    // even boxes and uneven ones, wider than high and higher than wide
+    private static readonly Vector3[] outlineBoxes = {
+        new( 0.25f, 0.25f, 0.25f ),
+        new( 0.3f,  0.1f,  0.3f  ),
+        new( 0.15f, 0.4f,  0.35f ),
+        new( 0.4f,  0.2f,  0.12f )
+    };
+
+    // an outline is drawn where the shape is: every line of it begins and ends on the shape, and stays in its box
+    [Test]
+    public void everyLineOfAnOutlineEndsOnTheShape( [Values] DensityFunction.Type type ) {
+        foreach( var extents in outlineBoxes ) {
+            var lines = InteractiveEditorGizmos.outlineOf( type, extents );
+
+            Assert.Greater( lines.Count, 0, $"lines in the box of {extents}" );
+
+            foreach( var point in lines.SelectMany( ( line ) => new[] { line.start, line.end } ) ) {
+                Assert.That( Mathf.Abs( DensityFunction.sample( type, point, extents ) ), Is.LessThanOrEqualTo( 2e-6f ), $"density at {point:F4}, in the box of {extents}" );
+                Assert.That( point.absolute( ), Is.EqualTo( Vector3.Min( point.absolute( ), extents * 1.000001f ) ), $"{point:F4} lies outside the box of {extents}" );
+            }
+        }
+    }
+
+    // an outline drawn nearer the camera, so that the contour does not cut through it, shows where it would on the screen,
+    // in front of where it is. Seen by a camera of each kind, at points ahead of it and off to the side
+    [Test]
+    public void anOutlineDrawnNearerTheCameraStaysWhereItIsOnTheScreen( [Values] bool orthographic ) {
+        var gameObject = new GameObject( "Camera" ) { hideFlags = HideFlags.HideAndDontSave };
+        this.created.Add( gameObject );
+
+        var camera = gameObject.AddComponent<Camera>( );
+
+        camera.orthographic       = orthographic;
+        camera.transform.position = new Vector3( 1.0f, 2.0f, -3.0f );
+        camera.transform.rotation = Quaternion.Euler( 20.0f, -15.0f, 0.0f );
+
+        var points = new[] { new Vector3( 0.0f, 0.5f, 1.0f ), new Vector3( 1.5f, -0.5f, 2.0f ), new Vector3( -2.0f, 1.0f, 4.0f ) };
+
+        foreach( var point in points ) {
+            var moved  = InteractiveEditorGizmos.nearerTheCamera( point, camera.transform.position, camera.transform.forward, orthographic, 0.05f );
+            var before = camera.WorldToScreenPoint( point );
+            var after  = camera.WorldToScreenPoint( moved );
+
+            Assert.AreEqual( 0.05f, Vector3.Distance( point, moved ), 1e-5f, $"how far {point} moved" );
+            Assert.AreEqual( before.x, after.x, 1e-2f, $"where {point} shows across" );
+            Assert.AreEqual( before.y, after.y, 1e-2f, $"where {point} shows up" );
+            Assert.Less( after.z, before.z, $"{point} is nearer the camera" );
+        }
+    }
+
+    // outlines are moved nearer the camera by half a cell of the selected voxelizer's grid, unless they are drawn over
+    // everything, which they are not unless set to be
+    [Test]
+    public void theCellSizeIsThatOfTheSelectedGrid( [Values] Algorithm algorithm ) {
+        var editor = this.createEditor( );
+
+        Assert.IsFalse( editor.outlinesOnTop, "outlines on top" );
+
+        editor.select( algorithm );
+        editor.voxelizer.resolution = algorithm == Algorithm.Uniform ? 5 : 6;
+
+        // 32 cells across, or 32 leaves
+        Assert.AreEqual( 1.0f / 32.0f, editor.cellSize );
+    }
+
+    // outlines are opaque, so that where two lines of one overlap they show no brighter, and those of shapes that are not
+    // selected are dimmer
+    [Test]
+    public void outlinesAreOpaqueAndDimmerUnlessSelected( [Values] Combination combination ) {
+        var selected = InteractiveEditorGizmos.colourOf( combination, true );
+        var dimmed   = InteractiveEditorGizmos.colourOf( combination, false );
+
+        Assert.AreEqual( 1.0f, selected.a, "selected" );
+        Assert.AreEqual( 1.0f, dimmed.a,   "not selected" );
+        Assert.Less( dimmed.grayscale, selected.grayscale, "not selected is dimmer" );
+    }
+
+    // the outline of a shape with flat faces is its edges: as many lines as it has, each ending in two of its corners
+    [Test]
+    public void theOutlineOfAShapeWithFlatFacesIsItsEdges( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron, DensityFunction.Type.HexagonalPrism )] DensityFunction.Type type ) {
+        var extents = new Vector3( 0.3f, 0.2f, 0.25f );
+        var edges   = InteractiveEditorGizmos.outlineOf( type, extents );
+
+        var expected = type switch {
+            DensityFunction.Type.Cuboid     => 12,
+            DensityFunction.Type.Pyramid    => 8,
+            DensityFunction.Type.Octahedron => 12,
+            _                               => 18
+        };
+
+        Assert.AreEqual( expected, edges.Count );
+
+        // the middle of every edge is on the shape too, as a straight edge is
+        foreach( var ( start, end ) in edges ) {
+            Assert.That( Mathf.Abs( DensityFunction.sample( type, ( start + end ) / 2.0f, extents ) ), Is.LessThanOrEqualTo( 2e-6f ), $"the middle of the edge from {start:F4} to {end:F4}" );
+        }
+    }
+
+    // a cylinder, cone, capsule, torus or pyramid is as wide along x as along z, and is contoured as wide as the narrower
+    [Test]
+    public void aRoundOrSquareShapeOfTwoWidthsIsWarnedAbout( [ValueSource( typeof( ShapeDistanceTest ), nameof( ShapeDistanceTest.roundOrSquare ) )] DensityFunction.Type type, [Values] bool widerAlongX ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+
+        var volume = addShape( Volume.componentOf( type ), editor.transform, Vector3.zero, widerAlongX ? new Vector3( 0.6f, 0.4f, 0.3f ) : new Vector3( 0.3f, 0.4f, 0.6f ) );
+
+        assertOneWarningAbout( editor, volume.name, "narrower" );
+
+        volume.transform.localScale = new Vector3( 0.3f, 0.4f, 0.3f );
+
+        CollectionAssert.IsEmpty( editor.warnings( ), "as wide one way as the other" );
+    }
+
+    // the others take both widths as they are, and the hexagonal prism is the largest regular one in any box
+    [Test]
+    public void otherShapesOfTwoWidthsAreFine( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.Ellipsoid, DensityFunction.Type.Octahedron, DensityFunction.Type.HexagonalPrism )] DensityFunction.Type type ) {
+        var editor = this.createEditor( );
+
+        this.giveMaterials( editor, 1 );
+
+        addShape( Volume.componentOf( type ), editor.transform, Vector3.zero, new Vector3( 0.6f, 0.4f, 0.3f ) );
+
+        CollectionAssert.IsEmpty( editor.warnings( ) );
+    }
+
     // a cube turned a quarter of a right angle about the vertical reaches out to its corners, half its diagonal, along
     // the two other axes. Its vertices go onto those corners, to within a binary search of a cell. It sits off the grid
     // planes, so that its top and bottom faces do not lie on them
@@ -723,6 +887,8 @@ public class InteractiveEditorTest {
         ["editor scale"]                 = ( null, ( p ) => p.editor.transform.localScale    = Vector3.one * 2.0f ),
         ["the same turn, negated"]       = ( ( p ) => p.shape.transform.localRotation = Quaternion.Euler( 0.0f, 45.0f, 0.0f ), ( p ) => { var q = p.shape.transform.localRotation; p.shape.transform.localRotation = new Quaternion( -q.x, -q.y, -q.z, -q.w ); } ),
         ["debounce"]                     = ( null, ( p ) => p.editor.debounce = 1.0f ),
+        ["outline thickness"]            = ( null, ( p ) => p.editor.outlineThickness = 6.0f ),
+        ["outlines on top"]              = ( null, ( p ) => p.editor.outlinesOnTop    = true ),
         ["debug colour"]                 = ( null, ( p ) => p.editor.voxelizer.debugEdgeColor     = Color.magenta ),
         ["debug line thickness"]         = ( null, ( p ) => p.editor.voxelizer.debugLineThickness = 4.0f ),
         ["renderer materials"]           = ( null, ( p ) => p.editor.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[3] ),
@@ -1082,22 +1248,23 @@ public class InteractiveEditorTest {
         Assert.That( Quaternion.Dot( shape.rotation, shape.rotation ), Is.EqualTo( 1.0f ).Within( 1e-5f ), "the rotation is not a rotation" );
     }
 
-    // a long box lying across below the grid is outside it, the same box turned upright reaches into it
+    // a long box lying across below the grid is outside it, the same box turned upright reaches into it. It is long along
+    // its own y, so that it is as wide along x as along z, as round shapes are
     [Test]
     public void aTurnedShapeIsOutsideTheGridAsFarAsItReaches( [Values] DensityFunction.Type type ) {
         var editor = this.createEditor( );
 
         this.giveMaterials( editor, 1 );
 
-        var volume = addShape( Volume.componentOf( type ), editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) );
+        var volume = addShape( Volume.componentOf( type ), editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 0.1f, 1.2f, 0.1f ) );
 
         volume.name = "Bar";
 
-        volume.transform.localRotation = Quaternion.Euler( 90.0f, 0.0f, 0.0f );
+        volume.transform.localRotation = Quaternion.Euler( 0.0f, 0.0f, 90.0f );
 
         assertOneWarningAbout( editor, "Bar", "outside the grid" );
 
-        volume.transform.localRotation = Quaternion.Euler( 0.0f, 0.0f, 90.0f );
+        volume.transform.localRotation = Quaternion.Euler( 0.0f, 90.0f, 0.0f );
 
         CollectionAssert.IsEmpty( editor.warnings( ), "turned upright" );
     }

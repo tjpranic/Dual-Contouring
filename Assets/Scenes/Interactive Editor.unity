@@ -271,6 +271,98 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 289504059}
   m_CullTransparentMesh: 1
+--- !u!1 &620536404
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 620536405}
+  - component: {fileID: 620536406}
+  m_Layer: 0
+  m_Name: Capsule
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &620536405
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 620536404}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0.27059805, y: -0.27059805, z: -0.6532815, w: 0.6532815}
+  m_LocalPosition: {x: -0.2, y: 0, z: -0.2}
+  m_LocalScale: {x: 0.25, y: 0.5, z: 0.25}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 954588973}
+  m_LocalEulerAnglesHint: {x: 0, y: -45, z: -90}
+--- !u!114 &620536406
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 620536404}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b58dbe149a2414a5cb9c0c1f068a759b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: GameAssembly::Capsule
+  _combination: 0
+  _materialIndex: 8
+--- !u!1 &764180940
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 764180941}
+  - component: {fileID: 764180942}
+  m_Layer: 0
+  m_Name: Torus
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &764180941
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 764180940}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0.6532815, y: 0.27059805, z: 0.27059805, w: 0.6532815}
+  m_LocalPosition: {x: -0.28, y: 0, z: -0.28}
+  m_LocalScale: {x: 0.3, y: 0.05, z: 0.3}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 954588973}
+  m_LocalEulerAnglesHint: {x: -90, y: 0, z: 45}
+--- !u!114 &764180942
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 764180940}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97ecfe6ab811f47d89ee3d8050d844c7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: GameAssembly::Torus
+  _combination: 2
+  _materialIndex: 4
 --- !u!1 &780293133
 GameObject:
   m_ObjectHideFlags: 0
@@ -353,6 +445,8 @@ MonoBehaviour:
   m_EditorClassIdentifier: GameAssembly::InteractiveEditor
   _algorithm: 0
   _debounce: 0.1
+  _outlineThickness: 1
+  _outlinesOnTop: 0
 --- !u!114 &954588968
 MonoBehaviour:
   m_ObjectHideFlags: 2
@@ -538,6 +632,8 @@ Transform:
   - {fileID: 1118812347}
   - {fileID: 1471405977}
   - {fileID: 780293134}
+  - {fileID: 620536405}
+  - {fileID: 764180941}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1118812346

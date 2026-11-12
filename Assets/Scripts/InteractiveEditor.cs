@@ -73,6 +73,25 @@ public class InteractiveEditor : MonoBehaviour {
         set { this._debounce = value; }
     }
 
+    [SerializeField( ), Min( 0.5f ), Tooltip( "How thick the outlines of the shapes are in the scene view, in pixels" )]
+    private float _outlineThickness = 1.0f;
+    public float outlineThickness {
+        get { return this._outlineThickness;  }
+        set { this._outlineThickness = value; }
+    }
+
+    [SerializeField( ), Tooltip( "Draw the outlines of the shapes over everything, instead of hidden where the contour or anything else is in front of them" )]
+    private bool _outlinesOnTop = false;
+    public bool outlinesOnTop {
+        get { return this._outlinesOnTop;  }
+        set { this._outlinesOnTop = value; }
+    }
+
+    // the size of a cell of the selected voxelizer's grid, in the object space of this object, where the grid is 1 across
+    public float cellSize {
+        get { return 1.0f / ( 1 << cellsExponentOf( this.voxelizer ) ); }
+    }
+
     // the last contour, for the inspector. Not kept over a script recompile
     public Voxelizer.ContourStatistics? lastContour { get; private set; }
 
@@ -290,12 +309,38 @@ public class InteractiveEditor : MonoBehaviour {
                 warnings.Add( $"{name} lies entirely outside the grid, so it changes nothing. The grid is the box drawn around the editor." );
             }
 
+            if( roundOrSquareAcross( shape.type ) && !Mathf.Approximately( shape.extents.x, shape.extents.z ) && shape.extents.x != 0.0f && shape.extents.z != 0.0f ) {
+                var across = shape.type == DensityFunction.Type.Pyramid ? "square" : "round";
+
+                warnings.Add( $"{name} is not as wide along x as along z. A {nameOf( shape.type ).ToLowerInvariant( )} is {across} across, so it is contoured as wide as the narrower of the two, as its outline shows. Scale it the same along x and z." );
+            }
+
             if( this.placementOf( volume.transform ).sheared ) {
                 warnings.Add( $"{name} is turned inside a group that is scaled unevenly, which would slant its sides. It is contoured with square sides instead, as its outline shows. Scale the group evenly, or scale the shape itself." );
             }
         }
 
         return warnings;
+    }
+
+    // a type as the inspector names it, a space before each word: "Hexagonal Prism"
+    public static string nameOf( DensityFunction.Type type ) {
+        var name = new StringBuilder( );
+
+        foreach( var letter in type.ToString( ) ) {
+            if( char.IsUpper( letter ) && name.Length > 0 ) {
+                name.Append( ' ' );
+            }
+            name.Append( letter );
+        }
+
+        return name.ToString( );
+    }
+
+    // the shapes that take the smaller of their x and z extents for both
+    private static bool roundOrSquareAcross( DensityFunction.Type type ) {
+        return type == DensityFunction.Type.Cylinder || type == DensityFunction.Type.Cone || type == DensityFunction.Type.Capsule ||
+               type == DensityFunction.Type.Torus    || type == DensityFunction.Type.Pyramid;
     }
 
     private static int highestMaterialBitOf( MaterialIndex materialIndex ) {
@@ -655,13 +700,23 @@ public class InteractiveEditor : MonoBehaviour {
     // the size a shape is added at: half the grid across
     public const float addedShapeScale = 0.5f;
 
+    // the scale a shape of the type is added at. A cube of half the grid would give a capsule that is a ball and a torus
+    // without a hole, so those two are added at shapes of their own
+    public static Vector3 addedScaleOf( DensityFunction.Type type ) {
+        return type switch {
+            DensityFunction.Type.Capsule => new Vector3( 0.25f, 0.5f, 0.25f ),
+            DensityFunction.Type.Torus   => new Vector3( 0.5f,  0.2f, 0.5f  ),
+            _                            => Vector3.one * addedShapeScale
+        };
+    }
+
     // adds a shape at the centre of the grid, after the others: a Union of material 0. Undoable
     public Volume addShape( DensityFunction.Type type ) {
         var name       = UnityEditor.GameObjectUtility.GetUniqueNameForSibling( this.transform, type.ToString( ) );
         var gameObject = new GameObject( name );
 
         gameObject.transform.SetParent( this.transform, false );
-        gameObject.transform.localScale = Vector3.one * addedShapeScale;
+        gameObject.transform.localScale = addedScaleOf( type );
         gameObject.layer                = this.gameObject.layer;
 
         var volume = ( Volume )gameObject.AddComponent( Volume.componentOf( type ) );
@@ -669,7 +724,7 @@ public class InteractiveEditor : MonoBehaviour {
         volume.combination   = Combination.Union;
         volume.materialIndex = MaterialIndex.Material0;
 
-        UnityEditor.Undo.RegisterCreatedObjectUndo( gameObject, $"Add {type}" );
+        UnityEditor.Undo.RegisterCreatedObjectUndo( gameObject, $"Add {nameOf( type )}" );
 
         return volume;
     }
@@ -760,6 +815,8 @@ public class InteractiveEditor : MonoBehaviour {
 [UnityEditor.CustomEditor( typeof( InteractiveEditor ) )]
 public class InteractiveEditorEditor : UnityEditor.Editor {
 
+    private const int buttonsPerRow = 3;
+
     private UnityEditorInternal.ReorderableList shapeList;
     private List<Volume>                        listed = new( );
     private Volume                              toRemove;
@@ -785,6 +842,8 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
 
         this.serializedObject.Update( );
         UnityEditor.EditorGUILayout.PropertyField( this.serializedObject.FindProperty( "_debounce" ) );
+        UnityEditor.EditorGUILayout.PropertyField( this.serializedObject.FindProperty( "_outlineThickness" ) );
+        UnityEditor.EditorGUILayout.PropertyField( this.serializedObject.FindProperty( "_outlinesOnTop" ) );
         this.serializedObject.ApplyModifiedProperties( );
 
         UnityEditor.EditorGUILayout.Space( );
@@ -807,16 +866,16 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
 
         this.drawShapeList( editor );
 
-        UnityEditor.EditorGUILayout.BeginHorizontal( );
+        // a button for every type, three to a row and all as wide: a grid of buttons of which none is selected, and which
+        // gives the index of the one pressed
+        UnityEditor.EditorGUILayout.LabelField( "Add" );
 
-        if( GUILayout.Button( "Add Cuboid" ) ) {
-            editor.addShape( DensityFunction.Type.Cuboid );
-        }
-        if( GUILayout.Button( "Add Ellipsoid" ) ) {
-            editor.addShape( DensityFunction.Type.Ellipsoid );
-        }
+        var types   = ( DensityFunction.Type[] )Enum.GetValues( typeof( DensityFunction.Type ) );
+        var pressed = GUILayout.SelectionGrid( -1, types.Select( InteractiveEditor.nameOf ).ToArray( ), buttonsPerRow );
 
-        UnityEditor.EditorGUILayout.EndHorizontal( );
+        if( pressed >= 0 ) {
+            editor.addShape( types[pressed] );
+        }
 
         UnityEditor.EditorGUILayout.LabelField(
             "Outlines in the scene view: Union green, Intersection yellow, Subtraction red. The box is the grid.",
@@ -885,7 +944,7 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
             style.normal.textColor = Color.gray;
         }
 
-        if( GUI.Button( new Rect( x, y, nameWidth, height ), new GUIContent( $"{volume.name} ({volume.type})", "Select it" ), style ) ) {
+        if( GUI.Button( new Rect( x, y, nameWidth, height ), new GUIContent( $"{volume.name} ({InteractiveEditor.nameOf( volume.type )})", "Select it" ), style ) ) {
             UnityEditor.Selection.activeGameObject = volume.gameObject;
         }
         x += nameWidth + spacing;
@@ -931,23 +990,214 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
 // and intersected shapes can be seen and clicked. Shapes of other voxelizers, in the example scenes, are left alone
 public static class InteractiveEditorGizmos {
 
-    public static Color colourOf( Combination combination ) {
-        return combination switch {
+    // the grey of the scene view's ground, which outlines of shapes that are not selected are dimmed toward
+    private static readonly Color dimmedToward = new( 0.35f, 0.35f, 0.35f );
+
+    // the colour of an outline, by the shape's operation, and dimmed unless the shape is selected. Outlines are opaque:
+    // Shapes blends every line by itself, so half opaque lines showed brighter wherever two of them overlapped. Dimmed
+    // half way to the ground's grey, they look much as they did half opaque over it
+    public static Color colourOf( Combination combination, bool selected ) {
+        var colour = combination switch {
             Combination.Union        => new Color( 0.4f, 1.0f, 0.4f ),
             Combination.Intersection => new Color( 1.0f, 0.85f, 0.25f ),
             Combination.Subtraction  => new Color( 1.0f, 0.35f, 0.35f ),
             _                        => Color.white
         };
+
+        return selected ? colour : Color.Lerp( colour, dimmedToward, 0.5f );
     }
 
-    [UnityEditor.DrawGizmo( UnityEditor.GizmoType.NonSelected | UnityEditor.GizmoType.Selected | UnityEditor.GizmoType.Pickable )]
-    private static void drawCuboid( Cuboid cuboid, UnityEditor.GizmoType gizmoType ) {
-        drawShape( cuboid, gizmoType );
+    // how many lines a whole circle of an outline is drawn with
+    public const int circleSegments = 48;
+
+    // the lines of a shape's outline in its own frame, made from its extents as the shape is: the edges of the shapes
+    // with flat faces, and around curved ones, circles and lines along their sides. Every end of a line lies on the shape
+    public static List<( Vector3 start, Vector3 end )> outlineOf( DensityFunction.Type type, Vector3 extents ) {
+        var lines  = new List<( Vector3 start, Vector3 end )>( );
+        var across = Mathf.Min( extents.x, extents.z );
+        var y      = extents.y;
+
+        // the four ways out from the axis of a round shape
+        var outward = new[] { Vector3.right, Vector3.forward, Vector3.left, Vector3.back };
+
+        void line( Vector3 start, Vector3 end ) {
+            if( start != end ) {
+                lines.Add( ( start, end ) );
+            }
+        }
+
+        // an arc of the ellipse about the centre with the two radii, from one angle to the other in radians
+        void arc( Vector3 centre, Vector3 radius, Vector3 otherRadius, float from, float to ) {
+            var steps = Mathf.Max( 1, Mathf.CeilToInt( circleSegments * ( to - from ) / ( 2.0f * Mathf.PI ) ) );
+
+            Vector3 at( int step ) {
+                var angle = from + ( ( to - from ) * step / steps );
+
+                return centre + ( radius * Mathf.Cos( angle ) ) + ( otherRadius * Mathf.Sin( angle ) );
+            }
+
+            for( var step = 0; step < steps; ++step ) {
+                line( at( step ), at( step + 1 ) );
+            }
+        }
+
+        void circle( Vector3 centre, Vector3 radius, Vector3 otherRadius ) {
+            arc( centre, radius, otherRadius, 0.0f, 2.0f * Mathf.PI );
+        }
+
+        // a circle about the axis
+        void ring( float height, float radius ) {
+            if( radius > 0.0f ) {
+                circle( new Vector3( 0.0f, height, 0.0f ), new Vector3( radius, 0.0f, 0.0f ), new Vector3( 0.0f, 0.0f, radius ) );
+            }
+        }
+
+        void edges( Vector3[] corners, int[] ends ) {
+            for( var index = 0; index < ends.Length; index += 2 ) {
+                line( corners[ends[index]], corners[ends[index + 1]] );
+            }
+        }
+
+        switch( type ) {
+            case DensityFunction.Type.Cuboid: {
+                var corners = Enumerable.Range( 0, 8 ).Select(
+                    ( corner ) => new Vector3( ( corner & 1 ) == 0 ? -extents.x : extents.x, ( corner & 2 ) == 0 ? -y : y, ( corner & 4 ) == 0 ? -extents.z : extents.z )
+                ).ToArray( );
+
+                // corners whose indices differ in one bit share an edge
+                edges( corners, new[] { 0, 1, 2, 3, 4, 5, 6, 7, 0, 2, 1, 3, 4, 6, 5, 7, 0, 4, 1, 5, 2, 6, 3, 7 } );
+                break;
+            }
+            case DensityFunction.Type.Ellipsoid: {
+                var alongX = new Vector3( extents.x, 0.0f, 0.0f );
+                var alongY = new Vector3( 0.0f, y, 0.0f );
+                var alongZ = new Vector3( 0.0f, 0.0f, extents.z );
+
+                circle( Vector3.zero, alongX, alongY );
+                circle( Vector3.zero, alongX, alongZ );
+                circle( Vector3.zero, alongY, alongZ );
+                break;
+            }
+            case DensityFunction.Type.Cylinder: {
+                ring( -y, across );
+                ring( y, across );
+
+                foreach( var direction in outward ) {
+                    line( ( direction * across ) - new Vector3( 0.0f, y, 0.0f ), ( direction * across ) + new Vector3( 0.0f, y, 0.0f ) );
+                }
+                break;
+            }
+            case DensityFunction.Type.Cone: {
+                ring( -y, across );
+
+                foreach( var direction in outward ) {
+                    line( ( direction * across ) - new Vector3( 0.0f, y, 0.0f ), new Vector3( 0.0f, y, 0.0f ) );
+                }
+                break;
+            }
+            case DensityFunction.Type.Capsule: {
+                var radius = Mathf.Min( across, y );
+                var half   = y - radius;
+
+                ring( -half, radius );
+                ring(  half, radius );
+
+                foreach( var direction in outward ) {
+                    line( ( direction * radius ) - new Vector3( 0.0f, half, 0.0f ), ( direction * radius ) + new Vector3( 0.0f, half, 0.0f ) );
+                }
+
+                // the half balls at the ends, across x and across z
+                foreach( var direction in new[] { Vector3.right, Vector3.forward } ) {
+                    arc( new Vector3( 0.0f, half, 0.0f ),  direction * radius, Vector3.up * radius, 0.0f,     Mathf.PI );
+                    arc( new Vector3( 0.0f, -half, 0.0f ), direction * radius, Vector3.up * radius, Mathf.PI, 2.0f * Mathf.PI );
+                }
+                break;
+            }
+            case DensityFunction.Type.Torus: {
+                var tube   = Mathf.Min( y, across );
+                var middle = across - tube;
+
+                // outside, inside, on top and underneath, and four cuts through the tube
+                ring( 0.0f, across );
+                ring( 0.0f, middle - tube );
+                ring( tube, middle );
+                ring( -tube, middle );
+
+                foreach( var direction in outward ) {
+                    circle( direction * middle, direction * tube, Vector3.up * tube );
+                }
+                break;
+            }
+            case DensityFunction.Type.Pyramid: {
+                var corners = new[] {
+                    new Vector3( 0.0f, y, 0.0f ),
+                    new Vector3( -across, -y, -across ), new Vector3( across, -y, -across ), new Vector3( across, -y, across ), new Vector3( -across, -y, across )
+                };
+
+                edges( corners, new[] { 1, 2, 2, 3, 3, 4, 4, 1, 0, 1, 0, 2, 0, 3, 0, 4 } );
+                break;
+            }
+            case DensityFunction.Type.Octahedron: {
+                var corners = new[] {
+                    new Vector3( extents.x, 0.0f, 0.0f ), new Vector3( -extents.x, 0.0f, 0.0f ),
+                    new Vector3( 0.0f, y, 0.0f ),         new Vector3( 0.0f, -y, 0.0f ),
+                    new Vector3( 0.0f, 0.0f, extents.z ), new Vector3( 0.0f, 0.0f, -extents.z )
+                };
+
+                // every two corners that are not opposite each other share an edge
+                for( var first = 0; first < 6; ++first ) {
+                    for( var second = first + 1; second < 6; ++second ) {
+                        if( first / 2 != second / 2 ) {
+                            line( corners[first], corners[second] );
+                        }
+                    }
+                }
+                break;
+            }
+            case DensityFunction.Type.HexagonalPrism: {
+                var corner  = HexagonalPrism.inradiusOf( extents ) / HexagonalPrism.cos30;
+                var hexagon = Enumerable.Range( 0, 6 ).Select(
+                    ( index ) => new Vector3( corner * Mathf.Cos( index * Mathf.PI / 3.0f ), 0.0f, corner * Mathf.Sin( index * Mathf.PI / 3.0f ) )
+                ).ToArray( );
+
+                for( var index = 0; index < 6; ++index ) {
+                    var next = hexagon[( index + 1 ) % 6];
+
+                    line( hexagon[index] - new Vector3( 0.0f, y, 0.0f ), next - new Vector3( 0.0f, y, 0.0f ) );
+                    line( hexagon[index] + new Vector3( 0.0f, y, 0.0f ), next + new Vector3( 0.0f, y, 0.0f ) );
+                    line( hexagon[index] - new Vector3( 0.0f, y, 0.0f ), hexagon[index] + new Vector3( 0.0f, y, 0.0f ) );
+                }
+                break;
+            }
+            default: {
+                throw new Exception( "Unknown density function type specified" );
+            }
+        }
+
+        return lines;
     }
 
-    [UnityEditor.DrawGizmo( UnityEditor.GizmoType.NonSelected | UnityEditor.GizmoType.Selected | UnityEditor.GizmoType.Pickable )]
-    private static void drawEllipsoid( Ellipsoid ellipsoid, UnityEditor.GizmoType gizmoType ) {
-        drawShape( ellipsoid, gizmoType );
+    private const UnityEditor.GizmoType outlined = UnityEditor.GizmoType.NonSelected | UnityEditor.GizmoType.Selected | UnityEditor.GizmoType.Pickable;
+
+    [UnityEditor.DrawGizmo( outlined )] private static void drawCuboid         ( Cuboid         volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawEllipsoid      ( Ellipsoid      volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawCylinder       ( Cylinder       volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawCone           ( Cone           volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawCapsule        ( Capsule        volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawTorus          ( Torus          volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawPyramid        ( Pyramid        volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawOctahedron     ( Octahedron     volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+    [UnityEditor.DrawGizmo( outlined )] private static void drawHexagonalPrism ( HexagonalPrism volume, UnityEditor.GizmoType gizmoType ) { drawShape( volume, gizmoType ); }
+
+    // how much nearer the camera an outline is drawn than it is, in cells of the selected voxelizer's grid. The contour is
+    // off the shapes by up to a fraction of a cell, and where an outline lies on it, it would cut through the outline
+    public const float outlineNearerByCells = 0.5f;
+
+    // the point moved the distance toward a camera along its line of sight, which leaves it where it was on the screen
+    public static Vector3 nearerTheCamera( Vector3 point, Vector3 cameraPosition, Vector3 cameraForward, bool orthographic, float distance ) {
+        var toward = orthographic ? -cameraForward : ( cameraPosition - point ).normalized;
+
+        return point + ( toward * distance );
     }
 
     private static void drawShape( Volume volume, UnityEditor.GizmoType gizmoType ) {
@@ -957,19 +1207,48 @@ public static class InteractiveEditorGizmos {
             return;
         }
 
-        var colour = colourOf( shape.combination );
+        var colour = colourOf( shape.combination, ( gizmoType & UnityEditor.GizmoType.Selected ) != 0 );
 
-        colour.a = ( gizmoType & UnityEditor.GizmoType.Selected ) != 0 ? 1.0f : 0.5f;
+        // the outline is made in the shape's frame at its size, so its matrix only places and turns it
+        var frame = editor.transform.localToWorldMatrix * Matrix4x4.TRS( shape.origin, Quaternion.Normalize( shape.rotation ), Vector3.one );
 
-        Gizmos.color  = colour;
-        Gizmos.matrix = editor.transform.localToWorldMatrix * Matrix4x4.TRS( shape.origin, Quaternion.Normalize( shape.rotation ), shape.extents * 2 );
+        // in the world, and unless they are drawn over everything, moved nearer the camera that draws them
+        var camera = Camera.current;
+        var scale  = editor.transform.lossyScale;
+        var nearer = camera == null || editor.outlinesOnTop ? 0.0f : editor.cellSize * outlineNearerByCells * Mathf.Max( Mathf.Abs( scale.x ), Mathf.Max( Mathf.Abs( scale.y ), Mathf.Abs( scale.z ) ) );
 
-        if( shape.type == DensityFunction.Type.Cuboid ) {
-            Gizmos.DrawWireCube( Vector3.zero, Vector3.one );
+        Vector3 toWorld( Vector3 local ) {
+            var world = frame.MultiplyPoint3x4( local );
+
+            return nearer > 0.0f ? nearerTheCamera( world, camera.transform.position, camera.transform.forward, camera.orthographic, nearer ) : world;
         }
-        else {
-            Gizmos.DrawWireSphere( Vector3.zero, 0.5f );
+
+        var lines = outlineOf( shape.type, shape.extents ).Select( ( line ) => ( start: toWorld( line.start ), end: toWorld( line.end ) ) ).ToArray( );
+
+        using( Shapes.Draw.Scope ) {
+            Shapes.Draw.ResetAllDrawStates( );
+
+            Shapes.Draw.BlendMode      = Shapes.ShapesBlendMode.Transparent;
+            Shapes.Draw.LineGeometry   = Shapes.LineGeometry.Billboard;
+            Shapes.Draw.ThicknessSpace = Shapes.ThicknessSpace.Pixels;
+
+            // over the contour and everything else, so that a shape shows wherever it is, inside the mesh too. Else hidden
+            // where something is in front, as everything in the scene is
+            Shapes.Draw.ZTest = editor.outlinesOnTop ? UnityEngine.Rendering.CompareFunction.Always : UnityEngine.Rendering.CompareFunction.LessEqual;
+
+            foreach( var ( start, end ) in lines ) {
+                Shapes.Draw.Line( start, end, editor.outlineThickness, colour );
+            }
         }
+
+        // Unity's picking sees what Gizmos draws and not what Shapes draws. So the same lines go to Gizmos as well, without
+        // colour, only to be clicked, moved nearer the camera as the outline is, so that a click on an outline that lies
+        // on the contour picks the outline. Unity picks by depth, so where the contour is in front of an outline, a click
+        // picks the contour, also when outlines are drawn over everything
+        Gizmos.matrix = Matrix4x4.identity;
+        Gizmos.color  = Color.clear;
+
+        Gizmos.DrawLineList( lines.SelectMany( ( line ) => new[] { line.start, line.end } ).ToArray( ) );
     }
 
 }
