@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -112,11 +111,7 @@ public abstract class ContouringTest {
             child.transform.localRotation = shape.rotation;
             child.transform.localScale    = shape.extents * 2;
 
-            Volume volume = shape.type switch {
-                DensityFunction.Type.Cuboid    => child.AddComponent<Cuboid>( ),
-                DensityFunction.Type.Ellipsoid => child.AddComponent<Ellipsoid>( ),
-                _                              => throw new Exception( "Unknown volume type specified" )
-            };
+            var volume = ( Volume )child.AddComponent( Volume.componentOf( shape.type ) );
 
             volume.combination   = shape.combination;
             volume.materialIndex = shape.materialIndex;

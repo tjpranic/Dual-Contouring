@@ -57,9 +57,10 @@ public class ShapeRotationTest : ContouringTest {
         }
     }
 
-    // a quarter turn about one axis lays the shape's extents along the other two axes the other way round
+    // a quarter turn about one axis lays the shape's extents along the other two axes the other way round. That makes the
+    // same shape only of a shape that treats its three axes alike: a cone turned onto its side is not a cone
     [Test]
-    public void aQuarterTurnSwapsTwoExtents( [Values] DensityFunction.Type type ) {
+    public void aQuarterTurnSwapsTwoExtents( [Values( DensityFunction.Type.Cuboid, DensityFunction.Type.Ellipsoid, DensityFunction.Type.Octahedron )] DensityFunction.Type type ) {
         var extents = new Vector3( 0.1f, 0.2f, 0.3f );
 
         var turns = new[] {

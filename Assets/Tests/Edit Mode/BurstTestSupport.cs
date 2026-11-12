@@ -64,9 +64,7 @@ public static class BurstTestSupport {
         }
 
         public float sample( Vector3 position ) {
-            var local = this.frame.local( position );
-
-            return this.type == DensityFunction.Type.Cuboid ? Cuboid.sample( local, this.extents ) : Ellipsoid.sample( local, this.extents );
+            return DensityFunction.sample( this.type, this.frame.local( position ), this.extents );
         }
 
     }

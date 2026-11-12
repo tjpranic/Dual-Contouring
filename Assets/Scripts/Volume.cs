@@ -12,6 +12,22 @@ public abstract class Volume : MonoBehaviour, DensityFunction {
 
     public abstract DensityFunctionType type { get; }
 
+    // the component that makes a shape of the type
+    public static System.Type componentOf( DensityFunctionType type ) {
+        return type switch {
+            DensityFunctionType.Cuboid         => typeof( Cuboid ),
+            DensityFunctionType.Ellipsoid      => typeof( Ellipsoid ),
+            DensityFunctionType.Cylinder       => typeof( Cylinder ),
+            DensityFunctionType.Cone           => typeof( Cone ),
+            DensityFunctionType.Capsule        => typeof( Capsule ),
+            DensityFunctionType.Torus          => typeof( Torus ),
+            DensityFunctionType.Pyramid        => typeof( Pyramid ),
+            DensityFunctionType.Octahedron     => typeof( Octahedron ),
+            DensityFunctionType.HexagonalPrism => typeof( HexagonalPrism ),
+            _                                  => throw new System.Exception( "Unknown density function type specified" )
+        };
+    }
+
     // these 2 accessors transform to voxelizer object space because volumes are voxelized in voxelizer object space
 
     public Vector3 origin {

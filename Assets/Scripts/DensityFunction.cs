@@ -7,9 +7,17 @@ using MaterialIndex = SurfaceExtractor.MaterialIndex;
 
 public partial interface DensityFunction {
 
+    // the GPU reads these as numbers, so new types go at the end
     public enum Type {
         Cuboid,
-        Ellipsoid
+        Ellipsoid,
+        Cylinder,
+        Cone,
+        Capsule,
+        Torus,
+        Pyramid,
+        Octahedron,
+        HexagonalPrism
     }
 
     public enum Combination {
@@ -28,6 +36,23 @@ public partial interface DensityFunction {
     public MaterialIndex materialIndex { get; set; }
 
     public float sample( Vector3 position );
+
+    // a shape of the type, centred on the origin of its own frame, at a position in that frame. Every managed density
+    // function samples through this once it has taken the position into its frame
+    public static float sample( Type type, Vector3 position, Vector3 extents ) {
+        return type switch {
+            Type.Cuboid         => Cuboid.sample         ( position, extents ),
+            Type.Ellipsoid      => Ellipsoid.sample      ( position, extents ),
+            Type.Cylinder       => Cylinder.sample       ( position, extents ),
+            Type.Cone           => Cone.sample           ( position, extents ),
+            Type.Capsule        => Capsule.sample        ( position, extents ),
+            Type.Torus          => Torus.sample          ( position, extents ),
+            Type.Pyramid        => Pyramid.sample        ( position, extents ),
+            Type.Octahedron     => Octahedron.sample     ( position, extents ),
+            Type.HexagonalPrism => HexagonalPrism.sample ( position, extents ),
+            _                   => throw new System.Exception( "Unknown density function type specified" )
+        };
+    }
 
     // a shape's own frame: centred on its origin and turned with it, so that its extents lie along the axes. A shape is
     // sampled by taking the position into its frame and applying its formula there. The rotation is undone with the rows

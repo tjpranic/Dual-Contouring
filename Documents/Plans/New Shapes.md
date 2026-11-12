@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding seven shapes from https://iquilezles.org/articles/distfunctions/ to every implementation and to the interactive editor: Cylinder, Cone, Capsule, Torus, Pyramid, Octahedron and Hexagonal Prism.
 
-**Status:** step 0 done 2026-11-12, waiting for review of the plan. The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters.
+**Status:** step 1 done 2026-11-12, waiting for review. The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included.
 
 ## Goal
 
@@ -39,6 +39,23 @@ The seven shapes can be added like Cuboid and Ellipsoid: as volumes in a scene, 
 6. **On the GPU, more cases in the shader's switch may change Cuboid and Ellipsoid in the last bits.** That happened when rotation was added (finding 7 of Shape Rotation): the compiler arranges float operations as it sees fit. The `Start` hashes show whether it happens; if so, the size is measured and the user decides, as last time.
 7. **The editor's added size suits five of the shapes.** A cube of half the grid gives a torus with no hole and a capsule that is a ball, so those two are added at sizes of their own.
 8. **It is not known whether Shapes' drawing can be clicked.** Unity selects an object from a click on its gizmo when the gizmo is drawn with `Gizmos`. Shapes draws with `Graphics.DrawMeshNow` when it is used inside a gizmo callback, and whether Unity's picking sees that is not known.
+9. **How close dual contouring puts vertices to the new shapes.** Found in step 1, at 16³ with the SVD solver, from the worst vertices of `ShapeContourTest`. Three things take vertices off a shape; the shapes themselves are exact.
+   - **Curved surfaces.** A vertex goes where the tangent planes of its cell's intersections come closest. On a curved surface that is off the surface by up to the sag across the cell's diagonal, `3h²/8R` for cells of size `h` and a radius of curvature `R`.
+     - Capsule: up to 0.0099 off, against a sag of 0.0098.
+     - Torus: 0.0098, against 0.0146 for its tube.
+     - Cylinder: 0.0036, against 0.0059.
+
+     The tests allow the sag plus the 0.002 of the intersections.
+   - **Corners where four faces meet,** the octahedron's and the pyramid's tip. A cell next to one can see only two faces that meet nowhere but at the corner. The QEF then has rank two, and the vertex can lie anywhere on the line where the two planes cross through the corner. On the turned octahedron one such vertex was 0.0063 off, 0.008 from the corner.
+   - **Near the cone's tip,** the side curves more sharply than a cell can follow, and a cell there may have only a few intersections.
+     - In the worst cell, four intersections give the direction toward the tip an eigenvalue of 0.081. Secret Sauce's truncation at 0.1 drops that direction, so the vertex stays 0.016 off. Without the truncation, the vertex would be at the tip, 0.0004 off.
+     - This is the solver doing what the paper says. The cone's tip still gets a vertex of its own, within 0.0011.
+
+     Along the rim, some cells show two pieces of surface (finding 6 of Shape Rotation). Uniform and Adaptive Dual Contouring put the mass point there, up to 0.018 off.
+   - **Flat faces and edges** are as good as the turned cube's:
+     - vertices within 0.001 of the faces;
+     - corners within 0.0015;
+     - the mesh within 0.0012 of every edge and rim.
 
 ## Design
 
@@ -89,7 +106,7 @@ Each shape is centred on its origin, with its axis along its own `y`, and fills 
   The lines are worked out in the shape's frame by one function, which the tests check, and drawn in pixels, like the debug view.
 - **Clicking an outline still selects its shape** (finding 8). Step 4 first checks whether Unity picks Shapes' drawing inside `[DrawGizmo]`. If it does not, the same lines also go to `Gizmos.DrawLineList`, invisible, only so that a click finds them.
 - **Warnings:** a Cylinder, Cone, Capsule, Torus or Pyramid with different sizes along `x` and `z` is named, with the size it is contoured at, "as its outline shows".
-- **Outside the grid:** the new shapes reach as far as the box around them, turned. That can only miss a warning, never give a wrong one.
+- **Outside the grid:** the new shapes reach as far as the box around them, turned. That can only miss a warning, never give a wrong one. Done in step 1 already: before it, every type but Cuboid was taken to reach as far as an ellipsoid, which a cylinder's rim goes past.
 
 ## Tests
 
@@ -100,7 +117,10 @@ Each shape is centred on its origin, with its axis along its own `y`, and fills 
   - The page's pyramid fails the distance test; the corrected one passes.
 - **Contours,** in `ShapeContourTest`, an abstract fixture with a Managed and a Burst subclass like `RotatedCubeTest`. Each of the seven shapes, upright and turned, is contoured by all three algorithms at 16³:
   - **Closed:** the surface is closed, and manifold for Manifold Dual Contouring. For Uniform and Adaptive Dual Contouring, the cells of finding 6 of Shape Rotation are left out, as for the turned cube.
-  - **On the shape:** every vertex lies within a tolerance of the shape. For flat faces it is the turned cube's 0.002. For curved surfaces, a bound from the cell size and the curvature is worked out in step 1.
+  - **On the shape:** every vertex lies within a tolerance of the shape.
+    - For flat faces, the tolerance is the turned cube's 0.002.
+    - For curved surfaces, it is 0.002 plus the sag `3h²/8R` at the vertex's own radius of curvature (finding 9). On the cone, that radius shrinks toward the tip.
+    - Vertices within two cells of a corner where four faces meet are left out, and so are the cells that show two pieces of surface for Uniform and Adaptive Dual Contouring. The corner test holds those corners.
   - **Sharp features:** a vertex at every corner of the pyramid, octahedron and hexagonal prism, and at the cone's tip. The mesh runs along the edges of those three and along the rims of the cylinder and cone.
   - **Normals:** `HermiteNormalTest` holds the normals of the pyramid and the octahedron to the normals of their faces, away from edges, for every implementation.
 - **Parity:**
@@ -124,7 +144,35 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - Edit mode 878 of 878, play mode 21 of 21.
    - The 416 `Start` hashes are identical to those at the end of Shape Rotation, the GPU lines included. They are the baseline for every later step.
    - The Burst runs are under Measurements. Unity was in front for every case.
-1. **Managed (medium).** The enum, the seven components, `DensityFunction.sample` and its four callers, the two tests of finding 5. `ShapeDistanceTest`, and `ShapeContourTest` for Managed. The `Start` hashes unchanged.
+1. **Managed (medium).** The enum, the seven components, `DensityFunction.sample` and its four callers, the two tests of finding 5. `ShapeDistanceTest`, and `ShapeContourTest` for Managed. The `Start` hashes unchanged. **Done 2026-11-12:**
+   - **The shapes:** `Cylinder`, `Cone`, `Capsule`, `Torus`, `Pyramid`, `Octahedron` and `HexagonalPrism` in `Assets/Scripts`, each a `Volume` with a static `sample( position, extents )`, written from the formulas of Design. `DensityFunction.Type` has the seven after `Ellipsoid`.
+   - **One switch each for sampling and for components:**
+     - `DensityFunction.sample( type, position, extents )` is the managed switch. The snapshot, the editor's `Shape` and the test helper `FixedDensityFunction` sample through it.
+     - `Volume.componentOf( type )` gives the component of a type. The editor's `addShape` and `ContouringTest` add shapes through it.
+   - **Outside the grid:** in step 1 rather than step 4, as Design says.
+   - **Burst and the GPU** do not know the new types yet. Burst gives NaN for them and the shader 0, as for any unknown type, and no test gives them one.
+   - **New tests:**
+     - **`ShapeDistanceTest` (28).** Each shape's density is within 5e-7 of the distance worked out independently, in double precision; the largest difference is 1.2e-7. It also covers:
+       - every shape lies inside its box and touches it where Design says;
+       - round and square shapes take the smaller of `x` and `z`;
+       - the hexagonal prism is the largest regular one that fits;
+       - the article's pyramid is off below and inside near its base, where this one is exact.
+     - **`ManagedShapeContourTest` (180).** For each shape, upright and turned, and each algorithm:
+       - the surface is closed, simplified and not. For Manifold Dual Contouring it is one manifold surface, with the torus' one handle.
+       - every vertex is within its tolerance (Tests, finding 9). The worst share of its tolerance is 0.84, the capsule's.
+       - every corner has a vertex within 0.002;
+       - the mesh runs within 0.002 of every edge, and of the rims within 0.002 plus their sag across a cell.
+     - **`HermiteNormalTest`:** the turned pyramid's and octahedron's normals are those of their faces, for Managed. Burst and the GPU join in steps 2 and 3.
+     - **Existing tests:** the 29 of `ShapeRotationTest` and the 7 of `aTurnedShapeIsOutsideTheGridAsFarAsItReaches` that now run over the new types pass. The quarter-turn test is limited to Cuboid, Ellipsoid and Octahedron (finding 5).
+   - **Shared test helpers:** `closestPointOnTriangle`, `distanceToMesh` and `showsSeveralPieces` moved from `RotatedCubeTest` to `TopologyTest`. `ShapeDistanceTest.polyhedronOf` gives the corners and faces of the three flat-faced shapes to the distance, contour and normals tests.
+   - **The tests catch mistakes.** The pyramid without its inside correction, the octahedron as only the distance to its face's plane, and the cone taking the larger of `x` and `z` were put in together. They failed:
+     - 6 distance tests;
+     - 9 contour tests;
+     - the pyramid's normals.
+   - **Verification:**
+     - Edit mode 1124 of 1124, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0.
+     - Compiling gave no errors or warnings.
 2. **Burst (small).** `BurstDensityFunction`. The Burst contour fixture, the parity tests, the model in `TopologyTest`, performance.
 3. **GPU (small).** The shader. GPU tests, `HermiteNormalTest` for the GPU, the GPU hashes (finding 6).
 4. **Interactive editor (medium).** The picking check first, then the outline function and Shapes drawing, buttons, sizes, warnings and their tests. A look at the outlines in the scene view.

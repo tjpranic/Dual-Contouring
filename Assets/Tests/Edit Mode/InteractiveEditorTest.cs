@@ -96,13 +96,17 @@ public class InteractiveEditorTest {
     }
 
     private static Volume addShape<T>( Transform parent, Vector3 position, Vector3 scale, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) where T : Volume {
-        var shape = new GameObject( typeof( T ).Name ) { hideFlags = HideFlags.HideAndDontSave };
+        return addShape( typeof( T ), parent, position, scale, combination, materialIndex );
+    }
+
+    private static Volume addShape( System.Type component, Transform parent, Vector3 position, Vector3 scale, Combination combination = Combination.Union, MaterialIndex materialIndex = MaterialIndex.Material0 ) {
+        var shape = new GameObject( component.Name ) { hideFlags = HideFlags.HideAndDontSave };
 
         shape.transform.SetParent( parent, false );
         shape.transform.localPosition = position;
         shape.transform.localScale    = scale;
 
-        var volume = shape.AddComponent<T>( );
+        var volume = ( Volume )shape.AddComponent( component );
 
         volume.combination   = combination;
         volume.materialIndex = materialIndex;
@@ -1085,9 +1089,7 @@ public class InteractiveEditorTest {
 
         this.giveMaterials( editor, 1 );
 
-        var volume = type == DensityFunction.Type.Cuboid
-            ? addShape<Cuboid>    ( editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) )
-            : addShape<Ellipsoid> ( editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) );
+        var volume = addShape( Volume.componentOf( type ), editor.transform, new Vector3( 0.0f, -0.6f, 0.0f ), new Vector3( 1.2f, 0.1f, 0.1f ) );
 
         volume.name = "Bar";
 

@@ -50,13 +50,7 @@ public class InteractiveEditor : MonoBehaviour {
         }
 
         public float sample( Vector3 position ) {
-            var local = this.frame.local( position );
-
-            return this.type switch {
-                DensityFunction.Type.Cuboid    => Cuboid.sample    ( local, this.extents ),
-                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( local, this.extents ),
-                _                              => throw new Exception( "Unknown density function type specified" )
-            };
+            return DensityFunction.sample( this.type, this.frame.local( position ), this.extents );
         }
 
     }
@@ -333,14 +327,15 @@ public class InteractiveEditor : MonoBehaviour {
         var y = shape.rotation * new Vector3( 0.0f, shape.extents.y, 0.0f );
         var z = shape.rotation * new Vector3( 0.0f, 0.0f, shape.extents.z );
 
-        // a box reaches as far as its corners, an ellipsoid as far as the point of its surface furthest out
-        return shape.type == DensityFunction.Type.Cuboid
-            ? x.absolute( ) + y.absolute( ) + z.absolute( )
-            : new Vector3(
+        // an ellipsoid reaches as far as the point of its surface furthest out. Every other shape is taken to reach as far
+        // as the corners of its box, which a cuboid does, and the others do not quite: that can only leave out a warning
+        return shape.type == DensityFunction.Type.Ellipsoid
+            ? new Vector3(
                 Mathf.Sqrt( ( x.x * x.x ) + ( y.x * y.x ) + ( z.x * z.x ) ),
                 Mathf.Sqrt( ( x.y * x.y ) + ( y.y * y.y ) + ( z.y * z.y ) ),
                 Mathf.Sqrt( ( x.z * x.z ) + ( y.z * y.z ) + ( z.z * z.z ) )
-            );
+            )
+            : x.absolute( ) + y.absolute( ) + z.absolute( );
     }
 
     // how far from square the axes of a shape can be before it counts as sheared: a cosine of the angle between two of
@@ -669,11 +664,7 @@ public class InteractiveEditor : MonoBehaviour {
         gameObject.transform.localScale = Vector3.one * addedShapeScale;
         gameObject.layer                = this.gameObject.layer;
 
-        Volume volume = type switch {
-            DensityFunction.Type.Cuboid    => gameObject.AddComponent<Cuboid>( ),
-            DensityFunction.Type.Ellipsoid => gameObject.AddComponent<Ellipsoid>( ),
-            _                              => throw new Exception( "Unknown density function type specified" )
-        };
+        var volume = ( Volume )gameObject.AddComponent( Volume.componentOf( type ) );
 
         volume.combination   = Combination.Union;
         volume.materialIndex = MaterialIndex.Material0;

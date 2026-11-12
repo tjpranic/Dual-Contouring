@@ -102,4 +102,64 @@ public class HermiteNormalTest : ContouringTest {
         );
     }
 
+    // a turned pyramid and octahedron, whose faces lean every way. Inside a shape with flat faces the density is the
+    // distance to the nearest face's plane, outside it near a face, where the point lies over the face, the distance to
+    // that face. So as with the turned cube, an intersection's normal is that of one face only while, by more than twice
+    // the step, that face's plane is the nearest inside, or the point lies over the face outside. The others are left out
+    [Test]
+    public void normalsOfFlatFacedShapesAreTheNormalsOfTheirFaces( [Values( ImplementationType.Managed )] ImplementationType implementation, [Values( DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron )] DensityFunction.Type type ) {
+        // turned, they reach at most 0.41 from their center, inside the grid
+        var extents  = new Vector3( 0.25f, 0.2f, 0.25f );
+        var rotation = Quaternion.Euler( 30.0f, -60.0f, 75.0f );
+        var margin   = 2e-4f;
+
+        var ( corners, faces ) = ShapeDistanceTest.polyhedronOf( type, extents );
+
+        // each face's outward normal and corners
+        var planes = faces.Select( ( face ) => {
+            var points = face.Select( ( index ) => corners[index] ).ToArray( );
+            var normal = Vector3.Cross( points[1] - points[0], points[2] - points[0] ).normalized;
+
+            return ( normal: Vector3.Dot( normal, points[0] ) < 0.0f ? -normal : normal, points );
+        } ).ToArray( );
+
+        // how far inside the face a point of its plane lies, from the nearest of its edges
+        float insideFace( Vector3 normal, Vector3[] points, Vector3 point ) {
+            var nearest = float.PositiveInfinity;
+
+            for( var index = 0; index < points.Length; ++index ) {
+                var start  = points[index];
+                var along  = ( points[( index + 1 ) % points.Length] - start ).normalized;
+                var inward = Vector3.Cross( normal, along );
+
+                // inward is the way to the face's other corners
+                if( Vector3.Dot( inward, points[( index + 2 ) % points.Length] - start ) < 0.0f ) {
+                    inward = -inward;
+                }
+
+                nearest = Mathf.Min( nearest, Vector3.Dot( inward, point - start ) );
+            }
+
+            return nearest;
+        }
+
+        this.assertNormals(
+            implementation,
+            new Shape( type, Vector3.zero, rotation, extents, DensityFunction.Combination.Union, SurfaceExtractor.MaterialIndex.Material0 ),
+            ( intersection ) => {
+                var local   = Quaternion.Inverse( rotation ) * intersection;
+                var heights = planes.Select( ( plane ) => Vector3.Dot( plane.normal, local - plane.points[0] ) ).ToArray( );
+                var order   = Enumerable.Range( 0, planes.Length ).OrderByDescending( ( face ) => heights[face] ).ToArray( );
+
+                if( heights[order[0]] <= 0.0f ) {
+                    return heights[order[0]] - heights[order[1]] > margin ? rotation * planes[order[0]].normal : null;
+                }
+
+                var nearest = planes[order[0]];
+
+                return insideFace( nearest.normal, nearest.points, local - ( nearest.normal * heights[order[0]] ) ) > margin ? rotation * nearest.normal : null;
+            }
+        );
+    }
+
 }

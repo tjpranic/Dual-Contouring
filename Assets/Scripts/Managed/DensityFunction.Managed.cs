@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -33,13 +32,7 @@ public partial interface DensityFunction {
         }
 
         public float sample( Vector3 position ) {
-            var local = this.frame.local( position );
-
-            return this.type switch {
-                DensityFunction.Type.Cuboid    => Cuboid.sample    ( local, this.extents ),
-                DensityFunction.Type.Ellipsoid => Ellipsoid.sample ( local, this.extents ),
-                _                              => throw new Exception( "Unknown density function type specified" )
-            };
+            return DensityFunction.sample( this.type, this.frame.local( position ), this.extents );
         }
 
     }
