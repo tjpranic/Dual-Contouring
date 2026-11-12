@@ -42,10 +42,10 @@ public abstract class ShapeContourTest : TopologyTest {
         DensityFunction.Type.HexagonalPrism
     };
 
-    private static readonly Vector3 center = new( 0.013f, -0.021f, 0.017f );
+    internal static readonly Vector3 center = new( 0.013f, -0.021f, 0.017f );
 
     // turned, every shape reaches at most 0.41 from its center, which keeps it inside the grid
-    private static Vector3 extentsOf( DensityFunction.Type type ) {
+    internal static Vector3 extentsOf( DensityFunction.Type type ) {
         return type switch {
             DensityFunction.Type.Capsule => new Vector3( 0.15f, 0.3f, 0.15f ),
             DensityFunction.Type.Torus   => new Vector3( 0.3f,  0.1f, 0.3f  ),
@@ -53,7 +53,7 @@ public abstract class ShapeContourTest : TopologyTest {
         };
     }
 
-    private static Quaternion rotationOf( Turn turn ) {
+    internal static Quaternion rotationOf( Turn turn ) {
         return turn == Turn.Turned ? Quaternion.Euler( 30.0f, -60.0f, 75.0f ) : Quaternion.identity;
     }
 
@@ -70,7 +70,7 @@ public abstract class ShapeContourTest : TopologyTest {
     // the smallest radius of curvature of the shape near a point in its own frame, infinite on a flat face. The cone's
     // side is curved across only, and less the farther it is from the tip: there the radius is the distance from the
     // axis over how far the side's normal leans out from it
-    private static float radiusOfCurvatureAt( DensityFunction.Type type, Vector3 extents, Vector3 local ) {
+    internal static float radiusOfCurvatureAt( DensityFunction.Type type, Vector3 extents, Vector3 local ) {
         var across = Mathf.Min( extents.x, extents.z );
 
         switch( type ) {
@@ -107,7 +107,7 @@ public abstract class ShapeContourTest : TopologyTest {
     // two of the faces, which meet nowhere but at the corner. Its vertex is then anywhere on the line where the planes
     // of the two cross, through the corner, and off the shape. Vertices that close to such a corner are left out, and
     // everyCornerHasAVertex holds the corner itself
-    private static Vector3[] cornersOfMoreThanThreeFacesOf( DensityFunction.Type type, Vector3 extents ) {
+    internal static Vector3[] cornersOfMoreThanThreeFacesOf( DensityFunction.Type type, Vector3 extents ) {
         return type switch {
             DensityFunction.Type.Octahedron => cornersOf( type, extents ),
             DensityFunction.Type.Pyramid    => cornersOf( type, extents ).Take( 1 ).ToArray( ),
@@ -151,11 +151,11 @@ public abstract class ShapeContourTest : TopologyTest {
 
     // a point in the shape's own frame where Unity shows it: its transform takes the point, unscaled, to the world. The
     // voxelizer is at the origin, unturned and of unit scale, so its object space is world space
-    private static Vector3 toWorld( Volume volume, Vector3 local ) {
+    internal static Vector3 toWorld( Volume volume, Vector3 local ) {
         return volume.transform.TransformPoint( local.divide( volume.transform.localScale ) );
     }
 
-    private static Vector3 toLocal( Volume volume, Vector3 world ) {
+    internal static Vector3 toLocal( Volume volume, Vector3 world ) {
         return volume.transform.InverseTransformPoint( world ).multiply( volume.transform.localScale );
     }
 
@@ -164,7 +164,7 @@ public abstract class ShapeContourTest : TopologyTest {
     }
 
     // the corners of the shape in its own frame: the cone's tip, and the corners of the shapes with flat faces
-    private static Vector3[] cornersOf( DensityFunction.Type type, Vector3 extents ) {
+    internal static Vector3[] cornersOf( DensityFunction.Type type, Vector3 extents ) {
         return type switch {
             DensityFunction.Type.Cone           => new[] { new Vector3( 0.0f, extents.y, 0.0f ) },
             DensityFunction.Type.Pyramid        => ShapeDistanceTest.polyhedronOf( type, extents ).corners,
@@ -176,7 +176,7 @@ public abstract class ShapeContourTest : TopologyTest {
 
     // points along the edges and rims of the shape in its own frame: 33 along each straight edge, from end to end, and 64
     // around each rim
-    private static Vector3[] edgePointsOf( DensityFunction.Type type, Vector3 extents ) {
+    internal static Vector3[] edgePointsOf( DensityFunction.Type type, Vector3 extents ) {
         var across = Mathf.Min( extents.x, extents.z );
         var y      = extents.y;
 

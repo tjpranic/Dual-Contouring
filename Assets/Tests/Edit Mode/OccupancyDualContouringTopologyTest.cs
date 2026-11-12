@@ -120,6 +120,43 @@ public abstract class OccupancyDualContouringTopologyTest : TopologyTest {
         }
     }
 
+    // section 5.3: the normal of a plane is turned to point from the solid end of its edge to the empty one, and the
+    // normal of a vertex is the sum of those of its planes. On a sphere that is away from its middle
+    [Test]
+    public void normalsPointOutOfTheShape( ) {
+        var shapes = shapesOf( Model.Sphere );
+        var voxels = this.voxelize( this.create( resolution, shapes ) ).voxels.ToArray( );
+
+        Assert.IsNotEmpty( voxels, "no voxel has a vertex" );
+
+        var worst = voxels.Min( ( voxel ) => Vector3.Dot( voxel.normal, ( voxel.vertex - shapes[0].origin ).normalized ) );
+
+        // the cosine of five degrees
+        Assert.GreaterOrEqual( worst, 0.996f, "the normal that points least away from the middle of the sphere, as the cosine of the angle between the two" );
+    }
+
+    // sections 5.2 and 5.3: with a single sample and a single halving a search across a face finds the surface to within
+    // 0.4 of a cell instead of a ten-thousandth, and the vertices placed from it are farther from the sphere
+    [Test]
+    public void coarserFaceSearchesPlaceVerticesWorse( ) {
+        var shapes = shapesOf( Model.Sphere );
+
+        float farthestOf( int samples, int iterations ) {
+            var voxelizer = this.create( resolution, shapes );
+
+            voxelizer.faceSearchSamples    = samples;
+            voxelizer.faceSearchIterations = iterations;
+
+            return this.voxelize( voxelizer ).mesh.vertices.Max( ( vertex ) => Mathf.Abs( Vector3.Distance( vertex, shapes[0].origin ) - shapes[0].extents.x ) ) * 16.0f;
+        }
+
+        var fine   = farthestOf( 4, 11 );
+        var coarse = farthestOf( 1, 1 );
+
+        Assert.LessOrEqual( fine, 0.03f, "how far the farthest vertex is from the sphere with the searches of the paper, in cells" );
+        Assert.Greater( coarse, 2.0f * fine, "how far the farthest vertex is from the sphere with coarse searches, in cells" );
+    }
+
     // the debug view is given a voxel for every vertex of the contour: its cell, with that vertex in it. A cell that
     // holds two pieces of the contour is there twice
     [Test]

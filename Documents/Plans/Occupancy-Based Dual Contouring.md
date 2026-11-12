@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12 and wait for review.
+**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day and waits for review, with a question about the clamp (finding 14).
 
 ## Goal
 
@@ -31,7 +31,7 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 ### Findings that shape the work
 
 1. **The project's volumes are already an occupancy function.** Solid means "has a material", which is worked out from signs. ODC uses that one question everywhere, so it never reads a distance, and the sub-mesh of a polygon comes from the same sample. This is also why it would keep working on functions that are not distances, such as the warped and compressed ones in `TODO.md`.
-2. **On this project's exact distances, ODC should not be visibly more accurate than Manifold Dual Contouring.** The paper's gains are over gradients of occupancy networks, which are poor normals. Here the gradient is the true normal. ODC's planes are secants through points on the surface where the gradient gives tangents, so I expect vertices about as far off a curved surface, on the other side of it. What ODC brings here is independence from distances, the intersection-free split, the manifold fix, and multi-vertex cells on the GPU. Step 2 measures this instead of assuming it.
+2. **How accurate ODC is against Manifold Dual Contouring on this project's exact distances.** Before step 2 I expected it to be about as accurate: here the gradient is the true normal, where the paper's gains are over the poor gradients of occupancy networks. **Step 2 measured it, and that expectation was wrong both ways** (findings 12 to 14): ODC is far closer on curved surfaces, as close on flat faces and most edges, and worse at corners and wherever a vertex is moved into its cell.
 3. **The dual marching cubes table gives non-manifold edges on a uniform grid, as the paper warns.** I re-stated the rule of `DualMarchingCubes.findVertexEdges` in Python and contoured 300 random 6³ grids with it.
    - **The cause:** in 36 of the 256 configurations (24 with five solid corners, 12 with six) one face is ambiguous and all four of its edges belong to the same piece. Where two such cells share that face, the edge between their two vertices is used by four quads.
    - **The size of it:** 458 edges that are not used exactly twice, in 68,308 quads.
@@ -65,6 +65,24 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 9. **The quad format fits.** Four triangles around a 1D point are twelve indices, which is two of the GPU's quads, so the draw shader and the mesh readback need no change.
 10. **The voxelizer's distance settings have no meaning here.** Binary Search Iterations (6, at most 12), Intersection Approximation and Surface Correction Iterations place points by distance. ODC has its own searches, which need more steps than 12: its planes come from the positions of three points, so those have to be far more exact than an intersection that also has a gradient.
 11. **`Interactive Editor.unity` needs the new component on its editor object.** `RequireComponent` only adds it to objects made afterwards.
+
+12. **On curved surfaces ODC's vertices are ten to twenty times closer than Manifold Dual Contouring's.** Found in step 2, on single shapes at 16³ (Measurements).
+    - A tangent plane touches a curved surface at one point and leaves it everywhere else, so the vertex where tangent planes meet is off the surface by the sag across the cell: 0.039 of a cell on average on a sphere 4.8 cells in radius.
+    - ODC's plane at a 1D point goes through two more points that are on or near the surface, its 2D points, so it cuts through the surface instead: 0.0016 of a cell on average on the same sphere.
+    - More steps for Manifold's intersections do not help it there: with 12 instead of 6 its average is the same.
+13. **Where a face of the grid sees three faces of a shape, ODC has a wrong plane, and it misses corners.** Found in step 2.
+    - **The cause** is the paper's own assumption. Lemma 5.1 is about a line across a face that is straight or bends once. Near a corner where three faces meet, a face of the grid can cut all three, and the line across it bends twice. The search then draws one of its two lines through a point on the middle piece, and the 2D point is on neither face.
+    - **What it costs:**
+      - On the turned cuboid 3 of 500 planes are off by 39 to 98 degrees, all at 1D points within a quarter of a cell of an edge of the cuboid. The other planes are exact.
+      - The nearest vertex to a corner is up to 0.44 of a cell away, on the turned cuboid and the pyramid's tip. Manifold Dual Contouring has a vertex within 0.03 of a cell of every corner its tests look at.
+    - **Where it does not happen:** on the upright cuboid and hexagonal prism every face of the grid sees a single bend, and every plane, corner and edge is exact to a ten-thousandth of a cell.
+    - **Not a mistake in the implementation, as far as I can tell:** the 2D points of the cells around the turned cuboid's corners were printed against the cuboid's planes. Those of single bends are on both faces, and those of double bends are on one.
+14. **Keeping vertices in their cells moves one in six to ten of them on turned shapes with edges, by up to 0.4 of a cell.** Found in step 2.
+    - **Why they are outside:** an edge of a shape can pass just outside a cell that still sees both of its faces. The QEF rightly puts that cell's vertex on the edge, outside the cell. Manifold Dual Contouring leaves it there: 52 of the turned cuboid's 502 vertices are outside their cells.
+    - **What moving them costs:** on the turned cuboid the 50 moved vertices are up to 0.24 of a cell off it, and the mesh is 0.22 of a cell from its edges at one point in ten. Without the clamp those figures are 0.035 and 0.05 (Measurements).
+    - **No way of moving them is much better.** Moving toward the average of the 1D points, as planned, and taking the nearest point of the cell instead give the same sizes of error: the edge is simply not in the cell.
+    - **The paper does not mention it.** It is what the reference code does (finding 4), and what the argument for polygons without intersections needs. Step 3 will show how many intersections there are with and without it.
+    - **Open, for the user:** whether keeping vertices in their cells should be a setting. See the question at the end.
 
 ## Design
 
@@ -110,14 +128,16 @@ For a crossing of a face between the 1D points `a` and `b`, in the face's two co
 3. Two searches leave `q` along the line's direction, one toward `a`'s side and one toward `b`'s, and give `q1` and `q2`.
 4. The 2D point is where the line through `a` and `q1` meets the line through `b` and `q2`. It is `m` when they are parallel or meet behind `m`.
 
-- **A search** (appendix A.1.3) samples evenly out to its range, takes the first interval whose far end differs from the start, or the last interval when none does, and bisects it. It returns the end nearer the start, which is on the start's side of the surface.
+- **A search** (appendix A.1.3) samples evenly out to its range, takes the first interval whose far end differs from the start, or the last interval when none does, and bisects it. It returns the end nearer the start, which is on the start's side of the surface. It stops sampling at the first sample that differs, where the paper's code, which samples all rays at once, takes them all: the result is the same with fewer samples.
+- **Which way the first ray goes** is put to a vote of the four corners of the face: toward a corner that is on the other side of the surface from the middle, away from one that is not. On a face with two lines the corner beyond the other line is outvoted.
+- **What counts as nothing,** in cells: lengths below 1e-5, for two 1D points in one place, a first search that ends where it started, and two lines that do not come together. The searches step by 6e-5 to 1e-4, so a search that found the surface at its start returns exactly zero.
 - **Each cell works out the 2D points of its own pieces** in the first version (finding 7), written from the face's own corner so the two cells of a face find the same points. The two always connect the same pairs of 1D points, under the complement rule too (finding 3).
 
 ### Vertices
 
 For each piece of a cell:
 
-- **Planes:** at each of its 1D points, the plane through the point and the two 2D points next to it. Its normal is turned to point from the solid end of the edge to the empty one. A plane whose three points lie on a line is left out.
+- **Planes:** at each of its 1D points, the plane through the point and the two 2D points next to it. Its normal is turned to point from the solid end of the edge to the empty one. A plane whose three points lie on a line is left out: where the sine of the angle between the two directions is below 1e-4.
 - **QEF:** the planes go into a `BurstQEF`, or the shader's SVD QEF, and the piece's vertex is its minimizer. With no plane, the vertex is the average of the piece's 1D points.
 - **Inside the cell:** a minimizer outside the cell, less the margin, is moved back along the line to the average of the piece's 1D points until it is inside (finding 4). This is ODC's alone: the other algorithms keep the Secret Sauce rule the audit gave them.
 - **Normal of the vertex:** the normalized sum of the piece's plane normals.
@@ -159,7 +179,7 @@ Profiler markers are named `OccupancyDualContouring.Burst.<Stage>`.
 ### Debug view
 
 - **Corners:** their material. ODC has no density, so a corner reports -1 inside and 1 outside.
-- **Edges:** the 1D point as the intersection, and the normalized sum of its planes' normals.
+- **Edges:** the 1D point as the intersection, and the normal of its plane in the cell that showed the edge first. As built in step 2: each of the up to four cells around an edge has a plane of its own there (finding 8), and the debug view has one edge for them all. Nothing draws the normal of an edge; the tests read it.
 - **Voxels:** one for every vertex, in its cell, as Manifold Dual Contouring shows them.
 - **2D points** are not shown (Out of scope).
 
@@ -291,7 +311,37 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - Edit mode 1477 of 1477, play mode 21 of 21.
      - The 416 `Start` hashes are identical to step 0.
      - Compiling gave no errors.
-2. **2D points and the QEF (large).** The searches, 2D points, planes, the QEF and the clamp. The search and vertex tests. Measurements: how far vertices are from each shape against Manifold Dual Contouring on the same grid, the float thresholds, and timings against the estimate of finding 7.
+2. **2D points and the QEF (large).** The searches, 2D points, planes, the QEF and the clamp. The search and vertex tests. Measurements: how far vertices are from each shape against Manifold Dual Contouring on the same grid, the float thresholds, and timings against the estimate of finding 7. **Done 2026-11-12,** apart from the question of finding 14:
+   - **`BurstOccupancy`:**
+     - `searchLine`, the line-binary search, and `positionOnFace`;
+     - `searchFace`, the 2D point of a line across a face;
+     - `planesOf`, the 1D points of a piece in the order they go around it, with the normal of the plane at each;
+     - `intoCell`, which moves a vertex back into its cell.
+   - **The vertex** (`BurstOccupancyCells.solve` in `OccupancyDualContouring.Burst.cs`): the planes go into a `BurstQEF` of the solver the component has, and its minimizer is moved into the cell. With no plane at all it is the average of the 1D points, as in step 1.
+   - **Settings:** `faceSearchSamples` (4, from 1 to 8) and `faceSearchIterations` (11, from 1 to 20).
+   - **Searching in cells from the corner of the face** keeps the precision: a point of a face is its corner plus an offset, and only the sample is taken to object space.
+   - **Each cell works out its own 2D points,** ordered by the number of the grid's edges so that both cells of a face search alike.
+   - **The debug view** now shows the planes: each cell's planes are worked out again for it, with the same function.
+   - **New tests:**
+     - **`OccupancySearchTest`,** 21 now:
+       - a search along a line finds the nearest of two crossings, from inside and from outside and at an angle, and ends at its range when there is none;
+       - on a box and a turned box, the 2D point of every straight crossing is exactly the middle of its 1D points, and that of a single bend is within 0.00031 of a cell of the bend (over 100 and over 20 faces of each);
+       - on a sphere every 2D point lies between the circle the sphere draws in the face and the point where the tangents at the two 1D points meet: between 0.002 and 0.27 of the way;
+       - the three ways a 2D point falls back to the middle.
+     - **`BurstOccupancyShapeContourTest` (45),** an abstract fixture that the GPU joins in step 4. Its tolerances are what was measured, and its header says where the algorithm is exact and where it is not:
+       - every vertex of a plane at three angles is within 0.002 of a cell of it. The farthest is 0.0006: a vertex nearer a face of its cell than the margin is moved in by that much;
+       - every vertex of the nine shapes, upright and turned, in two groups: those that were not moved into their cells, and those that were (finding 14);
+       - a vertex at every corner of the upright cuboid and hexagonal prism, and what is missed elsewhere (finding 13);
+       - the mesh along the edges and rims;
+       - the planes of a cube are its faces: all of them upright, and all but 3 of 500 turned.
+     - **In the topology fixture,** 24 now: normals point out of the shape, within five degrees on a sphere, and coarser face searches place vertices worse.
+   - **The tests catch mistakes.** The first ray leaving toward the wrong side, normals not turned outward, no clamp and a search returning its far end were put in together. They failed 5 of the search tests, 41 of the 45 shape tests and 4 topology tests, among them every vertex in its cell and the normals.
+   - **Measured, not assumed:** findings 12 to 14, and the tables under Measurements.
+   - **Speed:** a contour of the three balls at 128³ takes 73 ms, against the 85 ms finding 7 estimated without sharing points between cells. Of that, 61 ms are the vertices. Manifold Dual Contouring takes 34 ms. Step 6 decides about sharing.
+   - **Verification:**
+     - Edit mode 1530 of 1530, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0.
+     - Compiling gave no errors.
 3. **Intersection-free polygons (medium).** The concave test, the choice of diagonal, four triangles around a 1D point, `splitQuads`. The crossing-triangles helper and the polygon tests. The count of crossings on cells with several vertices (Design, Vertices).
 4. **GPU (large).** `DensityFunctions.hlsl` first, with Uniform's GPU hashes and timing checked. Then the shader, its buffers, readback, drawing straight from the GPU and split normals. The Burst-against-GPU tests.
 5. **Interactive editor and scenes (medium).** The fourth algorithm in the editor and its tests, the component in `Interactive Editor.unity`, the example scenes.
@@ -342,6 +392,67 @@ Occupancy-Based Dual Contouring as step 1 leaves it, with 15 halvings for every 
 - It has 28 vertices more than Uniform Dual Contouring's 52,224 at 128³: the cells along the creases that hold two pieces of surface.
 - Sampling the corners takes a sixth less than in the other algorithms, which also work out a density there.
 
+### Burst timings after step 2 (2026-11-12)
+
+`ContouringPerformanceTest` on the three balls, with Unity in front for all 20 cases. In ms, the two rounds:
+
+| Cells | Model | Voxelize | SampleCorners | SolveVertices | Contour |
+|---|---|---|---|---|---|
+| 128³ | upright | 73.3, 73.4 | 6.6, 6.8 | 61.4, 61.2 | 4.2, 4.3 |
+| 256³ | upright | 339.4, 338.9 | 52.3, 52.5 | 253.3, 252.9 | 25.9, 26.4 |
+| 128³ | turned | 80.7, 81.1 | 8.0, 7.9 | 67.2, 67.7 | 4.2, 4.2 |
+
+- The face searches and the QEF took the vertices from 18.7 ms in step 1 to 61 ms at 128³.
+- Manifold Dual Contouring in the same session: 33.5 and 34.0 ms upright, 35.6 and 35.8 turned.
+- At 128³ a contour is past the 50 ms up to which the interactive editor follows a drag live.
+
+### How far vertices are from single shapes (step 2, 2026-11-12)
+
+Each shape alone at 16³, SVD solver, as `ShapeContourTest` sizes and turns it, the ellipsoid here a ball 0.3 in radius. Every shape is an exact distance, so its density at a vertex is how far the vertex is from it. In cells, as average and farthest:
+
+| Shape | | Manifold, 6 steps | Manifold, 12 steps | ODC | ODC without the clamp |
+|---|---|---|---|---|---|
+| Cuboid | upright | 0.0069, 0.014 | 0.0002, 0.0003 | 0.0000, 0.0001 | the same |
+| Cuboid | turned | 0.0029, 0.016 | 0.0001, 0.0003 | 0.0050, 0.24 | 0.0002, 0.035 |
+| Ball | either | 0.039, 0.076 | 0.039, 0.070 | 0.0016, 0.019 | the same |
+| Cylinder | upright | 0.022, 0.058 | 0.018, 0.051 | 0.0008, 0.0040 | the same |
+| Cylinder | turned | 0.016, 0.050 | 0.015, 0.050 | 0.0050, 0.20 | 0.0017, 0.064 |
+| Cone | upright | 0.035, 0.19 | 0.032, 0.19 | 0.0056, 0.093 | 0.0031, 0.060 |
+| Cone | turned | 0.027, 0.25 | 0.026, 0.26 | 0.014, 0.40 | 0.0054, 0.15 |
+| Capsule | upright | 0.060, 0.16 | 0.060, 0.16 | 0.0041, 0.038 | 0.0039, 0.021 |
+| Capsule | turned | 0.058, 0.14 | 0.058, 0.14 | 0.0034, 0.022 | 0.0034, 0.025 |
+| Torus | upright | 0.067, 0.16 | 0.067, 0.16 | 0.0050, 0.043 | 0.0048, 0.034 |
+| Torus | turned | 0.064, 0.15 | 0.064, 0.16 | 0.0054, 0.034 | 0.0054, 0.036 |
+| Pyramid | upright | 0.0066, 0.013 | 0.0001, 0.0002 | 0.0083, 0.22 | 0.0000, 0.0004 |
+| Pyramid | turned | 0.0032, 0.015 | 0.0001, 0.0003 | 0.011, 0.39 | 0.0008, 0.095 |
+| Octahedron | upright | 0.0033, 0.010 | 0.0001, 0.0002 | 0.0065, 0.23 | 0.0006, 0.034 |
+| Octahedron | turned | 0.0054, 0.10 | 0.0008, 0.093 | 0.0089, 0.28 | 0.0017, 0.071 |
+| Hexagonal prism | upright | 0.0062, 0.016 | 0.0001, 0.0002 | 0.0001, 0.0089 | 0.0000, 0.0001 |
+| Hexagonal prism | turned | 0.0031, 0.015 | 0.0000, 0.0003 | 0.0043, 0.25 | 0.0002, 0.017 |
+
+- **Manifold with 6 steps** is the component's default. On flat faces its vertices are as far off as its intersections are, a sixty-fourth of a cell at most, and 12 steps take that away. On curved surfaces the steps make no difference: the sag of the tangent planes is all of it.
+- **ODC without the clamp** was measured with `intoCell` made to return the vertex as it is. It is not something the component can do.
+
+How well corners and edges are kept, from the measuring runs of `BurstOccupancyShapeContourTest`. The nearest vertex to the worst corner, and how far the mesh is from the points along the edges and rims, at worst and at nine points in ten, in cells:
+
+| Shape | | Corner | Corner, no clamp | Edges | Edges, no clamp |
+|---|---|---|---|---|---|
+| Cuboid | upright | 0.0002 | 0.0002 | 0.0001, 0.0001 | the same |
+| Cuboid | turned | 0.44 | 0.44 | 0.47, 0.22 | 0.42, 0.049 |
+| Cylinder | upright | | | 0.29, 0.032 | 0.036, 0.032 |
+| Cylinder | turned | | | 0.36, 0.20 | 0.081, 0.048 |
+| Cone | upright | 0.23 | 0.23 | 0.33, 0.21 | 0.041, 0.037 |
+| Cone | turned | 0.39 | 0.39 | 0.52, 0.34 | 0.25, 0.089 |
+| Pyramid | upright | 0.41 | 0.41 | 0.39, 0.29 | 0.36, 0.0001 |
+| Pyramid | turned | 0.44 | 0.44 | 0.56, 0.30 | 0.43, 0.0081 |
+| Octahedron | upright | 0.29 | 0.083 | 0.39, 0.21 | 0.083, 0.041 |
+| Octahedron | turned | 0.40 | 0.40 | 0.40, 0.15 | 0.39, 0.064 |
+| Hexagonal prism | upright | 0.0001 | 0.0001 | 0.014, 0.0001 | 0.0001, 0.0001 |
+| Hexagonal prism | turned | 0.37 | 0.17 | 0.34, 0.12 | 0.11, 0.0013 |
+
+- One corner of the turned cuboid is in a cell none of whose corners is inside the cuboid, so no method on this grid gives it a vertex.
+- Manifold Dual Contouring's own tests hold a vertex within 0.03 of a cell of the corners of the cone, the pyramid, the octahedron and the hexagonal prism, upright and turned, and the mesh within 0.03 of their edges.
+
 ## Out of scope
 
 - **A managed implementation.**
@@ -359,3 +470,7 @@ All five were decided as recommended on 2026-11-12.
 3. **The QEF.** Recommended: the project's solvers, so the solver setting means what it does elsewhere, plus the clamp into the cell. The other way is the reference code's regularized least squares, which would be a third solver that only ODC uses.
 4. **Manifold Dual Contouring's non-manifold case** (finding 3). Recommended: leave it out of this plan, and decide once step 0's test shows it on the project's own table. The rule would then be a small change to its leaves. **Decided after step 0, 2026-11-12:** the rule is added, as step 0a.
 5. **Editor and scenes in this plan?** Recommended: yes, as step 5.
+
+### Open after step 2
+
+6. **Should keeping vertices in their cells be a setting?** Decision 3 has the clamp always on, as the reference code has it. Step 2 measured what it costs on turned shapes with edges (finding 14). Recommended: decide after step 3, which counts the intersections the clamp is there to prevent, with and without it. If they are few without it, a setting that is on unless turned off would give the choice between the paper's guarantee and sharper edges.

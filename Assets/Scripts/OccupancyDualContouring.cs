@@ -22,6 +22,15 @@ public partial class OccupancyDualContouring : Voxelizer {
     [Range( 1, 20 ), Tooltip( "How many times an edge is halved to find where the contour crosses it" )]
     public int edgeSearchIterations = 15;
 
+    // section 5.2 and appendix A.1.4: the 2D point of a face is found with three searches along rays. The first takes
+    // this many samples at even steps to find where the surface is first crossed, then halves that step this many
+    // times. The other two take a sample fewer and a halving more
+    [Range( 1, 8 ), Tooltip( "How many samples a search across a face takes to find where it first crosses the contour" )]
+    public int faceSearchSamples = 4;
+
+    [Range( 1, 20 ), Tooltip( "How many times a search across a face then halves the step it found the contour in" )]
+    public int faceSearchIterations = 11;
+
     // a voxelizer starts out with the managed implementation, which this one does not have. A value saved with a scene
     // is read after this and takes its place
     public OccupancyDualContouring( ) {

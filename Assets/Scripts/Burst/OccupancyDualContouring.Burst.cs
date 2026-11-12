@@ -11,6 +11,7 @@ using MaterialIndex   = SurfaceExtractor.MaterialIndex;
 using VoxelType       = SurfaceExtractor.Voxel.Type;
 using CPUVoxelization = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization = SurfaceExtractor.Implementation.GPU.Voxelization;
+using QEFSolverType   = QEFSolver.Type;
 
 public partial class OccupancyDualContouring {
 
@@ -56,18 +57,20 @@ public partial class OccupancyDualContouring {
 
     }
 
-    // the vertices of the cells: one for every piece of the contour in a cell, placed from the points where the contour
-    // crosses the edges of that piece. The vertices of a cell follow each other, in the order the table numbers them,
-    // and those of the cells of a row follow each other from where the row starts
+    // the vertices of the cells: one for every piece of the contour in a cell. The vertices of a cell follow each other,
+    // in the order the table numbers them, and those of the cells of a row follow each other from where the row starts
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct SolveCellsJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<BurstDensityFunction> densityFunctions;
+        [ReadOnly] public NativeArray<MaterialIndex>        materials;
         [ReadOnly] public NativeArray<byte>                 solidCorners;
         [ReadOnly] public NativeArray<int>                  rowStarts;
 
-        public BurstGrid grid;
-        public int       edgeSearchIterations;
+        public BurstGrid               grid;
+        public BurstOccupancy.Searches searches;
+        public QEFSolverType           qefSolverType;
+        public int                     minimizerIterations;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>    vertexStarts;
         [NativeDisableParallelForRestriction] public NativeArray<float3> positions;
@@ -93,43 +96,100 @@ public partial class OccupancyDualContouring {
                 var cell   = this.grid.cellOf( index );
 
                 for( var vertex = 0; vertex < count; ++vertex ) {
-                    this.solve( cell, solid, lookup, vertex, next + vertex );
+                    BurstOccupancyCells.solve(
+                        this.grid,
+                        cell,
+                        solid,
+                        lookup,
+                        vertex,
+                        this.searches,
+                        this.qefSolverType,
+                        this.minimizerIterations,
+                        this.materials,
+                        this.densityFunctions,
+                        out var position,
+                        out var normal
+                    );
+
+                    this.positions[next + vertex] = position;
+                    this.normals[next + vertex]   = normal;
                 }
 
                 next += count;
             }
         }
 
-        // one vertex of a cell, from the edges the table gives it
-        private void solve( int3 cell, int solid, int lookup, int vertex, int target ) {
+    }
+
+    // what the jobs share. It is a class of its own so that Burst code does not reach into the voxelizer for it
+    private static class BurstOccupancyCells {
+
+        // section 5.3, one vertex of a cell: the minimizer of the QEF of the planes at the 1D points of its piece of the
+        // contour, kept inside the cell. Its normal is the sum of the normals of those planes. A piece that has no plane
+        // at all has its vertex at the average of its 1D points, facing the way its edges run from solid to empty
+        public static unsafe void solve(
+            in BurstGrid                      grid,
+            int3                              cell,
+            int                               solid,
+            int                               lookup,
+            int                               vertex,
+            in BurstOccupancy.Searches        searches,
+            QEFSolverType                     qefSolverType,
+            int                               minimizerIterations,
+            NativeArray<MaterialIndex>        materials,
+            NativeArray<BurstDensityFunction> densityFunctions,
+            out float3                        position,
+            out float3                        normal
+        ) {
+            const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
+
+            var edges   = stackalloc int[EdgeCount];
+            var points  = stackalloc float3[EdgeCount];
+            var normals = stackalloc float3[EdgeCount];
+
+            var count = BurstOccupancy.planesOf( grid, cell, solid, lookup, vertex, searches, materials, densityFunctions, edges, points, normals );
+
+            var qef       = BurstQEF.create( qefSolverType, minimizerIterations );
             var sum       = float3.zero;
             var direction = float3.zero;
-            var points    = 0;
 
-            for( var edge = 0; edge < SurfaceExtractor.Voxel.EdgeCount; ++edge ) {
-                if( BurstTables.lookupEdgeVertex( lookup, edge ) != vertex ) {
-                    continue;
+            normal = float3.zero;
+
+            for( var index = 0; index < count; ++index ) {
+                sum += points[index];
+
+                direction += directionOf( solid, edges[index] );
+
+                if( math.any( normals[index] != float3.zero ) ) {
+                    qef.add( points[index], normals[index] );
+
+                    normal += normals[index];
                 }
-
-                // an edge runs along its axis from its first corner to its second, and the edges of an axis follow
-                // each other in the edge layout
-                var axis         = edge / 4;
-                var startCorner  = BurstTables.lookupEdgeCorner( edge, 0 );
-                var start        = this.grid.cornerOfCell( cell, startCorner );
-                var startIsSolid = ( solid & ( 1 << startCorner ) ) != 0;
-
-                var along = BurstOccupancy.searchEdge( this.grid, start, axis, startIsSolid, this.densityFunctions, this.edgeSearchIterations );
-
-                sum += BurstOccupancy.positionOnEdge( this.grid, start, axis, along );
-
-                // from the solid end of the edge to the empty one
-                direction[axis] += startIsSolid ? 1.0f : -1.0f;
-
-                ++points;
             }
 
-            this.positions[target] = sum / points;
-            this.normals[target]   = BurstSurfaceExtractor.normalize( direction );
+            // the average of the 1D points, which is inside the cell
+            var average = sum / count;
+
+            if( qef.intersectionCount == 0 ) {
+                position = average;
+                normal   = BurstSurfaceExtractor.normalize( direction );
+
+                return;
+            }
+
+            qef.solve( grid.centerOf( cell ), out var minimizer, out _ );
+
+            position = BurstOccupancy.intoCell( grid, cell, average, minimizer );
+            normal   = BurstSurfaceExtractor.normalize( normal );
+        }
+
+        // along an edge of a cell, from its solid end to its empty one
+        public static float3 directionOf( int solid, int edge ) {
+            var direction = float3.zero;
+
+            direction[edge / 4] = ( solid & ( 1 << BurstTables.lookupEdgeCorner( edge, 0 ) ) ) != 0 ? 1.0f : -1.0f;
+
+            return direction;
         }
 
     }
@@ -261,7 +321,9 @@ public partial class OccupancyDualContouring {
 
     // the debug view: a voxel for every vertex, in its cell, in the order of the cells, and the corners and edges of
     // those cells, each the first time a cell has it. There are no densities: a corner shows -1 inside and 1 outside.
-    // An edge the contour crosses shows the point where it does, and the direction from its solid end to its empty one
+    // An edge the contour crosses shows its 1D point, and the normal of the plane there in the cell that showed the edge
+    // first: each of the cells around an edge has a plane of its own at that point. Where that cell has no plane there,
+    // it shows the direction from the solid end of the edge to the empty one
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct DebugInformationJob : IJob {
 
@@ -272,8 +334,8 @@ public partial class OccupancyDualContouring {
         [ReadOnly] public NativeArray<float3>               positions;
         [ReadOnly] public NativeArray<float3>               normals;
 
-        public BurstGrid grid;
-        public int       edgeSearchIterations;
+        public BurstGrid               grid;
+        public BurstOccupancy.Searches searches;
 
         public NativeList<BurstDebugInformation.CornerData> corners;
         public NativeList<BurstDebugInformation.EdgeData>   edges;
@@ -300,44 +362,39 @@ public partial class OccupancyDualContouring {
             return corner;
         }
 
-        private int edgeOf( int3 cell, int edge ) {
+        // the edge of a cell, with the point and normal the cell has for it if the contour crosses it
+        private int edgeOf( int3 cell, int edge, float3 intersection, float3 normal ) {
             var key = this.grid.edgeOfCell( cell, edge );
 
             if( this.edgeIndices.TryGetValue( key, out var index ) ) {
                 return index;
             }
 
-            var axis  = edge / 4;
-            var start = this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) );
-            var end   = this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 1 ) );
-
-            var data = new BurstDebugInformation.EdgeData {
-                corner0 = this.cornerOf( start ),
-                corner1 = this.cornerOf( end )
-            };
-
-            var startMaterial = this.materials[this.grid.cornerIndex( start )];
-            var endMaterial   = this.materials[this.grid.cornerIndex( end )];
-
-            if( BurstSurfaceExtractor.intersectsContour( startMaterial, endMaterial ) ) {
-                var startIsSolid = startMaterial != MaterialIndex.Void;
-
-                var along = BurstOccupancy.searchEdge( this.grid, start, axis, startIsSolid, this.densityFunctions, this.edgeSearchIterations );
-
-                data.intersection = BurstOccupancy.positionOnEdge( this.grid, start, axis, along );
-
-                data.normal[axis] = startIsSolid ? 1.0f : -1.0f;
-            }
-
             index = this.edges.Length;
 
-            this.edges.Add( data );
+            this.edges.Add( new BurstDebugInformation.EdgeData {
+                corner0      = this.cornerOf( this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 0 ) ) ),
+                corner1      = this.cornerOf( this.grid.cornerOfCell( cell, BurstTables.lookupEdgeCorner( edge, 1 ) ) ),
+                intersection = intersection,
+                normal       = normal
+            } );
+
             this.edgeIndices.Add( key, index );
 
             return index;
         }
 
-        public void Execute( ) {
+        public unsafe void Execute( ) {
+            const int EdgeCount = SurfaceExtractor.Voxel.EdgeCount;
+
+            // the points and normals of the pieces of a cell, and those of all its pieces by edge of the cell
+            var edges   = stackalloc int[EdgeCount];
+            var points  = stackalloc float3[EdgeCount];
+            var normals = stackalloc float3[EdgeCount];
+
+            var edgePoints  = stackalloc float3[EdgeCount];
+            var edgeNormals = stackalloc float3[EdgeCount];
+
             for( var index = 0; index < this.solidCorners.Length; ++index ) {
                 var solid = this.solidCorners[index];
 
@@ -345,8 +402,25 @@ public partial class OccupancyDualContouring {
                     continue;
                 }
 
-                var cell  = this.grid.cellOf( index );
-                var count = BurstTables.lookupVertexCount( BurstCells.vertexLookupOf( this.grid, this.solidCorners, index ) );
+                var cell   = this.grid.cellOf( index );
+                var lookup = BurstCells.vertexLookupOf( this.grid, this.solidCorners, index );
+                var count  = BurstTables.lookupVertexCount( lookup );
+
+                for( var edge = 0; edge < EdgeCount; ++edge ) {
+                    edgePoints[edge]  = float3.zero;
+                    edgeNormals[edge] = float3.zero;
+                }
+
+                for( var vertex = 0; vertex < count; ++vertex ) {
+                    var pieceEdges = BurstOccupancy.planesOf( this.grid, cell, solid, lookup, vertex, this.searches, this.materials, this.densityFunctions, edges, points, normals );
+
+                    for( var pieceEdge = 0; pieceEdge < pieceEdges; ++pieceEdge ) {
+                        var hasPlane = math.any( normals[pieceEdge] != float3.zero );
+
+                        edgePoints[edges[pieceEdge]]  = points[pieceEdge];
+                        edgeNormals[edges[pieceEdge]] = hasPlane ? normals[pieceEdge] : BurstOccupancyCells.directionOf( solid, edges[pieceEdge] );
+                    }
+                }
 
                 for( var vertex = 0; vertex < count; ++vertex ) {
                     var data = new BurstDebugInformation.VoxelData {
@@ -361,8 +435,8 @@ public partial class OccupancyDualContouring {
                     for( var corner = 0; corner < SurfaceExtractor.Voxel.CornerCount; ++corner ) {
                         data.setCorner( corner, this.cornerOf( this.grid.cornerOfCell( cell, corner ) ) );
                     }
-                    for( var edge = 0; edge < SurfaceExtractor.Voxel.EdgeCount; ++edge ) {
-                        data.setEdge( edge, this.edgeOf( cell, edge ) );
+                    for( var edge = 0; edge < EdgeCount; ++edge ) {
+                        data.setEdge( edge, this.edgeOf( cell, edge, edgePoints[edge], edgeNormals[edge] ) );
                     }
 
                     this.voxels.Add( data );
@@ -381,6 +455,12 @@ public partial class OccupancyDualContouring {
     private Either<CPUVoxelization, GPUVoxelization> voxelizeBurst( IEnumerable<DensityFunction> densityFunctions ) {
         // a uniform grid of 2^resolution cells across, as uniform dual contouring has
         var grid = new BurstGrid( 1 << this.resolution );
+
+        var searches = new BurstOccupancy.Searches {
+            edgeIterations = this.edgeSearchIterations,
+            faceSamples    = this.faceSearchSamples,
+            faceIterations = this.faceSearchIterations
+        };
 
         using var functions = BurstDensityFunction.snapshot( densityFunctions, Allocator.TempJob );
         using var materials = new NativeArray<MaterialIndex>( grid.cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
@@ -425,14 +505,17 @@ public partial class OccupancyDualContouring {
         using var normals   = new NativeArray<float3>( room[0], Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
 
         new SolveCellsJob {
-            densityFunctions     = functions,
-            solidCorners         = solidCorners,
-            rowStarts            = rowStarts,
-            grid                 = grid,
-            edgeSearchIterations = this.edgeSearchIterations,
-            vertexStarts         = vertexStarts,
-            positions            = positions,
-            normals              = normals
+            densityFunctions    = functions,
+            materials           = materials,
+            solidCorners        = solidCorners,
+            rowStarts           = rowStarts,
+            grid                = grid,
+            searches            = searches,
+            qefSolverType       = this.qefSolverType,
+            minimizerIterations = this.minimizerIterations,
+            vertexStarts        = vertexStarts,
+            positions           = positions,
+            normals             = normals
         }.Schedule( grid.rowCount, BurstBatches.rows ).Complete( );
 
         burstSolveVerticesMarker.End( );
@@ -495,7 +578,7 @@ public partial class OccupancyDualContouring {
                     positions            = positions,
                     normals              = normals,
                     grid                 = grid,
-                    edgeSearchIterations = this.edgeSearchIterations,
+                    searches             = searches,
                     corners              = debugCorners,
                     edges                = debugEdges,
                     voxels               = debugVoxels,
