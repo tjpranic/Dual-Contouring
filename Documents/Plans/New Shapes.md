@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding seven shapes from https://iquilezles.org/articles/distfunctions/ to every implementation and to the interactive editor: Cylinder, Cone, Capsule, Torus, Pyramid, Octahedron and Hexagonal Prism.
 
-**Status:** step 1 done 2026-11-12, waiting for review. The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included.
+**Status:** step 2 done 2026-11-12, waiting for the user's decision on its cost (finding 10). The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included.
 
 ## Goal
 
@@ -53,9 +53,19 @@ The seven shapes can be added like Cuboid and Ellipsoid: as volumes in a scene, 
 
      Along the rim, some cells show two pieces of surface (finding 6 of Shape Rotation). Uniform and Adaptive Dual Contouring put the mass point there, up to 0.018 off.
    - **Flat faces and edges** are as good as the turned cube's:
+
      - vertices within 0.001 of the faces;
      - corners within 0.0015;
      - the mesh within 0.0012 of every edge and rim.
+10. **Burst samples cuboids and ellipsoids slower once it knows nine shapes.** Found in step 2, on the three balls of `ContouringPerformanceTest`, which are all ellipsoids.
+    - **The size of it:** with the seven new cases in `BurstDensityFunction.sample`, contours took 21 to 26% longer, and the turned Adaptive one 58%. Sampling (`SampleCorners`) took 48% longer.
+    - **How it was measured:** variants of the file were timed alternately in one session, each checked to be the one compiled (Measurements). The first variant was the file as committed.
+    - **What it is not:**
+      - not how the cases are chosen: one switch, or tests for the two old types first with the rest in a function of its own, cost the same;
+      - not the new formulas themselves: keeping them out of line, or calling them from that one function, cost the same;
+      - not `sample` appearing three times in `calculateDensity`: sampling once before the switch cost the same, and changed nothing for the file as committed.
+    - **What helps:** forcing `sample` inline (`AggressiveInlining`) takes the cost to 8 to 14% (Measurements). So part of the cost is that Burst stops inlining `sample` once it can be any of nine shapes.
+    - **Not found:** what the remaining 8 to 14% is. Burst's generated code would show it, but getting it from the command line means driving the Burst Inspector's internal API.
 
 ## Design
 
@@ -173,7 +183,23 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - Edit mode 1124 of 1124, play mode 21 of 21.
      - The 416 `Start` hashes are identical to step 0.
      - Compiling gave no errors or warnings.
-2. **Burst (small).** `BurstDensityFunction`. The Burst contour fixture, the parity tests, the model in `TopologyTest`, performance.
+2. **Burst (small).** `BurstDensityFunction`. The Burst contour fixture, the parity tests, the model in `TopologyTest`, performance. **Done 2026-11-12,** apart from the decision on its cost:
+   - **`BurstDensityFunction`:** `sampleCylinder` to `sampleHexagonalPrism`, operation for operation as the managed formulas, and the seven cases of `sample`. `BurstSurfaceExtractor` gained a `clamp` that works as `Mathf.Clamp` does. `sample` is forced inline (finding 10).
+   - **New tests:**
+     - **`BurstShapeContourTest` (180):** the contour tests of step 1 for Burst, all within the same tolerances.
+     - **Random parity:** `densitiesMaterialsAndNormalsOfEveryTypeAreTheManagedOnes` and `intersectionsBoundariesAndCorrectionsOfEveryTypeAreTheManagedOnes`, upright and turned. They use `BurstTestSupport.randomShapesOfEveryType`, from seeds of their own; the existing runs draw exactly the shapes they did. The tolerances already in use hold.
+     - **Whole meshes:** `TopologyTest.newShapes` holds the seven shapes, turned, with a second material and a subtraction. `contourIsTheManagedOneOnTheNewShapes` contours it with Managed and Burst for all three algorithms, every solver and every amount of simplification or clustering (16 cases). They agree within `BurstParity`'s tolerances.
+     - **Normals:** `HermiteNormalTest` for the pyramid and the octahedron in Burst.
+   - **The tests catch mistakes.** The cone taking the larger of `x` and `z` and the hexagonal prism's fold the wrong way round were put into Burst only. They failed:
+     - the four random parity runs of every type;
+     - all 16 whole-mesh runs;
+     - 30 Burst contour tests.
+
+     The existing parity tests, of cuboids and ellipsoids, passed, as they should.
+   - **Performance:** Burst contours of cuboids and ellipsoids are 8 to 15% slower than in step 0 (finding 10, Measurements). The plan's aim was to stay within the noise. Whether to accept it is for the user.
+   - **Verification:**
+     - Edit mode 1326 of 1326, play mode 21 of 21.
+     - The 416 `Start` hashes are identical to step 0, so forcing `sample` inline changed no output.
 3. **GPU (small).** The shader. GPU tests, `HermiteNormalTest` for the GPU, the GPU hashes (finding 6).
 4. **Interactive editor (medium).** The picking check first, then the outline function and Shapes drawing, buttons, sizes, warnings and their tests. A look at the outlines in the scene view.
 5. **Documentation (small).** README: the shapes and how each is made from its box; this plan marked complete.
@@ -195,6 +221,55 @@ Each step compiles, passes every test, and is reviewed before the next one start
 | Manifold | 128³ | turned | 31.8, 32.0 | 7.2, 7.3 | 13.7, 13.7 |
 
 The rounds agree within 2%. Sessions differed by up to 13% in Shape Rotation, so step 2 times the old and new sampling alternately in one session if these figures move by more than the noise.
+
+### Burst with the new shapes (step 2, 2026-11-12)
+
+Variants of `BurstDensityFunction.cs`, and in the last run of `BurstSurfaceExtractor.cs`, were timed alternately, two rounds each, in four sessions. A probe checked which variant was compiled before every round. Every session had the file as committed, `head`, and it gave the same times in all four and as in step 0. Voxelize in ms, the two rounds:
+
+| Variant | Uniform 128³ | Uniform 256³ | Adaptive 128³ | Manifold 128³ | Adaptive 128³ turned |
+|---|---|---|---|---|---|
+| `head`: as committed | 24.0, 24.3 | 151.8, 150.8 | 28.5, 28.2 | 29.2, 29.1 | 31.0, 31.4 |
+| one switch over nine types | 30.4, 30.5 | 188.0, 186.6 | 34.1, 35.0 | 35.5, 35.2 | 48.8, 49.5 |
+| the same, new formulas not inlined | 30.1, 30.3 | 186.3, 187.0 | 34.5, 34.4 | 35.6, 35.7 | 48.6, 48.6 |
+| old types first, the rest in a function not inlined | 30.8, 30.7 | 187.9, 189.3 | 35.3, 35.0 | 36.1, 36.3 | 49.1, 49.3 |
+| the same, Burst choosing whether to inline it | 31.3, 30.7 | 190.4, 191.3 | 35.1, 37.4 | 36.4, 37.1 | 49.6, 49.5 |
+| old types first, `sample` forced inline | 27.9, 27.6 | 171.8, 173.2 | 31.9, 32.0 | 32.8, 33.1 | 33.9, 33.6 |
+| one switch, `sample` forced inline | 27.7, 27.4 | 171.8, 173.1 | 32.1, 31.0 | 32.9, 32.7 | 34.1, 33.1 |
+| one switch, sampling once in `calculateDensity` | 30.1, 30.4 | 185.4, 187.5 | 33.9, 34.1 | 35.4, 35.5 | 47.7, 48.5 |
+| the same, `sample` forced inline | 27.6, 27.1 | 171.6, 172.3 | 31.7, 31.7 | 32.5, 32.4 | 33.5, 33.8 |
+| `head`, sampling once in `calculateDensity` | 24.4, 24.2 | 150.9, 150.9 | 27.8, 27.8 | 29.7, 29.0 | 30.6, 30.4 |
+
+SampleCorners at Uniform 128³: 5.8 ms for `head`, 8.5 to 8.9 with the switch, 7.7 to 7.9 forced inline. The variant kept is one switch with `sample` forced inline: 8 to 14% slower than `head`, against 21 to 58%.
+
+**`ContouringPerformanceTest` with the variant kept,** in a later session, against step 0. Voxelize in ms:
+
+| Algorithm | Cells | Model | Step 0 | Step 2 | Change |
+|---|---|---|---|---|---|
+| Uniform | 128³ | upright | 24.3, 23.9 | 27.2, 28.0 | +14% |
+| Uniform | 256³ | upright | 151.7, 150.2 | 173.5, 174.5 | +15% |
+| Adaptive | 128³ | upright | 28.8, 28.2 | 32.3, 32.4 | +14% |
+| Manifold | 128³ | upright | 29.4, 29.3 | 32.4, 32.6 | +11% |
+| Uniform | 128³ | turned | 26.6, 26.8 | 29.7, 29.5 | +11% |
+| Adaptive | 128³ | turned | 30.8, 30.1 | 33.9, 34.1 | +12% |
+| Manifold | 128³ | turned | 31.8, 32.0 | 34.7, 34.6 | +9% |
+
+**What each shape costs to sample,** with the variant kept. One shape of each type was contoured at Uniform 128³, turned by (30°, -60°, 75°) and half the grid across; the torus is a fifth of the grid high. Each figure is the median of 7 contours, in ms, and the two rounds agreed within 0.2 ms. `SampleCorners` samples every corner of the grid once, so it shows the cost of a sample. `SolveVertices` also depends on how much surface there is.
+
+| Shape | Vertices | SampleCorners | SolveVertices | Voxelize |
+|---|---|---|---|---|
+| Cuboid | 39,490 | 4.25 | 8.05 | 17.5 |
+| Ellipsoid | 19,310 | 4.64 | 5.31 | 13.0 |
+| Cylinder | 29,844 | 4.64 | 7.07 | 15.9 |
+| Cone | 15,615 | 5.49 | 5.08 | 13.3 |
+| Capsule | 19,310 | 4.27 | 5.10 | 12.5 |
+| Torus | 19,538 | 4.54 | 5.35 | 13.1 |
+| Pyramid | 19,692 | 5.73 | 5.38 | 14.2 |
+| Octahedron | 10,126 | 5.11 | 3.58 | 10.8 |
+| Hexagonal prism | 27,442 | 5.47 | 7.27 | 16.7 |
+
+The capsule, torus and cylinder sample as fast as the ellipsoid. The octahedron costs 10% more, the cone and the prism 18%, the pyramid 23%.
+
+Before `sample` was forced inline, the same probe gave 6.2 to 9.8 ms for `SampleCorners`, 7.15 for the ellipsoid.
 
 ## Out of scope
 

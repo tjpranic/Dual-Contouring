@@ -226,13 +226,23 @@ public class BurstSurfaceExtractorTest {
     // turned, the same shapes, points and edges are compared again, with every shape turned by a rotation of its own
     [Test]
     public void densitiesMaterialsAndNormalsAreTheManagedOnes( [Values( false, true )] bool turned ) {
-        var random    = new System.Random( 1 );
-        var rotations = new System.Random( 101 );
+        assertDensitiesMaterialsAndNormals( turned, 1, 101, BurstTestSupport.randomShapes );
+    }
+
+    // the same with shapes of every type, drawn by a generator of their own
+    [Test]
+    public void densitiesMaterialsAndNormalsOfEveryTypeAreTheManagedOnes( [Values( false, true )] bool turned ) {
+        assertDensitiesMaterialsAndNormals( turned, 4, 104, BurstTestSupport.randomShapesOfEveryType );
+    }
+
+    private static void assertDensitiesMaterialsAndNormals( bool turned, int seed, int rotationSeed, System.Func<System.Random, int, FixedDensityFunction[]> randomShapes ) {
+        var random    = new System.Random( seed );
+        var rotations = new System.Random( rotationSeed );
 
         var nearSurfaces = 0;
 
         for( var set = 0; set < shapeSets; ++set ) {
-            var shapes = BurstTestSupport.randomShapes( random, 1 + random.Next( 5 ) );
+            var shapes = randomShapes( random, 1 + random.Next( 5 ) );
             var points = pointsFor( random, shapes );
 
             if( turned ) {
@@ -312,8 +322,19 @@ public class BurstSurfaceExtractorTest {
 
     [Test]
     public void intersectionsBoundariesAndCorrectionsAreTheManagedOnes( [Values( false, true )] bool turned ) {
-        var random    = new System.Random( 2 );
-        var rotations = new System.Random( 102 );
+        assertIntersectionsBoundariesAndCorrections( turned, 2, 102, false );
+    }
+
+    // the same with shapes of every type, drawn by a generator of their own
+    [Test]
+    public void intersectionsBoundariesAndCorrectionsOfEveryTypeAreTheManagedOnes( [Values( false, true )] bool turned ) {
+        assertIntersectionsBoundariesAndCorrections( turned, 5, 105, true );
+    }
+
+    // with every type, the first two shapes are of any type, else a cuboid and an ellipsoid
+    private static void assertIntersectionsBoundariesAndCorrections( bool turned, int seed, int rotationSeed, bool everyType ) {
+        var random    = new System.Random( seed );
+        var rotations = new System.Random( rotationSeed );
 
         var crossings  = 0;
         var boundaries = 0;
@@ -323,10 +344,13 @@ public class BurstSurfaceExtractorTest {
             // contour, and more shapes on top of them
             var origin = BurstTestSupport.range( random, -Vector3.one * 0.2f, Vector3.one * 0.2f );
 
+            var first  = everyType ? BurstTestSupport.randomType( random ) : DensityFunction.Type.Cuboid;
+            var second = everyType ? BurstTestSupport.randomType( random ) : DensityFunction.Type.Ellipsoid;
+
             var shapes = new[] {
-                new FixedDensityFunction( DensityFunction.Type.Cuboid,    origin,                                                                    BurstTestSupport.range( random, Vector3.one * 0.15f, Vector3.one * 0.3f ), DensityFunction.Combination.Union, MaterialIndex.Material0 ),
-                new FixedDensityFunction( DensityFunction.Type.Ellipsoid, origin + BurstTestSupport.range( random, -Vector3.one * 0.1f, Vector3.one * 0.1f ), BurstTestSupport.range( random, Vector3.one * 0.1f, Vector3.one * 0.25f ), DensityFunction.Combination.Union, MaterialIndex.Material1 )
-            }.Concat( BurstTestSupport.randomShapes( random, random.Next( 3 ) ) ).ToArray( );
+                new FixedDensityFunction( first,  origin,                                                                    BurstTestSupport.range( random, Vector3.one * 0.15f, Vector3.one * 0.3f ), DensityFunction.Combination.Union, MaterialIndex.Material0 ),
+                new FixedDensityFunction( second, origin + BurstTestSupport.range( random, -Vector3.one * 0.1f, Vector3.one * 0.1f ), BurstTestSupport.range( random, Vector3.one * 0.1f, Vector3.one * 0.25f ), DensityFunction.Combination.Union, MaterialIndex.Material1 )
+            }.Concat( everyType ? BurstTestSupport.randomShapesOfEveryType( random, random.Next( 3 ) ) : BurstTestSupport.randomShapes( random, random.Next( 3 ) ) ).ToArray( );
 
             if( turned ) {
                 shapes = BurstTestSupport.randomlyRotated( shapes, rotations );

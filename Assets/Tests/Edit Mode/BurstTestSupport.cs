@@ -91,12 +91,25 @@ public static class BurstTestSupport {
         MaterialIndex.Material3
     };
 
-    // shapes of every type in the grid, combined in every way, of every material. The first one is a union, so that
+    // cuboids and ellipsoids in the grid, combined in every way, of every material. The first one is a union, so that
     // there is something for the others to cut into or intersect with
     public static FixedDensityFunction[] randomShapes( System.Random random, int count ) {
+        return randomShapes( random, count, ( types ) => types.Next( 2 ) == 0 ? DensityFunction.Type.Cuboid : DensityFunction.Type.Ellipsoid );
+    }
+
+    // the same, of every type there is
+    public static FixedDensityFunction[] randomShapesOfEveryType( System.Random random, int count ) {
+        return randomShapes( random, count, randomType );
+    }
+
+    public static DensityFunction.Type randomType( System.Random random ) {
+        return ( DensityFunction.Type )random.Next( Enum.GetValues( typeof( DensityFunction.Type ) ).Length );
+    }
+
+    private static FixedDensityFunction[] randomShapes( System.Random random, int count, Func<System.Random, DensityFunction.Type> typeOf ) {
         return Enumerable.Range( 0, count ).Select(
             ( index ) => new FixedDensityFunction(
-                random.Next( 2 ) == 0 ? DensityFunction.Type.Cuboid : DensityFunction.Type.Ellipsoid,
+                typeOf( random ),
                 range( random, -Vector3.one * 0.4f, Vector3.one * 0.4f ),
                 range( random, Vector3.one * 0.05f, Vector3.one * 0.4f ),
                 index == 0 ? Combination.Union : ( Combination )random.Next( 3 ),

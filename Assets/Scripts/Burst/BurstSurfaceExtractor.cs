@@ -22,6 +22,17 @@ public static class BurstSurfaceExtractor {
         return a > b ? a : b;
     }
 
+    // Mathf.Clamp
+    public static float clamp( float value, float minimum, float maximum ) {
+        if( value < minimum ) {
+            return minimum;
+        }
+        if( value > maximum ) {
+            return maximum;
+        }
+        return value;
+    }
+
     // Vector3.Magnitude
     public static float magnitude( float3 vector ) {
         return math.sqrt( ( vector.x * vector.x ) + ( vector.y * vector.y ) + ( vector.z * vector.z ) );

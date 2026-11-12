@@ -56,6 +56,11 @@ public class UniformDualContouringBurstTest : TopologyTest {
     }
 
     [Test]
+    public void contourIsTheManagedOneOnTheNewShapes( [Values] QEFSolverType solver ) {
+        this.assertSameContour( 4, solver, newShapes );
+    }
+
+    [Test]
     public void contourIsTheManagedOneWithAVertexAtTheOrigin( ) {
         this.assertSameContour( 3, QEFSolverType.SVD, cubeWithCornerAtOrigin ); // 8^3 cells
     }

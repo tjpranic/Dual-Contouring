@@ -334,3 +334,11 @@ public class ManagedShapeContourTest : ShapeContourTest {
     }
 
 }
+
+public class BurstShapeContourTest : ShapeContourTest {
+
+    public BurstShapeContourTest( ) {
+        this.implementation = ImplementationType.Burst;
+    }
+
+}

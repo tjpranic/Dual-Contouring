@@ -48,6 +48,19 @@ public abstract class TopologyTest : ContouringTest {
         cuboid    ( new Vector3(  0.1f, -0.2f,    0.1f   ), new Vector3( 0.25f, 0.06f, 0.1f  ), Combination.Union, MaterialIndex.Material1 ).rotated( Quaternion.AngleAxis( 30.0f, Vector3.up ) )
     };
 
+    // the shapes of the article other than the box and the ellipsoid, each turned: a cylinder and a cone that meet, a
+    // torus of a second material around them, a capsule with an octahedron cut out of it, a pyramid and a hexagonal
+    // prism. Their curved surfaces, rims, tips and corners all lie across the grid at angles
+    protected static readonly Shape[] newShapes = {
+        new Shape( DensityFunction.Type.Cylinder,       new Vector3( -0.2f,  0.15f,  0.0f  ), Quaternion.Euler( 20.0f,  0.0f,  30.0f  ), new Vector3( 0.12f, 0.18f, 0.12f ), Combination.Union,       MaterialIndex.Material0 ),
+        new Shape( DensityFunction.Type.Cone,           new Vector3(  0.2f,  0.15f,  0.05f ), Quaternion.Euler( -30.0f, 40.0f, 10.0f  ), new Vector3( 0.14f, 0.18f, 0.14f ), Combination.Union,       MaterialIndex.Material0 ),
+        new Shape( DensityFunction.Type.Torus,          new Vector3(  0.0f,  0.1f,   0.0f  ), Quaternion.Euler( 70.0f,  10.0f, 0.0f   ), new Vector3( 0.32f, 0.08f, 0.32f ), Combination.Union,       MaterialIndex.Material1 ),
+        new Shape( DensityFunction.Type.Capsule,        new Vector3(  0.0f, -0.22f, -0.15f ), Quaternion.AngleAxis( 80.0f, new Vector3( 1.0f, 0.0f, 1.0f ) ), new Vector3( 0.1f, 0.22f, 0.1f ), Combination.Union, MaterialIndex.Material0 ),
+        new Shape( DensityFunction.Type.Octahedron,     new Vector3(  0.05f, -0.22f, -0.15f ), Quaternion.Euler( 10.0f,  20.0f, 30.0f  ), new Vector3( 0.1f,  0.1f,  0.1f  ), Combination.Subtraction, MaterialIndex.Material0 ),
+        new Shape( DensityFunction.Type.Pyramid,        new Vector3( -0.22f, -0.2f,   0.2f  ), Quaternion.Euler( 0.0f,   30.0f, 15.0f  ), new Vector3( 0.13f, 0.12f, 0.13f ), Combination.Union,       MaterialIndex.Material0 ),
+        new Shape( DensityFunction.Type.HexagonalPrism, new Vector3(  0.22f, -0.2f,   0.22f ), Quaternion.Euler( 40.0f,  0.0f,  -20.0f ), new Vector3( 0.13f, 0.1f,  0.12f ), Combination.Union,       MaterialIndex.Material0 )
+    };
+
     protected static Shape[] shapesOf( Model model ) {
         return model switch {
             // sits off the grid lines so no corner or edge of the grid lands exactly on the surface
