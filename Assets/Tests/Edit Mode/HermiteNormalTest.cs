@@ -107,7 +107,7 @@ public class HermiteNormalTest : ContouringTest {
     // that face. So as with the turned cube, an intersection's normal is that of one face only while, by more than twice
     // the step, that face's plane is the nearest inside, or the point lies over the face outside. The others are left out
     [Test]
-    public void normalsOfFlatFacedShapesAreTheNormalsOfTheirFaces( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation, [Values( DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron )] DensityFunction.Type type ) {
+    public void normalsOfFlatFacedShapesAreTheNormalsOfTheirFaces( [Values] ImplementationType implementation, [Values( DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron )] DensityFunction.Type type ) {
         // turned, they reach at most 0.41 from their center, inside the grid
         var extents  = new Vector3( 0.25f, 0.2f, 0.25f );
         var rotation = Quaternion.Euler( 30.0f, -60.0f, 75.0f );

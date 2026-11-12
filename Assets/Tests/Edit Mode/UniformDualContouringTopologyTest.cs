@@ -40,6 +40,14 @@ public class UniformDualContouringTopologyTest : TopologyTest {
         assertClosed( this.contour( voxelizer ) );
     }
 
+    // the same of the shapes of the article other than the box and the ellipsoid, all turned
+    [Test]
+    public void surfaceOfTheNewShapesIsClosed( [Values] ImplementationType implementation ) {
+        var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, newShapes ); // 16^3 cells
+
+        assertClosed( this.contour( voxelizer ) );
+    }
+
     [Test]
     public void materialBoundaryIsFollowed( [Values] ImplementationType implementation ) {
         var voxelizer = this.createUniformVoxelizer( 4, implementation, QEFSolverType.SVD, slabWithBand ); // 16^3 cells

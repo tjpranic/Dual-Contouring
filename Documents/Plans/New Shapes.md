@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding seven shapes from https://iquilezles.org/articles/distfunctions/ to every implementation and to the interactive editor: Cylinder, Cone, Capsule, Torus, Pyramid, Octahedron and Hexagonal Prism.
 
-**Status:** step 2 done 2026-11-12, waiting for the user's decision on its cost (finding 10). The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included.
+**Status:** step 3 done 2026-11-12, waiting for review and for the user's decision on the GPU's cost (finding 11). The user asked for these seven on 2026-11-12, after a review of the page found they fit without new parameters. Step 0 was done the same day, and the user approved the plan as written ("Let's start"), the design choices below included. Steps 1 and 2 followed the same day. The user accepted the cost of step 2: Burst contours of cuboids and ellipsoids are 8 to 15% slower (finding 10).
 
 ## Goal
 
@@ -66,6 +66,12 @@ The seven shapes can be added like Cuboid and Ellipsoid: as volumes in a scene, 
       - not `sample` appearing three times in `calculateDensity`: sampling once before the switch cost the same, and changed nothing for the file as committed.
     - **What helps:** forcing `sample` inline (`AggressiveInlining`) takes the cost to 8 to 14% (Measurements). So part of the cost is that Burst stops inlining `sample` once it can be any of nine shapes.
     - **Not found:** what the remaining 8 to 14% is. Burst's generated code would show it, but getting it from the command line means driving the Burst Inspector's internal API.
+    - **Decision:** the user accepted the cost on 2026-11-12.
+11. **The GPU too takes longer over cuboids and ellipsoids once its shader has the new shapes.** Found in step 3.
+    - **The size of it:** a remesh of the three balls takes 11% longer, at 64³ and 128³ alike (Measurements).
+    - **How it was measured:** the shader as committed and the new one were timed alternately in one session. A probe checked which one ran: the old shader samples a cylinder as 0, which gives no surface.
+    - **Not looked into:** the cause. The likely one is that a kernel takes as many registers as its largest path needs, so with the new shapes fewer threads run at once, whatever shapes are contoured.
+    - **Output unchanged:** unlike rotation (finding 7 of Shape Rotation), the GPU's meshes of cuboids and ellipsoids come out bit for bit as before.
 
 ## Design
 
@@ -196,11 +202,24 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - 30 Burst contour tests.
 
      The existing parity tests, of cuboids and ellipsoids, passed, as they should.
-   - **Performance:** Burst contours of cuboids and ellipsoids are 8 to 15% slower than in step 0 (finding 10, Measurements). The plan's aim was to stay within the noise. Whether to accept it is for the user.
+   - **Performance:** Burst contours of cuboids and ellipsoids are 8 to 15% slower than in step 0 (finding 10, Measurements). The plan's aim was to stay within the noise. The user accepted the cost on 2026-11-12, rather than looking further into Burst's code or giving models of cuboids and ellipsoids a path of their own.
    - **Verification:**
      - Edit mode 1326 of 1326, play mode 21 of 21.
      - The 416 `Start` hashes are identical to step 0, so forcing `sample` inline changed no output.
-3. **GPU (small).** The shader. GPU tests, `HermiteNormalTest` for the GPU, the GPU hashes (finding 6).
+3. **GPU (small).** The shader. GPU tests, `HermiteNormalTest` for the GPU, the GPU hashes (finding 6). **Done 2026-11-12:**
+   - **The shader:** `sampleCylinder` to `sampleHexagonalPrism` in `UniformDualContouring.compute`, written from the C# ones, with `DENSITY_FUNCTION_TYPE_CYLINDER` to `DENSITY_FUNCTION_TYPE_HEXAGONAL_PRISM` (2 to 8). Two names had to change from the C# code: `half` is a type in HLSL and `distance` a function.
+   - **Shader warnings:** the first version had two, "use of potentially uninitialized variable", in the pyramid and the octahedron. The code after their early `return`s is in `else` branches now, as in commit 1e87ed3, and the shader compiles without messages.
+   - **New tests:**
+     - `verticesMatchCPUOnTheNewShapes`: GPU vertices on `TopologyTest.newShapes` are within 0.05 cells of the CPU's;
+     - `surfaceOfTheNewShapesIsClosed`, for all three Uniform implementations;
+     - `HermiteNormalTest`'s pyramid and octahedron for the GPU.
+   - **The tests catch mistakes.** The torus' ring the wrong way round and the pyramid without its inside correction were put into the shader only. Three tests failed:
+     - the vertex test, with 239 of 510 vertices off;
+     - the pyramid's normals on the GPU;
+     - the GPU's closed surface.
+   - **Finding 6 did not happen:** the 32 GPU lines of the `Start` hashes are identical to step 0, and so are the rest.
+   - **Speed:** the GPU's remeshes of cuboids and ellipsoids take 11% longer (finding 11). Whether to accept it is for the user.
+   - **Verification:** edit mode 1332 of 1332, play mode 21 of 21, the 416 `Start` hashes identical to step 0.
 4. **Interactive editor (medium).** The picking check first, then the outline function and Shapes drawing, buttons, sizes, warnings and their tests. A look at the outlines in the scene view.
 5. **Documentation (small).** README: the shapes and how each is made from its box; this plan marked complete.
 
@@ -270,6 +289,15 @@ SampleCorners at Uniform 128³: 5.8 ms for `head`, 8.5 to 8.9 with the switch, 7
 The capsule, torus and cylinder sample as fast as the ellipsoid. The octahedron costs 10% more, the cone and the prism 18%, the pyramid 23%.
 
 Before `sample` was forced inline, the same probe gave 6.2 to 9.8 ms for `SampleCorners`, 7.15 for the ellipsoid.
+
+### GPU with the new shapes (step 3, 2026-11-12)
+
+The remesh probe of Shape Rotation times a whole Uniform GPU remesh of the three balls, mean of 5. The shader as committed and the new one were timed alternately, twice each, in one session, with Unity in front:
+
+| Cells | Shader as committed (ms) | New shader (ms) |
+|---|---|---|
+| 64³ | 25.2, 26.1 | 28.9, 28.3 |
+| 128³ | 118.3, 115.0 | 129.0, 129.4 |
 
 ## Out of scope
 

@@ -38,6 +38,11 @@ public class UniformDualContouringGPUTest : TopologyTest {
         this.assertVerticesMatchCPU( turnedShapes );
     }
 
+    [Test]
+    public void verticesMatchCPUOnTheNewShapes( ) {
+        this.assertVerticesMatchCPU( newShapes );
+    }
+
     // the compute shader reads density functions with the layout of DensityFunction.Data, its buffer steps through them
     // by the size Marshal gives, and SetData copies their bytes as they are in memory. All three have to agree, which a
     // bool, one byte in memory and four to Marshal, would break
