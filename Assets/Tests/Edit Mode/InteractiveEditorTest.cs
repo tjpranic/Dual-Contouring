@@ -41,8 +41,18 @@ public class InteractiveEditorTest {
         new( Algorithm.Adaptive, ImplementationType.Managed ),
         new( Algorithm.Adaptive, ImplementationType.Burst ),
         new( Algorithm.Manifold, ImplementationType.Managed ),
-        new( Algorithm.Manifold, ImplementationType.Burst )
+        new( Algorithm.Manifold, ImplementationType.Burst ),
+        new( Algorithm.Occupancy, ImplementationType.Burst ),
+        new( Algorithm.Occupancy, ImplementationType.GPU )
     };
+
+    // the algorithms that have a managed implementation
+    private static readonly Algorithm[] managedAlgorithms = variants.Where( ( variant ) => variant.implementation == ImplementationType.Managed ).Select( ( variant ) => variant.algorithm ).ToArray( );
+
+    // the algorithms that contour an octree, whose resolution is one more than that of a uniform grid of as many cells
+    private static bool isOctree( Algorithm algorithm ) {
+        return algorithm == Algorithm.Adaptive || algorithm == Algorithm.Manifold;
+    }
 
     // the variants that contour by themselves
     private static readonly Variant[] automaticVariants = variants.Where( ( variant ) => variant.implementation != ImplementationType.Managed ).ToArray( );
@@ -131,7 +141,7 @@ public class InteractiveEditorTest {
         editor.select( variant.algorithm );
 
         editor.voxelizer.implementationType = variant.implementation;
-        editor.voxelizer.resolution         = variant.algorithm == Algorithm.Uniform ? 4 : 5;
+        editor.voxelizer.resolution         = isOctree( variant.algorithm ) ? 5 : 4;
 
         return editor;
     }
@@ -143,7 +153,10 @@ public class InteractiveEditorTest {
         Assert.IsNotNull( editor.GetComponent<UniformDualContouring>( ) );
         Assert.IsNotNull( editor.GetComponent<AdaptiveDualContouring>( ) );
         Assert.IsNotNull( editor.GetComponent<ManifoldDualContouring>( ) );
+        Assert.IsNotNull( editor.GetComponent<OccupancyDualContouring>( ) );
         Assert.IsNotNull( editor.GetComponent<MeshFilter>( ) );
+
+        CollectionAssert.AreEquivalent( editor.GetComponents<Voxelizer>( ), editor.voxelizers( ), "every voxelizer" );
         Assert.AreEqual( Algorithm.Uniform, editor.algorithm );
     }
 
@@ -208,11 +221,99 @@ public class InteractiveEditorTest {
         Assert.AreEqual( ImplementationType.Burst, editor.voxelizer.implementationType );
     }
 
+    // occupancy-based dual contouring has a uniform grid, so as many cells is the same resolution. The settings it does
+    // not use and does not show go through it, so that they are not lost on the way to another algorithm
+    [Test]
+    public void selectingOccupancyCarriesTheCommonSettingsOver( [Values( Algorithm.Uniform, Algorithm.Adaptive, Algorithm.Manifold )] Algorithm from ) {
+        var editor = this.createEditor( );
+
+        editor.select( from );
+
+        var other = editor.voxelizer;
+
+        other.resolution                  = isOctree( from ) ? 6 : 5;
+        other.minimizerIterations         = 3;
+        other.binarySearchIterations      = 9;
+        other.surfaceCorrectionIterations = 2;
+        other.implementationType          = ImplementationType.Burst;
+        other.qefSolverType               = QEFSolverType.Simple;
+        other.intersectionApproximation   = Approximation.LinearInterpolation;
+        other.vertexNormals               = VertexNormals.Split;
+        other.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
+
+        editor.select( Algorithm.Occupancy );
+
+        var occupancy = editor.voxelizer;
+
+        Assert.IsInstanceOf<OccupancyDualContouring>( occupancy );
+        Assert.AreEqual( 5,                                              occupancy.resolution );
+        Assert.AreEqual( 3,                                              occupancy.minimizerIterations );
+        Assert.AreEqual( ImplementationType.Burst,                       occupancy.implementationType );
+        Assert.AreEqual( QEFSolverType.Simple,                           occupancy.qefSolverType );
+        Assert.AreEqual( VertexNormals.Split,                            occupancy.vertexNormals );
+        Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  occupancy.debugFlags );
+
+        // back, from settings that say something else
+        other.resolution                  = 3;
+        other.binarySearchIterations      = 4;
+        other.surfaceCorrectionIterations = 0;
+        other.intersectionApproximation   = Approximation.BinarySearch;
+
+        editor.select( from );
+
+        Assert.AreEqual( isOctree( from ) ? 6 : 5,           other.resolution, "back to the same number of cells" );
+        Assert.AreEqual( 9,                                  other.binarySearchIterations );
+        Assert.AreEqual( 2,                                  other.surfaceCorrectionIterations );
+        Assert.AreEqual( Approximation.LinearInterpolation,  other.intersectionApproximation );
+    }
+
+    // there is no managed occupancy-based dual contouring
+    [Test]
+    public void selectingOccupancyTurnsManagedIntoBurst( [ValueSource( nameof( managedAlgorithms ) )] Algorithm from ) {
+        var editor = this.createEditor( );
+
+        editor.select( from );
+        editor.voxelizer.implementationType = ImplementationType.Managed;
+
+        editor.select( Algorithm.Occupancy );
+
+        Assert.AreEqual( ImplementationType.Burst, editor.voxelizer.implementationType );
+        Assert.IsTrue( editor.contoursByItself );
+    }
+
+    // uniform and occupancy-based dual contouring both have a GPU implementation
+    [Test]
+    public void selectingBetweenUniformAndOccupancyKeepsGPU( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm from ) {
+        var editor = this.createEditor( );
+
+        editor.select( from );
+        editor.voxelizer.implementationType = ImplementationType.GPU;
+
+        editor.select( from == Algorithm.Uniform ? Algorithm.Occupancy : Algorithm.Uniform );
+
+        Assert.AreEqual( ImplementationType.GPU, editor.voxelizer.implementationType );
+    }
+
+    [Test]
+    public void selectingAnOctreeFromOccupancyTurnsGPUIntoBurst( [Values( Algorithm.Adaptive, Algorithm.Manifold )] Algorithm algorithm ) {
+        var editor = this.createEditor( );
+
+        editor.select( Algorithm.Occupancy );
+        editor.voxelizer.implementationType = ImplementationType.GPU;
+        editor.voxelizer.resolution         = 5;
+
+        editor.select( algorithm );
+
+        Assert.AreEqual( ImplementationType.Burst, editor.voxelizer.implementationType );
+        Assert.AreEqual( 6, editor.voxelizer.resolution, "as many leaves as there were cells" );
+    }
+
     [Test]
     public void selectingKeepsWhatOnlyOneAlgorithmHas( ) {
-        var editor   = this.createEditor( );
-        var adaptive = editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring;
-        var manifold = editor.voxelizerOf( Algorithm.Manifold ) as ManifoldDualContouring;
+        var editor    = this.createEditor( );
+        var adaptive  = editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring;
+        var manifold  = editor.voxelizerOf( Algorithm.Manifold ) as ManifoldDualContouring;
+        var occupancy = editor.voxelizerOf( Algorithm.Occupancy ) as OccupancyDualContouring;
 
         adaptive.simplification  = true;
         adaptive.errorThreshold  = 0.125f;
@@ -220,8 +321,15 @@ public class InteractiveEditorTest {
         manifold.errorThreshold  = 0.25f;
         manifold.enforceManifold = false;
 
+        occupancy.edgeSearchIterations = 12;
+        occupancy.faceSearchSamples    = 6;
+        occupancy.faceSearchIterations = 9;
+        occupancy.keepVerticesInCells  = false;
+        occupancy.splitQuads           = false;
+
         editor.select( Algorithm.Adaptive );
         editor.select( Algorithm.Manifold );
+        editor.select( Algorithm.Occupancy );
         editor.select( Algorithm.Uniform );
 
         Assert.IsTrue  ( adaptive.simplification );
@@ -229,6 +337,12 @@ public class InteractiveEditorTest {
         Assert.IsFalse ( adaptive.topologySafe );
         Assert.AreEqual( 0.25f, manifold.errorThreshold );
         Assert.IsFalse ( manifold.enforceManifold );
+
+        Assert.AreEqual( 12, occupancy.edgeSearchIterations );
+        Assert.AreEqual( 6,  occupancy.faceSearchSamples );
+        Assert.AreEqual( 9,  occupancy.faceSearchIterations );
+        Assert.IsFalse ( occupancy.keepVerticesInCells );
+        Assert.IsFalse ( occupancy.splitQuads );
     }
 
     // an octree of resolution 8 has 128^3 leaves, a uniform grid of resolution 2 has 4^3 cells: the slider's ends
@@ -562,7 +676,7 @@ public class InteractiveEditorTest {
         Assert.IsFalse( editor.outlinesOnTop, "outlines on top" );
 
         editor.select( algorithm );
-        editor.voxelizer.resolution = algorithm == Algorithm.Uniform ? 5 : 6;
+        editor.voxelizer.resolution = isOctree( algorithm ) ? 6 : 5;
 
         // 32 cells across, or 32 leaves
         Assert.AreEqual( 1.0f / 32.0f, editor.cellSize );
@@ -710,7 +824,7 @@ public class InteractiveEditorTest {
     }
 
     [Test]
-    public void managedDoesNotContourWhenEnabled( [Values] Algorithm algorithm ) {
+    public void managedDoesNotContourWhenEnabled( [ValueSource( nameof( managedAlgorithms ) )] Algorithm algorithm ) {
         var editor = configure( this.createEditor( ), new( algorithm, ImplementationType.Managed ) );
 
         addStarterModel( editor.transform );
@@ -761,10 +875,10 @@ public class InteractiveEditorTest {
         Assert.AreSame( mesh, shown( editor ), "after enabling" );
     }
 
-    // the GPU implementation makes its compute buffers anew after the editor was disabled
+    // the GPU implementations make their compute buffers anew after the editor was disabled
     [Test]
-    public void gpuContoursAfterTheEditorWasDisabled( ) {
-        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.GPU ) );
+    public void gpuContoursAfterTheEditorWasDisabled( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm ) {
+        var editor = configure( this.createEditor( ), new( algorithm, ImplementationType.GPU ) );
 
         addStarterModel( editor.transform );
 
@@ -876,7 +990,16 @@ public class InteractiveEditorTest {
         ["adaptive threshold"]      = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).errorThreshold = 0.5f ),
         ["adaptive topology safe"]  = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).topologySafe   = false ),
         ["manifold threshold"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorThreshold  = 0.5f ),
-        ["manifold criterion"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).enforceManifold = false )
+        ["manifold criterion"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).enforceManifold = false ),
+        ["occupancy edge search"]   = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).edgeSearchIterations -= 1 ),
+        ["occupancy face samples"]  = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).faceSearchSamples    += 1 ),
+        ["occupancy face search"]   = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).faceSearchIterations -= 1 ),
+        ["occupancy vertices in cells"] = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).keepVerticesInCells = false ),
+        ["occupancy split"]         = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).splitQuads = false ),
+        ["occupancy resolution"]    = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.resolution    += 1 ),
+        ["occupancy implementation"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.implementationType = ImplementationType.GPU ),
+        ["occupancy solver"]        = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.qefSolverType = QEFSolverType.Simple ),
+        ["occupancy vertex normals"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split )
     };
 
     // and of what a contour does not depend on
@@ -893,7 +1016,13 @@ public class InteractiveEditorTest {
         ["debug line thickness"]         = ( null, ( p ) => p.editor.voxelizer.debugLineThickness = 4.0f ),
         ["renderer materials"]           = ( null, ( p ) => p.editor.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[3] ),
         ["unselected voxelizer setting"] = ( null, ( p ) => ( p.editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring ).errorThreshold = 0.5f ),
-        ["unselected voxelizer resolution"] = ( null, ( p ) => p.editor.voxelizerOf( Algorithm.Manifold ).resolution = 7 )
+        ["unselected voxelizer resolution"] = ( null, ( p ) => p.editor.voxelizerOf( Algorithm.Manifold ).resolution = 7 ),
+        ["unselected occupancy setting"] = ( null, ( p ) => ( p.editor.voxelizerOf( Algorithm.Occupancy ) as OccupancyDualContouring ).splitQuads = false ),
+
+        // occupancy-based dual contouring never looks at the settings that place points by distance
+        ["occupancy binary search iterations"] = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.binarySearchIterations      += 1 ),
+        ["occupancy surface correction"]       = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.surfaceCorrectionIterations += 1 ),
+        ["occupancy intersection"]             = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.intersectionApproximation   = Approximation.LinearInterpolation )
     };
 
     public static IEnumerable<string> contourInputNames => contourInputs.Keys;
@@ -986,7 +1115,7 @@ public class InteractiveEditorTest {
     }
 
     [Test]
-    public void managedOnlyContoursWhenAsked( [Values] Algorithm algorithm ) {
+    public void managedOnlyContoursWhenAsked( [ValueSource( nameof( managedAlgorithms ) )] Algorithm algorithm ) {
         var editor = configure( this.createEditor( 5.0f ), new( algorithm, ImplementationType.Managed ) );
 
         addStarterModel( editor.transform );

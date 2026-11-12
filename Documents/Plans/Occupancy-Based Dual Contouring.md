@@ -2,7 +2,7 @@
 
 Plan written 2026-11-12 for adding the algorithm of *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024; `Documents/Papers/Occupancy-Based Dual Contouring.md`) as a fourth algorithm, with a Burst and a GPU implementation and no managed one.
 
-**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12, with what it measured for that question (finding 15). The user then decided it ("We'll make it a setting, on by default, as you suggest") and asked for step 4, which was done on 2026-11-13 and waits for review.
+**Status:** in progress. The user accepted the five decisions at the end as recommended on 2026-11-12 ("All decisions as you recommend") and asked for step 0. Step 0 was done the same day. After it the user decided to give Manifold Dual Contouring the complement rule too ("We'll add the rule to the Manifold Dual Contouring implementation") and asked for step 1. Both were done on 2026-11-12, and the user approved them ("Looks good. Continue."). Step 2 was done the same day; the user had step 3 go ahead and left the question about the clamp (finding 14) for after it ("Continue with step 3 for now, we'll decide the clamp after that"). Step 3 was done on 2026-11-12, with what it measured for that question (finding 15). The user then decided it ("We'll make it a setting, on by default, as you suggest") and asked for step 4, which was done on 2026-11-13. The user approved it, gave the go-ahead for the scene and asked for step 5 ("All looks good to me. You can add the algorithm to the interactive editor scene. Continue with step 5."). Step 5 was done on 2026-11-13 and waits for review.
 
 ## Goal
 
@@ -64,7 +64,7 @@ The paper (ODC below) starts from Manifold Dual Contouring on a uniform grid, wh
 8. **A 1D point has up to four planes,** one in each cell around its edge, because each cell has its own two 2D points next to it. The gradient gave an edge one normal.
 9. **The quad format fits.** Four triangles around a 1D point are twelve indices, which is two of the GPU's quads, so the draw shader and the mesh readback need no change.
 10. **The voxelizer's distance settings have no meaning here.** Binary Search Iterations (6, at most 12), Intersection Approximation and Surface Correction Iterations place points by distance. ODC has its own searches, which need more steps than 12: its planes come from the positions of three points, so those have to be far more exact than an intersection that also has a gradient.
-11. **`Interactive Editor.unity` needs the new component on its editor object.** `RequireComponent` only adds it to objects made afterwards.
+11. **`Interactive Editor.unity` needs the new component on its editor object.** `RequireComponent` only adds it to objects made afterwards. **Step 5 found this half wrong:** in the editor, Unity adds a required component that is missing when scripts reload, to the objects of the open scene, with the component's defaults and without marking the scene as changed. So the component was there before step 5 added it, at resolution 2, and would have been saved with the scene's next save. Step 5 gave it the settings the selected voxelizer hands over and saved the scene, so that what is in the file is what was meant.
 
 12. **On curved surfaces ODC's vertices are ten to twenty times closer than Manifold Dual Contouring's.** Found in step 2, on single shapes at 16³ (Measurements).
     - A tangent plane touches a curved surface at one point and leaves it everywhere else, so the vertex where tangent planes meet is off the surface by the sag across the cell: 0.039 of a cell on average on a sphere 4.8 cells in radius.
@@ -209,14 +209,19 @@ Profiler markers are named `OccupancyDualContouring.Burst.<Stage>`.
 
 ### Interactive editor
 
+As built in step 5:
+
 - `Algorithm.Occupancy`, and the component on the editor object, which makes nine variants.
-- **Switching** carries over what the algorithms share. Managed becomes Burst on the way to Occupancy. The cells across carry over as for Uniform.
-- **The signature** gains ODC's four settings.
-- **The scene** (finding 11): the component is added to `Interactive Editor.unity` in step 5, with your go-ahead at that step.
+- **Switching** carries over what the algorithms share.
+  - The cells across carry over as for Uniform: the same resolution between the two uniform grids, one more for an octree.
+  - A voxelizer takes the other's implementation where it has it, and Burst where it does not: Managed becomes Burst on the way to Occupancy, and GPU becomes Burst on the way to an octree. Between Uniform and Occupancy GPU stays GPU.
+  - The three settings ODC does not use (finding 10) are copied to it and from it like the others, so they are not lost on the way through it.
+- **The signature** has ODC's five settings, the four of the first plan and `keepVerticesInCells`. For ODC it leaves out the three settings it does not use, so that two signatures stay equal exactly when the contours would be.
+- **The scene** (finding 11): the component is on the editor object of `Interactive Editor.unity`, hidden like the other voxelizers that are not selected, with Uniform still selected.
 
 ### Example scenes
 
-In `Assets/Scenes/Occupancy-Based Dual Contouring/Burst` and `/GPU`, made from the Uniform ones with the component replaced:
+In `Assets/Scenes/Occupancy-Based Dual Contouring/Burst` and `/GPU`, made in step 5 from the Uniform ones with the component replaced and its object renamed. Everything else in them is the Uniform scene's: shapes, resolution, normals, debug view, camera and light.
 
 - **Burst:** Sphere, Cube, Union, Intersection, Subtraction, CSG Operations, Multiple Materials.
 - **GPU:** Sphere, CSG Operations, Multiple Materials, Direct To GPU.
@@ -427,7 +432,27 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - The 416 `Start` hashes are identical to step 0, the 32 GPU lines of Uniform Dual Contouring among them.
      - The Burst timings are those of step 3: Occupancy 79 ms at 128³, Uniform 28 ms, Manifold 33 ms.
      - Compiling gave no errors, and the shader no messages.
-5. **Interactive editor and scenes (medium).** The fourth algorithm in the editor and its tests, the component in `Interactive Editor.unity`, the example scenes.
+5. **Interactive editor and scenes (medium).** The fourth algorithm in the editor and its tests, the component in `Interactive Editor.unity`, the example scenes. **Done 2026-11-13:**
+   - **`InteractiveEditor`** as Design describes it. New in it: `voxelizers( )`, every voxelizer of the object, which the loops over them and the inspector's undo now use; `hasUniformGrid` and `implementationFor`, which `select` and the cell size go by.
+   - **`Interactive Editor.unity`:** the scene's diff is the new component and its entry in the object's list of components, nothing else (finding 11).
+   - **Eleven example scenes,** seven for Burst and four for the GPU. A probe opened each, contoured it as the inspector's Contour does and looked at the mesh:
+     - every mesh is closed, with every edge shared by two triangles facing the same way, and every sub-mesh is filled;
+     - bounds and triangle counts are those of the Uniform scene it was made from, except CSG Operations at 16³, which has 16 triangles more: eight polygons became four triangles around their 1D point.
+     - `Direct To GPU` was played, and draws from the GPU as the Uniform one does.
+   - **Tests** (`InteractiveEditorTest`, 238, up from 196):
+     - the nine variants: every test that ran over seven runs over nine, and the test that the GPU contours again after the editor was disabled runs for both GPU implementations;
+     - switching to Occupancy from each other algorithm and back: the cells, the shared settings, and the three unused settings coming out as they went in;
+     - Managed becomes Burst on the way to Occupancy, GPU stays GPU between Uniform and Occupancy, and becomes Burst from Occupancy to an octree;
+     - ODC's five settings stay with it through other algorithms;
+     - the signature changes with each of ODC's five settings and with its resolution, implementation, solver and normals, and does not change with the three settings ODC does not use, or with a setting of ODC while another algorithm is selected;
+     - the two tests of managed variants run over the three algorithms that have one.
+   - **The tests catch mistakes.** Four were put in together: Occupancy taken for an octree, Managed kept on the way to it, its five settings left out of the signature, and the three unused ones put in. 17 tests failed, among them every new one about switching and the signature. With the script restored all 238 pass.
+   - **What the scenes show,** seen while checking them and not changed in this step:
+     - **The editor's starter model with the clamp on** has notches along the rim of its bite, where vertices are moved into their cells (finding 14), and a few spikes where the rim runs into the rounded cube. With `keepVerticesInCells` off the rim is clean and the spikes remain: they are where three surfaces come together (finding 13).
+     - **A flat face that lies on a plane of the grid,** as the cut of `Direct To GPU` does. Every vertex of that scene is within 0.032 of a cell of the model with the clamp on, and within 0.004 with it off. The farthest are in the cells along the rim where the inner ball comes through the cut, and stick out past the cut by that much. Looking exactly along the cut, as the scene's camera does, that shows as specks a pixel wide along it, which Uniform's scene does not have.
+     - **Adaptive and Manifold Dual Contouring crease the turned capsule of the starter model,** with simplification off as well. Adaptive was not touched by this plan, so this was there before it. Occupancy's capsule is smooth.
+   - **Not done:** README and `AGENTS.md`, which are step 6.
+   - **Verification:** edit mode 1766 of 1766, the 42 more all in `InteractiveEditorTest`; play mode 21 of 21; the 416 `Start` hashes identical to step 0. Compiling gave no errors. The editor scene is open as saved, with Uniform selected.
 6. **Tuning and documentation (medium).** Sharing 1D and 2D points between cells in Burst if step 2's timings call for it, with the output held bit for bit. README (algorithms, implementations table, code layout, the editor), `AGENTS.md`, and this plan marked complete.
 
 ## Measurements

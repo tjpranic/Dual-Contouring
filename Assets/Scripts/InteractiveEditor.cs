@@ -9,7 +9,7 @@ using MaterialIndex      = SurfaceExtractor.MaterialIndex;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using Combination        = DensityFunction.Combination;
 
-// contours the shapes below it in edit mode, with one of its three voxelizers at a time. Each voxelizer keeps its own
+// contours the shapes below it in edit mode, with one of its four voxelizers at a time. Each voxelizer keeps its own
 // settings, and only the selected one shows in the inspector. Shapes are read off their transforms as Unity shows
 // them: a direct child of scale 1 fills the grid, whatever the scale of this object, and groups between a shape and
 // this object move and scale the shapes in them. Volume.origin and Volume.extents read transforms differently, as if
@@ -17,13 +17,14 @@ using Combination        = DensityFunction.Combination;
 // The voxelizers do not contour by themselves, in play mode either: this decides when they do
 [ExecuteAlways]
 [RequireComponent( typeof( UniformDualContouring ), typeof( AdaptiveDualContouring ), typeof( ManifoldDualContouring ) )]
-[RequireComponent( typeof( MeshFilter ) )]
+[RequireComponent( typeof( OccupancyDualContouring ), typeof( MeshFilter ) )]
 public class InteractiveEditor : MonoBehaviour {
 
     public enum Algorithm {
         Uniform,
         Adaptive,
-        Manifold
+        Manifold,
+        Occupancy
     }
 
     // a shape as the editor contours it, in the object space of the editor
@@ -145,17 +146,47 @@ public class InteractiveEditor : MonoBehaviour {
 
     public Voxelizer voxelizerOf( Algorithm algorithm ) {
         return algorithm switch {
-            Algorithm.Uniform  => this.GetComponent<UniformDualContouring>( ),
-            Algorithm.Adaptive => this.GetComponent<AdaptiveDualContouring>( ),
-            Algorithm.Manifold => this.GetComponent<ManifoldDualContouring>( ),
-            _                  => throw new Exception( "Unknown algorithm specified" )
+            Algorithm.Uniform   => this.GetComponent<UniformDualContouring>( ),
+            Algorithm.Adaptive  => this.GetComponent<AdaptiveDualContouring>( ),
+            Algorithm.Manifold  => this.GetComponent<ManifoldDualContouring>( ),
+            Algorithm.Occupancy => this.GetComponent<OccupancyDualContouring>( ),
+            _                   => throw new Exception( "Unknown algorithm specified" )
         };
+    }
+
+    // every voxelizer of this object, the selected one and the others, in the order of their algorithms. One that is
+    // missing, on an object made before its algorithm was added, is left out
+    public IEnumerable<Voxelizer> voxelizers( ) {
+        foreach( Algorithm algorithm in Enum.GetValues( typeof( Algorithm ) ) ) {
+            var voxelizer = this.voxelizerOf( algorithm );
+
+            if( voxelizer != null ) {
+                yield return voxelizer;
+            }
+        }
+    }
+
+    // uniform and occupancy-based dual contouring contour a uniform grid, the other two an octree
+    private static bool hasUniformGrid( Voxelizer voxelizer ) {
+        return voxelizer is UniformDualContouring || voxelizer is OccupancyDualContouring;
     }
 
     // a uniform grid of resolution r has 2^r cells across and an octree 2^(r - 1) leaves, so this is the exponent of the
     // cells across
     private static int cellsExponentOf( Voxelizer voxelizer ) {
-        return voxelizer is UniformDualContouring ? voxelizer.resolution : voxelizer.resolution - 1;
+        return hasUniformGrid( voxelizer ) ? voxelizer.resolution : voxelizer.resolution - 1;
+    }
+
+    // the implementation a voxelizer takes over from another: the same where it has it. The octrees have no GPU
+    // implementation and occupancy-based dual contouring no managed one, and both take Burst instead
+    private static ImplementationType implementationFor( Voxelizer voxelizer, ImplementationType implementationType ) {
+        var missing = voxelizer switch {
+            UniformDualContouring   => false,
+            OccupancyDualContouring => implementationType == ImplementationType.Managed,
+            _                       => implementationType == ImplementationType.GPU
+        };
+
+        return missing ? ImplementationType.Burst : implementationType;
     }
 
     // the range of the resolution slider
@@ -163,15 +194,16 @@ public class InteractiveEditor : MonoBehaviour {
     private const int maximumResolution = 8;
 
     // switches to the algorithm. The settings all voxelizers have carry over, so the same shapes are compared like for
-    // like: the same number of cells, as far as the other's resolution goes, and the same implementation, except that
-    // GPU becomes Burst for the octrees, which have no GPU implementation. What only one algorithm has, such as the
-    // simplification threshold, stays with its voxelizer
+    // like: the same number of cells, as far as the other's resolution goes, and the same implementation, or Burst
+    // where the other does not have it. What only one algorithm has, such as the simplification threshold, stays with
+    // its voxelizer. The settings occupancy-based dual contouring does not use pass through it all the same, so they
+    // are still there on the way back
     public void select( Algorithm algorithm ) {
         var from = this.voxelizer;
         var to   = this.voxelizerOf( algorithm );
 
         if( from != to ) {
-            var resolution = cellsExponentOf( from ) + ( to is UniformDualContouring ? 0 : 1 );
+            var resolution = cellsExponentOf( from ) + ( hasUniformGrid( to ) ? 0 : 1 );
 
             to.resolution                  = Mathf.Clamp( resolution, minimumResolution, maximumResolution );
             to.minimizerIterations         = from.minimizerIterations;
@@ -182,9 +214,7 @@ public class InteractiveEditor : MonoBehaviour {
             to.vertexNormals               = from.vertexNormals;
             to.debugFlags                  = from.debugFlags;
 
-            to.implementationType = from.implementationType == ImplementationType.GPU && !( to is UniformDualContouring )
-                ? ImplementationType.Burst
-                : from.implementationType;
+            to.implementationType = implementationFor( to, from.implementationType );
 
             // the voxelizer that is no longer used gives back its compute buffers. Its mesh stays until the next contour
             from.release( );
@@ -467,13 +497,18 @@ public class InteractiveEditor : MonoBehaviour {
         append( this._algorithm );
         append( voxelizer.resolution );
         append( voxelizer.minimizerIterations );
-        append( voxelizer.binarySearchIterations );
-        append( voxelizer.surfaceCorrectionIterations );
         append( voxelizer.implementationType );
         append( voxelizer.qefSolverType );
-        append( voxelizer.intersectionApproximation );
         append( voxelizer.vertexNormals );
         append( ( int )voxelizer.debugFlags );
+
+        // the settings that place points by distance. Occupancy-based dual contouring has searches of its own instead,
+        // and its contour is the same whatever these are
+        if( !( voxelizer is OccupancyDualContouring ) ) {
+            append( voxelizer.binarySearchIterations );
+            append( voxelizer.surfaceCorrectionIterations );
+            append( voxelizer.intersectionApproximation );
+        }
 
         switch( voxelizer ) {
             case AdaptiveDualContouring adaptive: {
@@ -485,6 +520,14 @@ public class InteractiveEditor : MonoBehaviour {
             case ManifoldDualContouring manifold: {
                 append( manifold.errorThreshold );
                 append( manifold.enforceManifold );
+                break;
+            }
+            case OccupancyDualContouring occupancy: {
+                append( occupancy.edgeSearchIterations );
+                append( occupancy.faceSearchSamples );
+                append( occupancy.faceSearchIterations );
+                append( occupancy.keepVerticesInCells );
+                append( occupancy.splitQuads );
                 break;
             }
         }
@@ -581,8 +624,8 @@ public class InteractiveEditor : MonoBehaviour {
     public void Awake( ) {
         // a voxelizer contours in Start, which is only called for one that is enabled
         if( Application.isPlaying ) {
-            foreach( Algorithm algorithm in Enum.GetValues( typeof( Algorithm ) ) ) {
-                this.voxelizerOf( algorithm ).enabled = false;
+            foreach( var voxelizer in this.voxelizers( ) ) {
+                voxelizer.enabled = false;
             }
         }
     }
@@ -624,8 +667,8 @@ public class InteractiveEditor : MonoBehaviour {
         UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= this.drawDebugInformation;
         Camera.onPreRender -= this.drawDebugInformation;
 
-        foreach( Algorithm algorithm in Enum.GetValues( typeof( Algorithm ) ) ) {
-            this.voxelizerOf( algorithm )?.release( );
+        foreach( var voxelizer in this.voxelizers( ) ) {
+            voxelizer.release( );
         }
     }
 
@@ -643,13 +686,9 @@ public class InteractiveEditor : MonoBehaviour {
 #endif
 
     public void OnDestroy( ) {
-        foreach( Algorithm algorithm in Enum.GetValues( typeof( Algorithm ) ) ) {
-            var voxelizer = this.voxelizerOf( algorithm );
-
-            if( voxelizer != null ) {
-                voxelizer.clear( );
-                voxelizer.release( );
-            }
+        foreach( var voxelizer in this.voxelizers( ) ) {
+            voxelizer.clear( );
+            voxelizer.release( );
         }
     }
 
@@ -827,15 +866,7 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
         var algorithm = ( InteractiveEditor.Algorithm )UnityEditor.EditorGUILayout.EnumPopup( "Algorithm", editor.algorithm );
 
         if( algorithm != editor.algorithm ) {
-            UnityEditor.Undo.RecordObjects(
-                new UnityEngine.Object[] {
-                    editor,
-                    editor.voxelizerOf( InteractiveEditor.Algorithm.Uniform ),
-                    editor.voxelizerOf( InteractiveEditor.Algorithm.Adaptive ),
-                    editor.voxelizerOf( InteractiveEditor.Algorithm.Manifold )
-                },
-                "Select Algorithm"
-            );
+            UnityEditor.Undo.RecordObjects( editor.voxelizers( ).Prepend<UnityEngine.Object>( editor ).ToArray( ), "Select Algorithm" );
 
             editor.select( algorithm );
         }

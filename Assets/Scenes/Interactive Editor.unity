@@ -424,6 +424,7 @@ GameObject:
   - component: {fileID: 954588969}
   - component: {fileID: 954588968}
   - component: {fileID: 954588970}
+  - component: {fileID: 954588974}
   m_Layer: 0
   m_Name: Interactive Editor
   m_TagString: Untagged
@@ -443,7 +444,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f420320a8a94749c08677048f4eb6ea7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::InteractiveEditor
-  _algorithm: 0
+  _algorithm: 3
   _debounce: 0.1
   _outlineThickness: 1
   _outlinesOnTop: 0
@@ -522,7 +523,7 @@ MonoBehaviour:
   topologySafe: 1
 --- !u!114 &954588970
 MonoBehaviour:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 2
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -636,6 +637,45 @@ Transform:
   - {fileID: 764180941}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &954588974
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 954588966}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f43612985501e4175ad0a7872962b3c7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: GameAssembly::OccupancyDualContouring
+  useCullingMasks: 0
+  _resolution: 5
+  _minimizerIterations: 4
+  _binarySearchIterations: 6
+  _surfaceCorrectionIterations: 3
+  _implementation: 2
+  _qefSolver: 1
+  _intersectionApproximation: 0
+  _vertexNormals: 1
+  debugFlags: 0
+  debugAlwaysOnTop: 0
+  debugLineThickness: 1.5
+  debugCornerRadius: 2
+  debugMinimizingVertexRadius: 3
+  debugSurfaceNormalLength: 0.5
+  debugCellColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugCornerColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugEdgeColor: {r: 1, g: 1, b: 1, a: 0.125}
+  debugEdgeIntersectionColor: {r: 1, g: 0, b: 0, a: 1}
+  debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
+  debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
+  keepDebugInformation: 0
+  edgeSearchIterations: 15
+  faceSearchSamples: 4
+  faceSearchIterations: 11
+  keepVerticesInCells: 1
+  splitQuads: 1
 --- !u!1 &1118812346
 GameObject:
   m_ObjectHideFlags: 0
