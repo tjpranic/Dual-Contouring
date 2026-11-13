@@ -2,7 +2,7 @@
 
 Plan written 2026-11-13 for a mesh simplifier that runs on the finished mesh of any algorithm: quadric error edge collapse, with line quadrics and a progressive record of the collapses.
 
-**Status:** draft. Nothing is built and nothing was measured for it. The seven decisions at the end are open, and step 0 waits for them and for the go-ahead.
+**Status:** steps 0 to 2 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. All seven decisions were answered as recommended on 2026-11-14. Step 3 is next.
 
 **Papers,** all in `Documents/Papers/`:
 - *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): the algorithm.
@@ -48,10 +48,10 @@ It applies to all four algorithms and all three implementations, since it works 
 
 3. **The GPU splits vertices itself for flat shading,** in its contour kernel, and such a mesh has no shared vertices to collapse edges between. With simplification on, the voxelizer asks its implementation for shared normals and splits afterwards on the CPU, as it does for the CPU implementations today.
 
-4. **Not every contour is a closed manifold.**
-   - **Uniform and Adaptive** give edges with more than two triangles where a cell holds two sheets of surface: 40 on the three balls at 64³ and 56 at 128³ (Burst plan).
-   - **Manifold and Occupancy** give a manifold.
-   - **Any algorithm** probably leaves the mesh open where the surface leaves the grid. I have not checked this. Step 0 counts open edges on a model that crosses the grid's bounds.
+4. **Not every contour is a closed manifold.** Step 0 counted this (Measurements).
+   - **Uniform and Adaptive** give edges with more than two triangles where a cell holds two sheets of surface. Every one of them has exactly four triangles, and such meshes also have vertices whose triangles form more than one fan.
+   - **Manifold and Occupancy** give a manifold when nothing is clustered. Manifold with clustering at 2e-4 gave eight edges of four triangles, in 4 of 39 meshes, on the two models of turned shapes (finding 15).
+   - **Every algorithm** leaves the mesh open where the surface leaves the grid, and nowhere else.
    - **What it means:** the mesh is kept as vertices with lists of their triangles and edges, as Garland and Heckbert have it, not as half-edges. Legality is theorem B of Dey et al.
 
 5. **In the ranking I said the quadrics could be seeded from the contourer's own planes. I no longer recommend that.**
@@ -59,7 +59,9 @@ It applies to all four algorithms and all three implementations, since it works 
    - **The line quadric's weight is defined against area-weighted triangle quadrics** (equations 8 and 16). Hermite QEFs count samples, not area, so the published weights would not carry over.
    - **Triangle planes are what both papers use,** and they need nothing but the mesh. See decision 2.
 
-6. **Floats are not enough for a quadric kept about the origin.** The constant term of a vertex 100 cells from the origin is near 10⁴ times its area, where a float resolves about 10⁻³. The costs to be ordered on a flat region are zero or close to it. The Burst plan met the same limit in the octree's error test. Doubles cost Burst nothing in speed here, and the simplifier has no managed or GPU version to match. Step 1 measures the float error before anything is built on either. See decision 3.
+6. **Floats are not enough for a quadric kept about the origin.** The constant term of a vertex 100 cells from the origin is near 10⁴ times its area, where a float resolves about 10⁻³. The costs to be ordered on a flat region are zero or close to it. The Burst plan met the same limit in the octree's error test. Doubles cost Burst nothing in speed here, and the simplifier has no managed or GPU version to match. See decision 3.
+   - **Step 1 measured it** (Measurements). On a ball of 128³ cells the cost of an edge is a distance of 0.009 cells, and a float quadric is off by 0.011. 86% of its costs are more than half wrong and a fifth are below zero. A double quadric is off by about a millionth of a cell at most.
+   - **The speed of doubles is not measured yet.** Step 3 times the simplifier.
 
 7. **With line quadrics the cost of a collapse is no longer a distance to the surface.** On a flat face of a cube it is the line term alone, and it grows as the face is merged down to two triangles. A bound on the whole cost would stop a cube far short of twelve triangles.
    - **So the two sums are kept apart,** twenty numbers a vertex: the heap orders by their sum, as the paper has it, and the bound is tested against the plane part alone.
@@ -78,8 +80,41 @@ It applies to all four algorithms and all three implementations, since it works 
 12. **The order must not depend on chance.** Equal costs are common on flat regions when the line weight is zero. Ties go to the lower edge index, so the same mesh always simplifies the same way and hashes can be compared between runs.
 
 13. **Garland and Heckbert do not say how large the "large penalty" on boundary planes is.** Step 2 measures what keeps a straight boundary between two materials straight and a round one round, and sets it.
+    - **What the weight multiplies is my choice:** the plane through a sharp edge that stands on one of its triangles counts as that triangle's own plane does, a third of its area, times the weight. A weight of 1 then means that a line may leave its place sideways as far as the surface may leave its planes.
+    - **Step 2 measured single collapses** (Measurements). Any weight above zero keeps the new vertex on the line. At zero a collapse into a line moves it by up to 1.4 cells where it is straight and 2 where it is round. Above zero the weight only sets what rounding a curved line costs, which grows with its root.
+    - **It is 1 for now.** Whether a whole simplification keeps the lines needs the loop, so step 3 measures the lines after simplifying at 0.1, 1, 10 and 100 and settles it.
+    - **Occupancy's lines between materials are less exact:** 0.38 cells from the straight line and up to 0.67 from the round one, where Uniform's are within 0.03. At a weight of 1 a tenth of the collapses along its round line cost 0.29 cells, so a small error bound will refuse them. Step 3 shows what that does to its triangle counts.
 
 14. **Degenerate triangles have no plane.** A triangle without area adds nothing to a quadric, and a vertex whose faces cancel has no normal for its line. Liu et al. give such a vertex a point quadric of weight 1e-6 (section 4.2), which is used here too.
+    - **Step 0 found no triangle without area** in any contour, and no triangle that uses a vertex twice. The smallest triangle is 4e-7 of a cell's face, so areas and planes are worked out in doubles.
+    - **Vertices without a normal do occur.** Occupancy gives a zero normal to up to 162 vertices of the cut-away sphere, all on its flat cut, which lies in a plane of the grid. Their triangles do not cancel. Step 4 decides whether the line of such a vertex runs along the normal of its triangles, as the paper has it, or the vertex gets the point quadric.
+
+15. **A contour can hold two triangles on the same three vertices.** Step 0 found this in Manifold with clustering at 2e-4, on the two models of turned shapes: 15 such pairs in 4 of 39 meshes, each pair back to back. Fourteen of them make seven quads with two sides and nothing inside, each a piece of its own, and one hangs on the main surface. Each quad's diagonal, and one edge of the last pair, has four triangles. Those models' meshes also hold vertices that no triangle uses, 46 in all.
+    - **Why it matters:** the link conditions are stated for a complex, where three vertices have at most one triangle. They say nothing about such a pair.
+    - **What is done:** no edge that touches a vertex of such a pair is collapsed, so the pair leaves the simplifier as it came. Vertices without triangles are passed over, and the mesh out holds only vertices that a triangle uses.
+    - **No collapse makes such a pair:** the link conditions refuse the collapse that would.
+
+16. **The lines between materials end and meet.** Hoppe's tests are written for curves that may end at a vertex or meet there in threes, and both happen:
+    - **Ends at open edges:** where a band of a second material leaves the grid with the surface.
+    - **Ends and meetings away from them:** in Uniform and Adaptive, on the two models of turned shapes: 37 ends and 46 meetings of three or more over 39 meshes. 55 of their edges of four triangles also lie between materials.
+    - **Manifold and Occupancy without clustering** have neither away from open edges. Manifold at 2e-4 has three meetings.
+
+17. **A vertex can have many triangles.** Up to 15 in a plain contour and 28 after Adaptive or Manifold have simplified. The lists of a vertex have no fixed size.
+
+18. **Thin features come as islands.** Where Uniform joins two sheets along an edge of four triangles, Manifold and Occupancy keep them apart, and on the turned shapes at 128³ that leaves 26 closed pieces of 12 to 20 triangles beside the main one. With decision 5 none of them goes below a tetrahedron.
+
+19. **At a line weight of zero, most edges of a flat model have no best point, and some best points are far from their edge.** Step 1 solved the quadric of every edge of five contours at 128³ (Measurements).
+    - **A cube on the grid's axes:** 106,674 of its 106,722 edges have none. The fallbacks of Garland and Heckbert are then the usual case and not the exception.
+    - **A turned cube:** every edge has one, because its faces are flat only to within rounding. All of them are within two edge lengths of their edge.
+    - **Curved models:** a few best points are far away. On a flat ellipsoid 56 are more than ten edge lengths from their edge and one is 111 away. On the three balls two are.
+    - **What it means:** the paper has no rule against such a point, and its cost is low by definition. Step 3 counts how many of them the inversion test refuses and says what happens to the rest. With line quadrics every system is well-conditioned, which step 4 measures.
+
+20. **The two papers leave a gap between them, and step 2 closes it with a rule of its own.** Hoppe's tests are for manifolds and those of Dey et al. know no materials. Where a mesh is not a manifold and has lines between materials, both allow collapses that change where the lines are on the surface:
+    - **A pinched vertex moved onto a meeting of three materials, or onto a line it was beside.** The mesh keeps its topology and the lines keep theirs, and still two pieces of one material that were apart now touch.
+    - **How it was found:** greedy collapsing of the Uniform and Adaptive contours of `newShapes` took the pieces of a sub-mesh from four to two. A box with a pyramid standing on its tip on a line between materials shows the same by hand.
+    - **The rule:** a vertex is a point of its own, which no collapse may move, when it is of order 2 or when sharp lines end or meet at it. Refused are an edge between two such points, and an edge that is not sharp from a vertex of order 2 to a vertex on a sharp line. It is checked after the papers' tests, and reported as its own reason.
+    - **What it costs:** on those two contours at 32³ it refuses an edge 21 and 24 times, beside about 2,600 and 1,600 collapses made.
+    - **It has no proof.** The tests hold every mesh they collapse to its pieces, its Euler characteristic, the same two for each sub-mesh, and the counts of its special vertices and lines.
 
 ## Design
 
@@ -96,8 +131,16 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
 
 ### Code
 
-- **`Assets/Scripts/Burst/BurstQuadric.cs`:** a quadric in doubles. From a plane, from a triangle with its area, from a boundary edge and one of its triangles, and from a vertex and its normal as a line. Add, evaluate, and the point of least error.
-- **`Assets/Scripts/Burst/BurstMeshSimplifier.cs`:** the connectivity, the legality tests, the heap, the loop and the record, as Burst jobs. It takes positions, normals and `BurstMesh.Triangle`s and gives the same back.
+- **`Assets/Scripts/Burst/BurstQuadric.cs`:** a quadric in doubles. From a plane, from a triangle with its area, from a boundary edge and one of its triangles, and from a vertex and its normal as a line. Add, evaluate, and the point of least error. Built in step 1:
+  - **The line quadric** is written as I − n nᵀ. Equations 13 to 15 add two planes through the line with normals x and y, and x xᵀ + y yᵀ is that matrix for any such pair, so no x has to be chosen. A test holds it to the two planes.
+  - **The point of least error** is solved by elimination, as a Cholesky decomposition does it, starting with the coordinate that has the largest entry on the diagonal. A quadric has no such point when a pivot is under 1e-10 of the largest. At that limit rounding moves the solution by about a millionth of the grid.
+  - **Not by cofactors:** my first version divided cofactors by the determinant. On an exactly flat patch both are rounding noise, and their ratio said the system was well-conditioned. I saw it before the tests ran. Put back in afterwards, it fails four of them.
+- **`Assets/Scripts/Burst/BurstMeshSimplifier.cs`:** the connectivity, the legality tests, the heap, the loop and the record, as Burst jobs. It takes positions, normals and `BurstMesh.Triangle`s and gives the same back. Built in step 2, as `BurstMeshSimplifier.Connectivity`:
+  - **The lists:** every vertex has a linked list of its triangle corners and one of its edge ends, kept in arrays. Edges are records of their own, made once at the lower of their two vertices, and their index is what ties will be broken by (finding 12).
+  - **Kept per edge:** how many triangles it has and why it is sharp. **Per vertex:** its order (Dey et al., section 3), how many sharp edges it has, whether it is locked (finding 15), its area and its quadric.
+  - **`check`** gives the reason an edge may not collapse: locked, one of the five ways to break the link conditions, one of Hoppe's tests, the rule of finding 20, or a triangle that would turn over or lose its area.
+  - **`collapse`** keeps the lower of the two vertices. It works out again the triangle counts and sharpness of the kept vertex's edges, its order, and the sharp counts of the vertices around it. The orders of the vertices around it are left alone: a collapse that the link conditions allow does not change them, and the tests compare with a mesh built from nothing.
+  - **Hoppe's tests run on all sharp edges together:** open, of more than two triangles, and between materials.
 - **`Assets/Scripts/MeshSimplification.cs`:** the settings, the record as managed arrays, and the mesh at a level of detail.
 - **`Voxelizer.contour`:** the hook, between the mesh arriving and vertices being split.
 
@@ -154,12 +197,14 @@ There is no second implementation to compare with, so the tests hold the simplif
 - **Legality,** on meshes built by hand:
   - The two cases of figure 2 of Dey et al., one legal and one not.
   - No edge of a tetrahedron collapses.
-  - An edge with three triangles, a pinched vertex and an open edge, each against theorem B.
-  - Each of Hoppe's six cases around a boundary between materials.
+  - An edge with four triangles, a pinched vertex and an open edge, each against theorem B.
+  - Two triangles on the same three vertices: no edge at them collapses, and vertices without triangles are passed over (finding 15).
+  - Each of Hoppe's six cases around a boundary between materials, with lines that end and lines that meet (finding 16).
   - A fan that the best position would fold over.
 - **Shapes with known answers,** for every algorithm that contours them exactly: an upright cuboid becomes 8 vertices and 12 triangles at its corners, an octahedron 6 and 8, a pyramid 5 and 6, a hexagonal prism 12 and 20. A cuboid of two materials keeps a straight boundary between them, with 12 vertices and 20 triangles. Turned shapes within a tolerance measured in the step.
 - **Invariants,** over the models of `TopologyTest`, every algorithm, Burst and GPU, and Managed on small grids:
-  - As many components, the same Euler characteristic, and as many open and non-manifold edges and pinched vertices as the contour, for the mesh and for each sub-mesh.
+  - As many components and the same Euler characteristic as the contour, for the mesh and for each sub-mesh.
+  - As many vertices of order 2, as many ends and meetings of sharp lines, and as many separate lines of open edges, of non-manifold edges and of edges between materials. The edges themselves get fewer: a line of 144 open edges is still one line when it has 20. The draft of this plan asked for as many open and non-manifold edges as the contour, which was wrong.
   - No degenerate triangles, no winding conflicts, and no triangle turned over.
   - Every vertex within the bound of the shape, by the exact distances.
   - A lower bound never gives fewer triangles.
@@ -182,18 +227,171 @@ There is no second implementation to compare with, so the tests hold the simplif
 
 Each step compiles, passes every test, and is reviewed before the next one starts. Nothing is committed for you.
 
-0. **Baseline and what the contours are like (small).** Both suites green; the `Start` hashes; Burst timings with Unity in front. A probe over the test models and example scenes, for every algorithm and implementation: vertices, triangles, open edges, non-manifold edges, pinched vertices, edges between materials, degenerate and repeated triangles, and vertices that share a position. That settles finding 4 and says what the connectivity has to cope with.
-1. **Quadrics (small).** `BurstQuadric` and its tests. **Measured here:** the error of a float quadric against a double one on a flat face and on a ball at 128³ (finding 6, decision 3).
-2. **Connectivity and legality (medium).** The lists, sharp edges, the link conditions, Hoppe's tests, the inversion test, and one collapse with everything it updates, on meshes built by hand. No heap yet. **Measured here:** the weight of boundary planes (finding 13).
-3. **The simplifier (large).** Heap, loop, bound, normals, the mesh out; the hook, the first two settings and the inspector; shared normals asked of the GPU. Line weight zero, so this step is Garland and Heckbert's algorithm with its own fallbacks. The shape, invariant and frame tests. **Measured here:** time by stage from 16³ to 128³ and Uniform at 256³, triangles against the error bound for each algorithm, distance to the shapes, and crossing triangle pairs before and after (finding 9). The default error comes out of this.
-4. **Line quadrics (small).** The second sum, the weight, the point quadric for degenerate vertices, their tests. **Measured here:** weights 0, 1e-4, 1e-3, 1e-2 and 1e-1 as in the paper's figure 4: triangles, distance to the shapes, the smallest angle of the triangles, and time. The default weight is set from it.
+0. **Baseline and what the contours are like (small).** Both suites green; the `Start` hashes; Burst timings with Unity in front. A probe over the test models and example scenes, for every algorithm and implementation: vertices, triangles, open edges, non-manifold edges, pinched vertices, edges between materials, degenerate and repeated triangles, and vertices that share a position. That settles finding 4 and says what the connectivity has to cope with. **Done 2026-11-13:**
+   - **Suites:** edit mode 1808 of 1808, play mode 21 of 21.
+   - **`Start` hashes:** 480 configurations, none failed. They are the baseline for the later steps.
+   - **Timings and the probe:** under Measurements. Findings 4 and 14 are updated from the probe, and findings 15 to 18 are new.
+   - **Nothing in the repository changed.** The probes are scripts outside it.
+1. **Quadrics (small).** `BurstQuadric` and its tests. **Measured here:** the error of a float quadric against a double one on a flat face and on a ball at 128³ (finding 6, decision 3). **Done 2026-11-14:**
+   - **Built:** `Assets/Scripts/Burst/BurstQuadric.cs` and `Assets/Tests/Edit Mode/BurstQuadricTest.cs`, 15 tests that run the quadrics in a Burst job.
+   - **Tests beyond the plan's list:** a triangle's quadric and area; triangles, lines and edges that have no quadric; planes that almost do not meet, on both sides of the pivot limit; a small error far from the origin, which a float `c` fails.
+   - **Deliberate mistakes:** 26 were tried, and every test failed on at least one. Three of the first twenty went unnoticed, and each pointed at code that could go:
+     - **A second choice of pivot** changed no result a test could pin, and was removed.
+     - **A check for an edge without length** was covered by the check after it. The plane is now worked out without a division, and one check is left.
+     - **The check of the second pivot** went unnoticed only while the second pivot was chosen. It is caught now.
+   - **Measured:** floats against doubles, and the best point of every edge (Measurements). Decision 3 stands, and finding 19 is new.
+   - **Baselines after step 1:** edit mode 1823, play mode 21, 480 `Start` hashes unchanged.
+2. **Connectivity and legality (medium).** The lists, sharp edges, the link conditions, Hoppe's tests, the inversion test, and one collapse with everything it updates, on meshes built by hand, with what step 0 found in the contours (findings 15 to 17). No heap yet. **Measured here:** the weight of boundary planes (finding 13). **Done 2026-11-14:**
+   - **Built:** `Assets/Scripts/Burst/BurstMeshSimplifier.cs` with `Connectivity` (Design, Code), and `Assets/Tests/Edit Mode/BurstMeshSimplifierTest.cs`, 91 tests that run it in a Burst job.
+   - **Meshes built by hand:** boxes on a grid of whole numbers, alone, sharing an edge, touching in a vertex, with a fin and with two triangles back to back; flat patches and strips; an octahedron, whole, with a vertex put into a face (figure 2 of Dey et al.) and with a face taken out; a tetrahedron; a box with lines between up to four materials on its top.
+   - **Every reason for refusing** has a mesh that gives exactly that reason, and a mesh next to it that collapses.
+   - **Many collapses:** every edge that may collapse is collapsed into its midpoint, four times over, on 13 meshes built by hand and on 30 contours at 32³ (five kinds of contour on six models). Each result is held to the invariants under Tests and to a connectivity built from nothing. The three balls go down to 4 vertices, a tetrahedron, from every algorithm's contour.
+   - **What the tests found:** finding 20, and two of my own expectations that were wrong about which condition a mesh breaks first.
+   - **Deliberate mistakes:** 38 were tried and every one failed at least one test.
+   - **Measured:** the boundary weight on single collapses (Measurements, finding 13). It is 1 for now and step 3 settles it.
+   - **Not timed.** Step 3 times the simplifier.
+   - **Baselines after step 2:** edit mode 1914, play mode 21, 480 `Start` hashes unchanged.
+3. **The simplifier (large).** Heap, loop, bound, normals, the mesh out; the hook, the first two settings and the inspector; shared normals asked of the GPU. Line weight zero, so this step is Garland and Heckbert's algorithm with its own fallbacks. The shape, invariant and frame tests. **Measured here:** time by stage from 16³ to 128³ and Uniform at 256³, triangles against the error bound for each algorithm, distance to the shapes, and crossing triangle pairs before and after (finding 9). The default error comes out of this. Also left to this step by the earlier ones: the lines between materials after simplifying at boundary weights of 0.1, 1, 10 and 100 (finding 13), and the best points far from their edges (finding 19).
+4. **Line quadrics (small).** The second sum, the weight, the point quadric for degenerate vertices, what a vertex without a normal gets (finding 14), their tests. **Measured here:** weights 0, 1e-4, 1e-3, 1e-2 and 1e-1 as in the paper's figure 4: triangles, distance to the shapes, the smallest angle of the triangles, and time. The default weight is set from it.
 5. **The record (medium).** The record, the mesh at a level, the Detail setting, what the voxelizer keeps, `simplify`, their tests. **Measured here:** a change of detail and a change of error at 128³, against a whole contour.
 6. **Interactive editor and scenes (small).** The split signature, the statistics line, `select`, the editor tests, the scenes.
 7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
 
 ## Measurements
 
-None yet.
+### Baseline (step 0, 2026-11-13)
+
+**A whole contour of the three balls,** as `Voxelizer.contour` gives it with shared normals, the mesh read back from the GPU and the vertex buffer reordered. The simplifier will run inside this call. Median of 7 runs after a warm-up, in ms, with Unity in front. The octrees simplify at 2e-4.
+
+| Cells | Uniform Burst | Adaptive Burst | Manifold Burst | Occupancy Burst | Uniform GPU | Occupancy GPU |
+|---|---|---|---|---|---|---|
+| 16³ | 0.4 | 0.8 | 1.0 | 1.1 | | |
+| 32³ | 1.4 | 1.8 | 2.4 | 3.3 | | |
+| 64³ | 5.7 | 6.4 | 7.4 | 12.5 | 19.6 | 6.9 |
+| 128³ | 29.4 | 32.4 | 34.1 | 54.9 | 122.5 | 20.5 |
+| 256³ | 179.4 | | | 283.4 | 854.5 | 95.6 |
+
+- **The runs agree:** from 64³ up, the least and the most of the 7 are within 4% of the median on Burst. On the GPU the most is up to 55% above it.
+- **Triangles at 128³:** 104,500 from Uniform and Occupancy, 5,224 from Adaptive and 4,714 from Manifold.
+- **Against finding 10:** the estimate of 50 to 150 ms for the collapse loop at 128³ is two to five times a Burst Uniform contour.
+
+### The weight of boundary planes (step 2, 2026-11-14)
+
+**Setup:**
+- **Models,** as Burst Uniform contours at 64³, each with a line between two materials whose true place is known:
+  - **Straight on a flat face:** the slab with a band of `TopologyTest`.
+  - **Round on a flat face:** a cylinder of a second material set into the slab, flush with it. The line is a circle of 12.8 cells' radius.
+  - **Round on a crease:** the cut-away sphere, where the inner ball meets the flat cut.
+- **One collapse at a time,** without the loop: for every edge with an end on the line, the quadric of the edge with the boundary planes at the given weight, and the point Garland and Heckbert take for it: the best point, else the best on the edge, else the better of its ends and middle.
+- **Two kinds of edge:** along the line, with both ends on it, and into the line, with one.
+- **The contours' own line vertices** are within 0.014, 0.026 and 0.021 cells of the true line.
+
+How far the new vertex of a collapse into the line is from the true line, in cells, for 99% of the edges and for the worst:
+
+| Line | Weight 0 | 0.1 | 1 | 10 | 100 |
+|---|---|---|---|---|---|
+| Straight, flat | 1.38 / 1.38 | 0.014 / 0.014 | 0.014 / 0.014 | 0.014 / 0.014 | 0.014 / 0.014 |
+| Round, flat | 1.77 / 2.03 | 0.025 / 0.026 | 0.025 / 0.026 | 0.025 / 0.026 | 0.025 / 0.026 |
+| Round, crease | 1.44 / 1.48 | 0.071 / 0.41 | 0.061 / 0.43 | 0.060 / 0.48 | 0.055 / 0.23 |
+
+The cost of a collapse along the line, as the distance the error bound tests, median in cells:
+
+| Line | Weight 0 | 0.1 | 1 | 10 | 100 |
+|---|---|---|---|---|---|
+| Round, flat | 0 | 0.0014 | 0.0043 | 0.014 | 0.043 |
+| Round, crease | 0.0033 | 0.0033 | 0.0039 | 0.0053 | 0.011 |
+
+**What they show:**
+- **At a weight of zero nothing holds the line.** On a flat face no quadric has a best point, the fallback takes an end or the middle of the edge, and the line moves into the face.
+- **Any weight above zero puts the vertex on the line,** on a flat face exactly as far from the true line as the contour's own vertices are. On a flat face a collapse into a straight line costs nothing at any weight.
+- **On the crease a few vertices land 0.4 cells off** at every weight up to 10. The loop's error bound decides whether those collapses are made, which this does not measure.
+- **The weight sets what rounding a curved line costs.** On the flat face that cost is the weight's root times 0.0043 cells.
+- **Occupancy** on the same models has its line vertices 0.38 cells from the straight line and up to 0.67 from the round one, and a collapse along its round line costs up to 0.29 cells at a weight of 1.
+- **A model that did not work:** two balls a little apart, for a round line on a curved face. Where both are solid the later one sets the material, and near their seam the first ball's own shell is thinner than a cell, so the line has no single place.
+
+### Floats against doubles (step 1, 2026-11-14)
+
+**Setup:**
+- **Models:** Burst Uniform contours at 128³: a cube on the grid's axes, a cube turned about its diagonal, the ball of `TopologyTest`, an ellipsoid a quarter as thick as it is wide, and the three balls.
+- **Quadrics:** every vertex gets the planes of its triangles, each weighted by a third of its area. An edge's quadric is the sum of its ends'.
+- **What is compared:** the error of the midpoint of each edge, from the quadric, against the same error worked out one plane at a time from a point of each plane, which cancels nothing. Errors are given as the root of the error over the area, a distance in cells.
+- **Floats:** every operation rounded to a float, as Burst does in strict mode. The arithmetic is emulated in a script outside the repository. The doubles are `BurstQuadric` itself.
+
+| Model | True distance, median | Double off by, median / most | Float off by, median / most | Float costs below zero | Float costs more than half wrong |
+|---|---|---|---|---|---|
+| Cube | 0 | 0 / 0 | 0 / 0.018 | 24 of 106,722 | 0 of 3,672 |
+| Turned cube | 0.0017 | 4e-7 / 1.2e-6 | 0.0097 / 0.030 | 33% | 96% |
+| Ball | 0.0086 | 5e-7 / 1.4e-6 | 0.011 / 0.031 | 20% | 86% |
+| Flat ellipsoid | 0.0037 | 1e-7 / 1.3e-6 | 0.0029 / 0.031 | 11% | 47% |
+| Three balls | 0.0087 | 6e-7 / 2.0e-6 | 0.013 / 0.050 | 23% | 88% |
+
+The last column counts the edges whose true distance is over a thousandth of a cell.
+
+The ball on other grids, float quadrics only:
+
+| Cells | True distance, median | Float off by, median | Float costs more than half wrong |
+|---|---|---|---|
+| 32³ | 0.035 | 0.0028 | 0 of 5,190 |
+| 64³ | 0.017 | 0.0056 | 7% |
+| 128³ | 0.0086 | 0.011 | 86% |
+| 256³ | 0.0045 | 0.023 | 100% |
+
+**What they show:**
+- **A float quadric is wrong by a fixed part of the grid,** about a ten-thousandth of its side, while the costs to be ordered shrink with the cells. The two cross between 64³ and 128³.
+- **A double quadric is four orders finer** than the costs at 128³ and three at 256³.
+- **Positions suffer less than costs.** Where the system is well-conditioned, the best point of a float quadric is within 0.06 cells of the double one's.
+
+**The best point of every edge,** from `BurstQuadric.minimize` at a line weight of zero:
+
+| Model | Edges | Without a best point | Condition of A, median | Best point over 1 / 2 / 10 edge lengths from its edge | Furthest |
+|---|---|---|---|---|---|
+| Cube | 106,722 | 106,674 | not finite | 0 / 0 / 0 | 0.5 |
+| Turned cube | 118,600 | 0 | 1.6e5 | 219 / 0 / 0 | 1.8 |
+| Ball | 83,400 | 0 | 7.9e3 | 14 / 2 / 0 | 3.4 |
+| Flat ellipsoid | 61,644 | 3,284 | 7.0e4 | 1,055 / 343 / 56 | 111 |
+| Three balls | 156,722 | 0 | 7.8e3 | 83 / 27 / 2 | 11.4 |
+
+- **The condition** is the largest eigenvalue of A over the smallest. It reaches 5.7e6 on the turned cube and 2.4e12 on the flat ellipsoid.
+- **A flat face and a gently curved one cannot be told apart by it:** the median is 1.6e5 on the turned cube, whose faces are flat, and 7.0e4 on the flat ellipsoid, which has none.
+
+### What the contours are like (step 0, 2026-11-13)
+
+**Setup:**
+- **Models:** the ten of `TopologyTest`, and three that leave the grid: a ball through one side, a slab and a band of a second material that leave through different sides, and a plate whose band leaves with it.
+- **Grids:** 32³, 64³ and 128³ cells for Burst and the GPU, 32³ and 64³ for Managed. That is 442 meshes.
+- **Settings:** the SVD solver, shared normals, no surface correction. The octrees plain and at 2e-4.
+- **Scenes:** the voxelizer of each of the 71 example scenes, with its own settings and shared normals.
+- **Implementations agree:** Managed, Burst and the GPU give the same counts on every model and grid they share.
+
+Totals over the 39 Burst meshes of each column:
+
+| | Uniform | Adaptive | Adaptive 2e-4 | Manifold | Manifold 2e-4 | Occupancy |
+|---|---|---|---|---|---|---|
+| Open edges | 3,444 | 3,444 | 174 | 3,444 | 174 | 3,444 |
+| Edges of four triangles | 494 | 494 | 494 | 0 | 8 | 0 |
+| Edges of three, or of five or more | 0 | 0 | 0 | 0 | 0 | 0 |
+| Vertices with more than one fan | 69 | 69 | 69 | 0 | 0 | 0 |
+| Edges between materials | 4,735 | 4,735 | 1,410 | 4,682 | 944 | 4,682 |
+| of those, with four triangles | 55 | 55 | 55 | 0 | 0 | 0 |
+| Ends of lines between materials | 61 | 61 | 37 | 24 | 0 | 24 |
+| of those, at an open edge | 24 | 24 | 0 | 24 | 0 | 24 |
+| Vertices where three or more such lines meet | 46 | 46 | 46 | 0 | 3 | 0 |
+| Triangles on the vertices of another | 0 | 0 | 0 | 0 | 15 | 0 |
+| Vertices without triangles | 0 | 0 | 0 | 0 | 46 | 0 |
+| Vertices without a normal | 0 | 0 | 0 | 0 | 0 | 288 |
+| Most triangles at a vertex | 15 | 15 | 26 | 12 | 28 | 13 |
+| Smallest triangle, in faces of a cell | 7e-6 | 7e-6 | 4e-7 | 6e-6 | 4e-7 | 4e-7 |
+
+**The same in every mesh:**
+- No triangle uses a vertex twice, and none has no area.
+- No two vertices share a position.
+- No normal is of a length other than one or zero.
+
+**What they show:**
+- **Open edges** are on the three models that leave the grid and on no other. In a plain contour both ends of each are within a cell and a half of the grid's bounds. After the octrees simplify, they are as far in as the collapsed nodes reach.
+- **Edges of four triangles** are on the three balls and the two models of turned shapes in Uniform and Adaptive, and on the turned shapes alone in Manifold at 2e-4.
+- **Vertices without a normal** are on the cut-away sphere and on no other model: 42, 84 and 162 at the three grids.
+- **The example scenes** are closed manifolds, every one, with none of the rows above but edges between materials and, in three Occupancy scenes, vertices without a normal. The tests of the hard cases have to use the models.
 
 ## Out of scope
 
@@ -210,9 +408,11 @@ None yet.
 
 ## Decisions
 
+All seven were answered as recommended on 2026-11-14.
+
 1. **One Burst simplifier for every implementation?** A managed contour would be simplified by Burst code, and nothing would be simplified on the GPU. The other way is a managed simplifier beside it as a reference, which doubles the algorithm for a mesh the Burst one would give anyway. Recommended: Burst only, with tests against known answers, as Occupancy has.
 2. **Quadrics from triangle planes?** Finding 5. The other way seeds them from Hermite QEFs where they exist, which is Burst Adaptive and Manifold only, and needs its own weights. Recommended: triangle planes, with Hermite seeding out of scope.
-3. **Doubles for the quadrics?** Finding 6. You kept the QEF solvers in floats on 2026-11-11, since precision was not a must-have. This is different code with nothing to stay in step with, and its ordering depends on it. The other way is floats about a moving origin, which is more code. Recommended: doubles, confirmed by step 1's measurement before step 2 builds on them.
+3. **Doubles for the quadrics?** Finding 6. You kept the QEF solvers in floats on 2026-11-11, since precision was not a must-have. This is different code with nothing to stay in step with, and its ordering depends on it. The other way is floats about a moving origin, which is more code. Recommended: doubles, confirmed by step 1's measurement before step 2 builds on them. Step 1 confirmed it (finding 6).
 4. **An error bound in cells and a detail slider?** Findings 7 and 8. The other way is one target, a triangle count or a share of the triangles, as both papers have it. That is simpler, but a cube and a ball then need different numbers. Recommended: both settings as designed.
 5. **Topology never changes?** No collapse joins, splits, opens or closes anything, on the surface or on the boundaries between materials. A small ball then never goes below a tetrahedron and never vanishes. The other way allows such collapses at a penalty (Hoppe, section 4.6), and gives fewer triangles on models with small features. Recommended: never, for a project whose algorithms are about keeping the surface manifold.
 6. **Crossing triangles: counted, not prevented?** Finding 9. Preventing them means testing every collapse against the triangles near it, from a paper that is not in `Documents/Papers/` (Gumhold, Borodin and Klein, 2003). Recommended: step 3 counts them and reports, and the README says Occupancy's guarantee holds with simplification off.
