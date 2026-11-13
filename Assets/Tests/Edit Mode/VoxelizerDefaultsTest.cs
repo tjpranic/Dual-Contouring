@@ -5,7 +5,8 @@ using ImplementationType = SurfaceExtractor.Implementation.Type;
 using QEFSolverType      = QEFSolver.Type;
 
 // a voxelizer that is added to a scene starts out contouring the way the papers describe: the vertex of a cell is the
-// minimizer of its QEF, and stays where the QEF puts it. It runs the managed implementation where the algorithm has one
+// minimizer of its QEF, and stays where the QEF puts it. It runs the managed implementation where the algorithm has one,
+// and draws no wireframe until asked to
 public class VoxelizerDefaultsTest {
 
     private static void assertDefaults<T>( ImplementationType implementation = ImplementationType.Managed ) where T : Voxelizer {
@@ -17,6 +18,11 @@ public class VoxelizerDefaultsTest {
             Assert.AreEqual( implementation,    voxelizer.implementationType,          "implementation" );
             Assert.AreEqual( QEFSolverType.SVD, voxelizer.qefSolverType,               "solver" );
             Assert.AreEqual( 0,                 voxelizer.surfaceCorrectionIterations, "surface correction iterations" );
+
+            Assert.AreEqual( Wireframe.Look.Off, voxelizer.wireframe,          "wireframe" );
+            Assert.AreEqual( 1.0f,               voxelizer.wireframeLineWidth, "wireframe line width" );
+            Assert.AreEqual( Color.black,        voxelizer.wireframeLineColor, "wireframe line colour" );
+            Assert.AreEqual( Color.black,        voxelizer.wireframeFillColor, "wireframe fill colour" );
         }
         finally {
             Object.DestroyImmediate( gameObject );

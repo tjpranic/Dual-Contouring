@@ -375,6 +375,7 @@ public partial class OccupancyDualContouring {
     }
 
     public override void release( ) {
+        base.release( );
         this.gpuImplementation?.releaseBuffers( );
     }
 

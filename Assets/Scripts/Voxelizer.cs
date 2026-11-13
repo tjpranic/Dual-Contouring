@@ -86,6 +86,21 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         Minimizers    = 16
     }
 
+    // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
+    [Header( "Wireframe" )]
+
+    [Tooltip( "Draw the edges of the triangles over the contour: over the shaded surface, or over a flat fill that hides the surface and the lines behind it" )]
+    public Wireframe.Look wireframe = Wireframe.Look.Off;
+
+    [Tooltip( "Line width in pixels" ), Min( 0.5f )]
+    public float wireframeLineWidth = 1.0f;
+
+    [Tooltip( "Colour of the lines over the surface. Its alpha blends them" )]
+    public Color wireframeLineColor = Color.black;
+
+    [Tooltip( "Colour under the lines with Lines Only, where the lines of each material take its colour" )]
+    public Color wireframeFillColor = Color.black;
+
     [Space]
 
     public Debug debugFlags = Debug.Off;
@@ -124,6 +139,15 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private bool          directToGPU = false;
     private Material      material;
     private ComputeBuffer argumentsBuffer;
+
+    // the GPU's vertices and quads that are drawn from, which the wireframe is drawn from too
+    private ComputeBuffer verticesBuffer;
+    private ComputeBuffer quadsBuffer;
+
+    // draws the wireframe, made the first time it is on and let go by release, and the renderer's materials it reads
+    // the colours of the sub-meshes from
+    private          Wireframe      wireframeDrawing;
+    private readonly List<Material> wireframeMaterials = new( );
 
     // snapshot of the voxelization, in voxelizer object space, for drawing debug information each frame
     private struct DebugEdge {
@@ -227,6 +251,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                     }
 
                     this.argumentsBuffer = voxelization.arguments;
+                    this.verticesBuffer  = voxelization.vertices;
+                    this.quadsBuffer     = voxelization.quads;
                 }
             );
         }
@@ -338,6 +364,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         this.directToGPU     = false;
         this.material        = null;
         this.argumentsBuffer = null;
+        this.verticesBuffer  = null;
+        this.quadsBuffer     = null;
     }
 
     // Destroy waits for the end of the frame, which only comes in play mode
@@ -452,7 +480,71 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         }
     }
 
+    // draws the edges of the contour this voxelizer shows over it, for the camera, as the wireframe settings say.
+    // DrawShapes calls this for every camera in play mode, and the interactive editor forwards to DrawShapes in edit
+    // mode.
+    // - A mesh is drawn by the mesh renderer, so there are no lines while it is off, or while the mesh filter holds a
+    //   mesh this voxelizer did not make.
+    // - A contour drawn straight from the GPU is drawn by Update for every camera, whatever the renderer, with the
+    //   transform it had when it was contoured, and its lines are drawn the same way
+    public void drawWireframe( Camera camera ) {
+        if( this.wireframe == Wireframe.Look.Off || camera.cameraType == CameraType.Preview || camera.cameraType == CameraType.Reflection ) {
+            return;
+        }
+
+        var meshFilter   = this.GetComponent<MeshFilter>( );
+        var meshRenderer = this.GetComponent<MeshRenderer>( );
+
+        var style = new Wireframe.Style {
+            look      = this.wireframe,
+            lineWidth = this.wireframeLineWidth,
+            lineColor = this.wireframeLineColor,
+            fillColor = this.wireframeFillColor
+        };
+
+        if( this.directToGPU ) {
+            if( !this.gameObject.activeInHierarchy ) {
+                return;
+            }
+
+            this.wireframeDrawing ??= new Wireframe( );
+
+            meshRenderer.GetSharedMaterials( this.wireframeMaterials );
+
+            this.wireframeDrawing.drawQuads(
+                camera,
+                this.verticesBuffer,
+                this.quadsBuffer,
+                this.argumentsBuffer,
+                this.material.GetMatrix( "localToWorld" ),
+                new Bounds( this.transform.position, this.transform.localScale ),
+                this.gameObject.layer,
+                style,
+                this.wireframeMaterials
+            );
+
+            return;
+        }
+
+        // Unity also leaves the lines out for a camera that does not see the layer. Checking it here saves setting them up
+        var shown = this.contourMesh != null && meshFilter != null && meshFilter.sharedMesh == this.contourMesh;
+        var drawn = meshRenderer.enabled && this.gameObject.activeInHierarchy && ( camera.cullingMask & ( 1 << this.gameObject.layer ) ) != 0;
+
+        if( !shown || !drawn ) {
+            return;
+        }
+
+        this.wireframeDrawing ??= new Wireframe( );
+
+        // the list is filled in place, where Renderer.sharedMaterials would make a new array each time
+        meshRenderer.GetSharedMaterials( this.wireframeMaterials );
+
+        this.wireframeDrawing.draw( camera, this.contourMesh, this.transform.localToWorldMatrix, this.gameObject.layer, style, this.wireframeMaterials );
+    }
+
     public override void DrawShapes( Camera camera ) {
+        this.drawWireframe( camera );
+
         if( this.debugFlags == Debug.Off || this.debugVoxels == null ) {
             return;
         }
@@ -538,8 +630,12 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     public abstract Mesh readMesh( GPUVoxelization voxelization );
 
     // releases what an implementation holds on to outside of managed memory, such as compute buffers. The next contour
-    // makes them anew, and what is shown stays
-    public virtual void release( ) { }
+    // makes them anew, and what is shown stays. The voxelizer itself lets go of the wireframe's material and the mesh's
+    // buffers, which the next drawing takes again, so an implementation that overrides this calls it
+    public virtual void release( ) {
+        this.wireframeDrawing?.Dispose( );
+        this.wireframeDrawing = null;
+    }
 
     public virtual void OnDestroy( ) {
         this.clear( );

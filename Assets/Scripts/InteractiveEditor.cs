@@ -214,6 +214,11 @@ public class InteractiveEditor : MonoBehaviour {
             to.vertexNormals               = from.vertexNormals;
             to.debugFlags                  = from.debugFlags;
 
+            to.wireframe          = from.wireframe;
+            to.wireframeLineWidth = from.wireframeLineWidth;
+            to.wireframeLineColor = from.wireframeLineColor;
+            to.wireframeFillColor = from.wireframeFillColor;
+
             to.implementationType = implementationFor( to, from.implementationType );
 
             // the voxelizer that is no longer used gives back its compute buffers. Its mesh stays until the next contour
@@ -652,10 +657,10 @@ public class InteractiveEditor : MonoBehaviour {
         UnityEditor.EditorApplication.update += this.onEditorUpdate;
 #endif
 
-        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= this.drawDebugInformation;
-        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += this.drawDebugInformation;
-        Camera.onPreRender -= this.drawDebugInformation;
-        Camera.onPreRender += this.drawDebugInformation;
+        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= this.drawDebugViewAndWireframe;
+        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += this.drawDebugViewAndWireframe;
+        Camera.onPreRender -= this.drawDebugViewAndWireframe;
+        Camera.onPreRender += this.drawDebugViewAndWireframe;
     }
 
     // also just before a script recompile, which would lose track of the compute buffers
@@ -664,8 +669,8 @@ public class InteractiveEditor : MonoBehaviour {
         UnityEditor.EditorApplication.update -= this.onEditorUpdate;
 #endif
 
-        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= this.drawDebugInformation;
-        Camera.onPreRender -= this.drawDebugInformation;
+        UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= this.drawDebugViewAndWireframe;
+        Camera.onPreRender -= this.drawDebugViewAndWireframe;
 
         foreach( var voxelizer in this.voxelizers( ) ) {
             voxelizer.release( );
@@ -692,23 +697,23 @@ public class InteractiveEditor : MonoBehaviour {
         }
     }
 
-    // the debug view of the selected voxelizer. A voxelizer draws it itself only once its OnEnable has run, which edit
-    // mode does not call and play mode does for a voxelizer this has disabled. Preview and reflection cameras are left
-    // out, as the voxelizer leaves them out
-    private void drawDebugInformation( Camera camera ) {
+    // the debug view and the wireframe of the selected voxelizer. A voxelizer draws them itself only once its OnEnable
+    // has run, which edit mode does not call and play mode does for a voxelizer this has disabled. Preview and
+    // reflection cameras are left out, as the voxelizer leaves them out
+    private void drawDebugViewAndWireframe( Camera camera ) {
         if( camera.cameraType == CameraType.Preview || camera.cameraType == CameraType.Reflection ) {
             return;
         }
 
         var voxelizer = this.voxelizer;
 
-        if( voxelizer != null && voxelizer.debugFlags != Voxelizer.Debug.Off ) {
+        if( voxelizer != null && ( voxelizer.debugFlags != Voxelizer.Debug.Off || voxelizer.wireframe != Wireframe.Look.Off ) ) {
             voxelizer.DrawShapes( camera );
         }
     }
 
-    private void drawDebugInformation( UnityEngine.Rendering.ScriptableRenderContext context, Camera camera ) {
-        this.drawDebugInformation( camera );
+    private void drawDebugViewAndWireframe( UnityEngine.Rendering.ScriptableRenderContext context, Camera camera ) {
+        this.drawDebugViewAndWireframe( camera );
     }
 
 #if UNITY_EDITOR

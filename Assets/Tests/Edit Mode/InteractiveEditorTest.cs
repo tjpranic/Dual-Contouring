@@ -189,6 +189,10 @@ public class InteractiveEditorTest {
         uniform.intersectionApproximation   = Approximation.LinearInterpolation;
         uniform.vertexNormals               = VertexNormals.Split;
         uniform.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
+        uniform.wireframe                   = Wireframe.Look.LinesOnly;
+        uniform.wireframeLineWidth          = 2.5f;
+        uniform.wireframeLineColor          = Color.red;
+        uniform.wireframeFillColor          = Color.blue;
 
         editor.select( algorithm );
 
@@ -204,6 +208,10 @@ public class InteractiveEditorTest {
         Assert.AreEqual( Approximation.LinearInterpolation,              octree.intersectionApproximation );
         Assert.AreEqual( VertexNormals.Split,                            octree.vertexNormals );
         Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  octree.debugFlags );
+        Assert.AreEqual( Wireframe.Look.LinesOnly,                       octree.wireframe );
+        Assert.AreEqual( 2.5f,                                           octree.wireframeLineWidth );
+        Assert.AreEqual( Color.red,                                      octree.wireframeLineColor );
+        Assert.AreEqual( Color.blue,                                     octree.wireframeFillColor );
 
         editor.select( Algorithm.Uniform );
 
@@ -240,6 +248,10 @@ public class InteractiveEditorTest {
         other.intersectionApproximation   = Approximation.LinearInterpolation;
         other.vertexNormals               = VertexNormals.Split;
         other.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
+        other.wireframe                   = Wireframe.Look.OverSurface;
+        other.wireframeLineWidth          = 2.5f;
+        other.wireframeLineColor          = Color.red;
+        other.wireframeFillColor          = Color.blue;
 
         editor.select( Algorithm.Occupancy );
 
@@ -252,6 +264,10 @@ public class InteractiveEditorTest {
         Assert.AreEqual( QEFSolverType.Simple,                           occupancy.qefSolverType );
         Assert.AreEqual( VertexNormals.Split,                            occupancy.vertexNormals );
         Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  occupancy.debugFlags );
+        Assert.AreEqual( Wireframe.Look.OverSurface,                     occupancy.wireframe );
+        Assert.AreEqual( 2.5f,                                           occupancy.wireframeLineWidth );
+        Assert.AreEqual( Color.red,                                      occupancy.wireframeLineColor );
+        Assert.AreEqual( Color.blue,                                     occupancy.wireframeFillColor );
 
         // back, from settings that say something else
         other.resolution                  = 3;
@@ -1014,6 +1030,9 @@ public class InteractiveEditorTest {
         ["outlines on top"]              = ( null, ( p ) => p.editor.outlinesOnTop    = true ),
         ["debug colour"]                 = ( null, ( p ) => p.editor.voxelizer.debugEdgeColor     = Color.magenta ),
         ["debug line thickness"]         = ( null, ( p ) => p.editor.voxelizer.debugLineThickness = 4.0f ),
+        ["wireframe"]                    = ( null, ( p ) => p.editor.voxelizer.wireframe          = Wireframe.Look.LinesOnly ),
+        ["wireframe line width"]         = ( null, ( p ) => p.editor.voxelizer.wireframeLineWidth = 3.0f ),
+        ["wireframe colours"]            = ( null, ( p ) => { p.editor.voxelizer.wireframeLineColor = Color.red; p.editor.voxelizer.wireframeFillColor = Color.blue; } ),
         ["renderer materials"]           = ( null, ( p ) => p.editor.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[3] ),
         ["unselected voxelizer setting"] = ( null, ( p ) => ( p.editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring ).errorThreshold = 0.5f ),
         ["unselected voxelizer resolution"] = ( null, ( p ) => p.editor.voxelizerOf( Algorithm.Manifold ).resolution = 7 ),
@@ -1488,6 +1507,67 @@ public class InteractiveEditorTest {
         editor.voxelizer.debugFlags = Voxelizer.Debug.Minimizers;
         editor.contour( );
         Assert.AreEqual( 2 * editor.lastContour.Value.vertexCount, editor.voxelizer.debugDrawCount, "a vertex and a normal for each vertex of the shared mesh" );
+    }
+
+    // the editor's contour, as a camera that sees only it draws it, with the selected voxelizer's wireframe as it is set
+    private Color32[] renderContour( InteractiveEditor editor, Wireframe.Look look ) {
+        var asyncCompilation = UnityEditor.ShaderUtil.allowAsyncCompilation;
+
+        // a shader still compiling in the background draws as a placeholder
+        UnityEditor.ShaderUtil.allowAsyncCompilation = false;
+
+        try {
+            using var view = new OffscreenRender( 256, 1.0f );
+
+            editor.voxelizer.wireframe = look;
+
+            return view.render( );
+        }
+        finally {
+            UnityEditor.ShaderUtil.allowAsyncCompilation = asyncCompilation;
+        }
+    }
+
+    private InteractiveEditor editorWithAContour( ) {
+        var editor = configure( this.createEditor( ), new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        addStarterModel( editor.transform );
+
+        editor.gameObject.layer = OffscreenRender.layer;
+
+        // the starter model has two materials
+        var materials = new[] { Color.white, Color.red }.Select(
+            ( color ) => {
+                var material = Object.Instantiate( Resources.Load<Material>( "Materials/unlit_white" ) );
+                material.hideFlags = HideFlags.HideAndDontSave;
+                material.color     = color;
+                this.created.Add( material );
+                return material;
+            }
+        ).ToArray( );
+
+        editor.GetComponent<MeshRenderer>( ).sharedMaterials = materials;
+
+        editor.voxelizer.resolution = 4;
+        editor.contour( );
+
+        return editor;
+    }
+
+    // a voxelizer's OnEnable does not run in edit mode, and the editor disables its voxelizers in play mode, so the
+    // editor draws the selected voxelizer's wireframe for it
+    [Test]
+    public void theSelectedVoxelizersWireframeIsDrawn( [Values( Wireframe.Look.OverSurface, Wireframe.Look.LinesOnly )] Wireframe.Look look ) {
+        var editor = this.editorWithAContour( );
+
+        Assert.AreEqual( Voxelizer.Debug.Off, editor.voxelizer.debugFlags, "no debug view, which would draw by itself" );
+
+        var off = this.renderContour( editor, Wireframe.Look.Off );
+        var on  = this.renderContour( editor, look );
+
+        var drawn = Enumerable.Range( 0, on.Length ).Count( ( index ) => !on[index].Equals( off[index] ) );
+
+        Assert.Greater( drawn, 2000, "pixels the wireframe changed" );
     }
 
     // the editor's own inspector comes before the selected voxelizer's long one. Unity does not reorder the components

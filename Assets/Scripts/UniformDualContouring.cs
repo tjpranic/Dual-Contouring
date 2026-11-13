@@ -335,6 +335,7 @@ public partial class UniformDualContouring : Voxelizer {
     }
 
     public override void release( ) {
+        base.release( );
         this.gpuImplementation?.releaseBuffers( );
     }
 

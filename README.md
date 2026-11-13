@@ -56,6 +56,26 @@ Knowing the new shapes makes the Burst and GPU implementations slower over cuboi
 
 Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed` and `Assets/Scenes/<Algorithm>/Burst`. For Uniform Dual Contouring those two folders are under `CPU`, next to `GPU`. Occupancy-Based Dual Contouring has `Burst` and `GPU`.
 
+## Wireframe
+Every voxelizer can draw the edges of its contour's triangles over the contour. Its inspector has a **Wireframe** section:
+
+- **Wireframe** is Off, **Over Surface** or **Lines Only**.
+  - **Over Surface** draws the lines over the shaded surface.
+  - **Lines Only** draws them over a flat fill, which hides the surface and the lines behind it. Each material's lines are in that material's colour.
+- **Wireframe Line Width** is in pixels, and stays the same at any distance.
+- **Wireframe Line Color** is the colour of the lines over the surface. Its alpha blends them.
+- **Wireframe Fill Color** is the fill under Lines Only.
+
+**How the lines are drawn:**
+- **Edges:** the lines are the edges of the triangles, so every quad shows its diagonal.
+- **The contour:** it is drawn as before, by its renderer or straight from the GPU, and the lines go over it. Picking, materials and shadows stay as they were; under Lines Only the hidden surface still casts its shadows.
+- **Where it works:** every implementation, in play mode, and in the interactive editor in edit mode as well.
+- **No contouring:** the settings change only what is drawn, so changing them never contours again.
+
+**Cost:** on the three balls at 1920 × 1080, drawing the lines adds about 0.1 ms to a frame of 418,000 triangles from Burst, and about 0.2 ms from the GPU.
+
+**Dense meshes:** seen whole, they fill up with lines. With the grid 600 pixels across, a cell at 256³ is two or three pixels wide.
+
 ## Occupancy-Based Dual Contouring
 `OccupancyDualContouring` follows *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024). It is Manifold Dual Contouring on a uniform grid, without simplification, and it only ever asks the volumes whether a point is inside or outside, never how far away the surface is. A point is inside where the volumes give it a material.
 
@@ -93,7 +113,7 @@ How it compares with Manifold Dual Contouring on the same grid, measured on sing
 
 The **Interactive Editor** object holds the editor and a voxelizer for each algorithm. In its inspector:
 
-- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation and solver, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
+- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation, solver and wireframe, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
 - **Shapes** lists every shape below the object, in the order their operations apply. Each row has an enabled box, the shape's name, which selects it, its operation (Union, Intersection or Subtraction) and material, and a remove button. Drag rows to reorder them. The **Add** buttons, one for each kind of shape, add a new one at the centre of the grid. Everything can be undone.
 - **Contour** contours at once. The line below it says whether the mesh is up to date, and how long the last contour took.
 - **Warnings** point out likely mistakes: a first shape that is not a Union, a shape without a material or outside the grid, a material the renderer has no material for, a shape a group would shear, a round or square shape whose x and z sizes differ, a debug view that draws so much it slows the editor down.
@@ -121,7 +141,7 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 
 | Folder | Contents |
 |---|---|
-| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too. |
+| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
 | `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. |
 | `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share and the layout they upload density functions in. The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl`. |
