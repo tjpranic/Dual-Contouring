@@ -136,11 +136,13 @@ public class MeshTest {
         }
     }
 
+    // with several materials, one of them nowhere on the surface. Unity empties a mesh of its sub-meshes when its index
+    // format changes, so a split that only kept the first sub-mesh would lose the triangles of every other material
     [Test]
     public void splitVerticesPast65535VerticesHave32BitIndices( ) {
         var ( vertices, indices ) = strip( 12000 ); // 24,002 shared vertices, 72,000 once they are split
 
-        var polygons = new[] { ( 0, indices ) };
+        var polygons = new[] { ( 0, indices.Take( 48000 ).ToArray( ) ), ( 1, new int[0] ), ( 2, indices.Skip( 48000 ).ToArray( ) ) };
 
         var mesh = createMesh( vertices, polygons );
 
@@ -150,6 +152,7 @@ public class MeshTest {
             Voxelizer.splitVertices( mesh );
 
             Assert.AreEqual( IndexFormat.UInt32, mesh.indexFormat, "after splitting" );
+            Assert.AreEqual( 3,                  mesh.subMeshCount, "sub-meshes after splitting" );
 
             assertSplit( vertices, polygons, mesh );
         }

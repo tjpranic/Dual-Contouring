@@ -378,6 +378,11 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         }
 
         mesh.vertices = vertices;
+
+        // changing the index format leaves the mesh with a single empty sub-mesh, so the sub-meshes are set up again
+        // before their triangles go back in
+        mesh.subMeshCount = subMeshes.Length;
+
         for( var subMeshIndex = 0; subMeshIndex < subMeshes.Length; ++subMeshIndex ) {
             mesh.SetTriangles( subMeshes[subMeshIndex], subMeshIndex );
         }

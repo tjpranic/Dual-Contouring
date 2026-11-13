@@ -461,7 +461,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::ManifoldDualContouring
   useCullingMasks: 0
-  _resolution: 6
+  _resolution: 7
   _minimizerIterations: 4
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 3
@@ -497,7 +497,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::AdaptiveDualContouring
   useCullingMasks: 0
-  _resolution: 6
+  _resolution: 7
   _minimizerIterations: 4
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 3
@@ -518,8 +518,8 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   keepDebugInformation: 0
-  simplification: 0
-  errorThreshold: 0.01
+  simplification: 1
+  errorThreshold: 0.000001
   topologySafe: 1
 --- !u!114 &954588970
 MonoBehaviour:
@@ -534,7 +534,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::UniformDualContouring
   useCullingMasks: 0
-  _resolution: 5
+  _resolution: 6
   _minimizerIterations: 4
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 3
@@ -650,7 +650,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::OccupancyDualContouring
   useCullingMasks: 0
-  _resolution: 5
+  _resolution: 6
   _minimizerIterations: 4
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 3
