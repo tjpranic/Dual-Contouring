@@ -2,7 +2,6 @@
 
 ## TODO
 - See if it's possible to parallelize Manifold Dual Contouring
-- Improve testing scenes
 
 ## IN PROGRESS
 

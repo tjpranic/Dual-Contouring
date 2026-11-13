@@ -444,13 +444,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: f420320a8a94749c08677048f4eb6ea7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::InteractiveEditor
-  _algorithm: 3
+  _algorithm: 2
   _debounce: 0.1
   _outlineThickness: 1
   _outlinesOnTop: 0
 --- !u!114 &954588968
 MonoBehaviour:
-  m_ObjectHideFlags: 2
+  m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
@@ -461,10 +461,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::ManifoldDualContouring
   useCullingMasks: 0
-  _resolution: 7
-  _minimizerIterations: 4
-  _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 3
+  _resolution: 8
+  _minimizerIterations: 3
+  _binarySearchIterations: 5
+  _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -482,7 +482,7 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   keepDebugInformation: 0
-  errorThreshold: 6e-12
+  errorThreshold: 0.000006
   enforceManifold: 1
 --- !u!114 &954588969
 MonoBehaviour:
@@ -639,7 +639,7 @@ Transform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &954588974
 MonoBehaviour:
-  m_ObjectHideFlags: 0
+  m_ObjectHideFlags: 2
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
