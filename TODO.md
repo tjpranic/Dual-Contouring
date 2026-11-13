@@ -3,6 +3,7 @@
 ## TODO
 - Edges on shared vertex meshes look horrendous
 - Remove any LINQ code
+- Better custom inspectors
 
 ## IN PROGRESS
 
