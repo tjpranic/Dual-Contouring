@@ -482,7 +482,7 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   keepDebugInformation: 0
-  errorThreshold: 0.000006
+  errorThreshold: 0.000001
   enforceManifold: 1
 --- !u!114 &954588969
 MonoBehaviour:
@@ -497,10 +497,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::AdaptiveDualContouring
   useCullingMasks: 0
-  _resolution: 7
-  _minimizerIterations: 4
-  _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 3
+  _resolution: 8
+  _minimizerIterations: 3
+  _binarySearchIterations: 5
+  _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -534,10 +534,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::UniformDualContouring
   useCullingMasks: 0
-  _resolution: 6
-  _minimizerIterations: 4
-  _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 3
+  _resolution: 7
+  _minimizerIterations: 3
+  _binarySearchIterations: 5
+  _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
@@ -650,10 +650,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: GameAssembly::OccupancyDualContouring
   useCullingMasks: 0
-  _resolution: 6
-  _minimizerIterations: 4
-  _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 3
+  _resolution: 7
+  _minimizerIterations: 3
+  _binarySearchIterations: 5
+  _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
