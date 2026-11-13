@@ -671,9 +671,9 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   keepDebugInformation: 0
-  edgeSearchIterations: 15
-  faceSearchSamples: 4
-  faceSearchIterations: 11
+  edgeSearchIterations: 10
+  faceSearchSamples: 3
+  faceSearchIterations: 10
   keepVerticesInCells: 0
   splitQuads: 1
 --- !u!1 &1118812346
