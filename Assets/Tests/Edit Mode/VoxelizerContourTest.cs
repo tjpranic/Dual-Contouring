@@ -8,6 +8,8 @@ using Object             = UnityEngine.Object;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using GPUVoxelization    = SurfaceExtractor.Implementation.GPU.Voxelization;
 using VertexNormals      = SurfaceExtractor.VertexNormals;
+using ContourVertices    = SurfaceExtractor.ContourVertices;
+using SmoothNormals      = SurfaceExtractor.SmoothNormals;
 using QEFSolverType      = QEFSolver.Type;
 
 // Voxelizer.contour, which builds and shows the mesh of the volumes and can be called again and again, the way the
@@ -53,7 +55,7 @@ public class VoxelizerContourTest : TopologyTest {
     // 16^3 cells for the uniform grids, 16^3 leaves for the octrees
     private const int resolution = 4;
 
-    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Shared ) {
+    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased ) {
         Voxelizer voxelizer = variant.algorithm switch {
             Algorithm.Uniform  => this.createVoxelizer<UniformDualContouring>  ( resolution,     QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive => this.createVoxelizer<AdaptiveDualContouring> ( resolution + 1, QEFSolverType.SVD, shapes ),
@@ -75,6 +77,36 @@ public class VoxelizerContourTest : TopologyTest {
         return voxelizer.GetComponent<MeshFilter>( ).sharedMesh;
     }
 
+    // the meshes asShown made, destroyed with the test
+    private readonly List<Object> finished = new( );
+
+    [TearDown]
+    public void destroyFinished( ) {
+        foreach( var mesh in this.finished ) {
+            Object.DestroyImmediate( mesh );
+        }
+        this.finished.Clear( );
+    }
+
+    // a mesh of shared vertices as contour shows it under the voxelizer's vertex normals: creased (BurstCreases), or
+    // split. The mesh given is left as it is
+    private Mesh asShown( Voxelizer voxelizer, Mesh mesh ) {
+        Mesh result;
+
+        if( voxelizer.vertexNormals == VertexNormals.Split ) {
+            result = Object.Instantiate( mesh );
+
+            Voxelizer.splitVertices( result );
+        }
+        else {
+            result = BurstCreases.crease( mesh, voxelizer.creaseAngle, voxelizer.smoothNormals, out _ );
+        }
+
+        this.finished.Add( result );
+
+        return result;
+    }
+
     private static void assertSameTriangles( Mesh expected, Mesh actual ) {
         MeshComparison.assertSameTriangles( expected, actual );
     }
@@ -94,7 +126,47 @@ public class VoxelizerContourTest : TopologyTest {
         Assert.IsNotNull( mesh );
         Assert.Greater( mesh.vertexCount, 0 );
 
-        assertSameTriangles( this.voxelize( voxelizer ).mesh, mesh );
+        assertSameTriangles( this.asShown( voxelizer, this.voxelize( voxelizer ).mesh ), mesh );
+    }
+
+    // creased vertex normals are the contour's shared vertices creased under the voxelizer's angle and smooth normals,
+    // and the mesh the crease was made from is not left behind
+    [Test]
+    public void contourCreasesUnderTheVoxelizersSettings( [ValueSource( nameof( variants ) )] Variant variant, [Values( 0.0f, 25.0f, 180.0f )] float angle, [Values] SmoothNormals smoothNormals ) {
+        var voxelizer = this.create( variant, shapesOf( Model.CubesAndSphere ) );
+
+        voxelizer.creaseAngle   = angle;
+        voxelizer.smoothNormals = smoothNormals;
+
+        var meshesBefore = Resources.FindObjectsOfTypeAll<Mesh>( ).Length;
+        var statistics   = voxelizer.contour( drawFromGPU: false );
+        var mesh         = shown( voxelizer );
+
+        Assert.AreEqual( meshesBefore + 1, Resources.FindObjectsOfTypeAll<Mesh>( ).Length, "meshes, against before the contour" );
+
+        var expected = this.asShown( voxelizer, this.voxelize( voxelizer ).mesh );
+
+        assertSameTriangles( expected, mesh );
+
+        Assert.AreEqual( mesh.vertexCount, statistics.vertexCount, "vertices reported" );
+        Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, mesh.hideFlags, "the mesh is not saved with the scene" );
+    }
+
+    // at 180 degrees under Contour nothing is creased: the mesh shown is the contour's, shared vertices and normals,
+    // which is what the Shared vertex normals that Creased replaced gave
+    [Test]
+    public void fullCreaseAngleUnderContourShowsTheContoursOwnVertices( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var voxelizer = this.create( variant, shapesOf( Model.SphereCutaway ) );
+
+        voxelizer.creaseAngle   = 180.0f;
+        voxelizer.smoothNormals = SmoothNormals.Contour;
+
+        var statistics = voxelizer.contour( drawFromGPU: false );
+        var contour    = this.voxelize( voxelizer ).mesh;
+
+        assertSameTriangles( contour, shown( voxelizer ) );
+
+        Assert.AreEqual( contour.vertexCount, statistics.vertexCount, "vertices" );
     }
 
     [Test]
@@ -335,7 +407,7 @@ public class VoxelizerContourTest : TopologyTest {
     // its triangles
     private const float simplificationError = 0.25f;
 
-    private Voxelizer createSimplifying( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Shared ) {
+    private Voxelizer createSimplifying( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased ) {
         var voxelizer = this.create( variant, shapes, normals );
 
         voxelizer.meshSimplification  = true;
@@ -362,7 +434,12 @@ public class VoxelizerContourTest : TopologyTest {
             Assert.AreEqual( mesh.vertexCount,        statistics.vertexCount,   "vertices reported" );
             Assert.AreEqual( triangleCountOf( mesh ), statistics.triangleCount, "triangles reported" );
 
-            Assert.AreEqual( BurstMeshSimplifierTest.shapeOf( contour ), BurstMeshSimplifierTest.shapeOf( mesh ), "shape" );
+            // of the mesh as it was before it was creased
+            var welded = MeshComparison.welded( mesh );
+
+            this.finished.Add( welded );
+
+            Assert.AreEqual( BurstMeshSimplifierTest.shapeOf( contour ), BurstMeshSimplifierTest.shapeOf( welded ), "shape" );
 
             // the GPU hands its vertices over in a different order every time, and the order decides between edges that
             // cost the same, so its simplified meshes are alike and not the same
@@ -370,7 +447,7 @@ public class VoxelizerContourTest : TopologyTest {
                 Assert.Less( triangleCountOf( mesh ), triangleCountOf( contour ) / 2, "triangles" );
             }
             else {
-                assertSameTriangles( simplified, mesh );
+                assertSameTriangles( this.asShown( voxelizer, simplified ), mesh );
             }
 
             Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, mesh.hideFlags, "the mesh is not saved with the scene" );
@@ -509,7 +586,7 @@ public class VoxelizerContourTest : TopologyTest {
         var expected   = record.meshAt( record.levelOf( 0.5f ) );
 
         try {
-            assertSameTriangles( expected, shown( voxelizer ) );
+            assertSameTriangles( this.asShown( voxelizer, expected ), shown( voxelizer ) );
 
             Assert.AreEqual( contour.vertexCount,        statistics.unsimplifiedVertexCount,   "vertices before simplification" );
             Assert.AreEqual( triangleCountOf( contour ), statistics.unsimplifiedTriangleCount, "triangles before simplification" );
@@ -530,7 +607,7 @@ public class VoxelizerContourTest : TopologyTest {
 
         voxelizer.contour( drawFromGPU: false );
 
-        assertSameTriangles( contour, shown( voxelizer ) );
+        assertSameTriangles( this.asShown( voxelizer, contour ), shown( voxelizer ) );
     }
 
     // simplify has nothing to show, and leaves what is shown alone, without a contour that was simplified: before the
@@ -630,7 +707,7 @@ public class VoxelizerContourTest : TopologyTest {
         var other    = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, usual, out _ );
 
         try {
-            assertSameTriangles( expected, shown( voxelizer ) );
+            assertSameTriangles( this.asShown( voxelizer, expected ), shown( voxelizer ) );
 
             Assert.AreNotEqual( triangleCountOf( other ), triangleCountOf( expected ), "triangles at the two weights" );
         }
@@ -649,14 +726,12 @@ public class VoxelizerContourTest : TopologyTest {
 
         voxelizer.contour( drawFromGPU: false );
 
-        Assert.AreEqual( normals, voxelizer.contourNormals, "the normals asked of the implementation" );
+        Assert.AreEqual( normals == VertexNormals.Split ? ContourVertices.Split : ContourVertices.Shared, voxelizer.contourVertices, "the vertices asked of the implementation" );
 
-        // the GPU splits vertices itself, the meshes of the others are split by contour
-        var expected = this.voxelize( voxelizer ).mesh;
-
-        if( normals == VertexNormals.Split && variant.implementation != ImplementationType.GPU ) {
-            Voxelizer.splitVertices( expected );
-        }
+        // the GPU splits vertices itself. The meshes of the others are split by contour, and every mesh of shared
+        // vertices is creased by contour
+        var contour  = this.voxelize( voxelizer ).mesh;
+        var expected = normals == VertexNormals.Split && variant.implementation == ImplementationType.GPU ? contour : this.asShown( voxelizer, contour );
 
         assertSameTriangles( expected, shown( voxelizer ) );
     }
@@ -685,8 +760,8 @@ public class VoxelizerContourTest : TopologyTest {
 
         Assert.AreEqual( triangleCountOf( mesh ), statistics.triangleCount, "triangles reported" );
 
-        // it is asked for with shared normals, whatever the voxelizer's setting
-        Assert.AreEqual( VertexNormals.Shared, voxelizer.contourNormals, "the normals asked of the implementation" );
+        // it is asked for with shared vertices, whatever the voxelizer's setting
+        Assert.AreEqual( ContourVertices.Shared, voxelizer.contourVertices, "the vertices asked of the implementation" );
 
         voxelizer.meshSimplification = false;
 
@@ -721,25 +796,25 @@ public class VoxelizerContourTest : TopologyTest {
     }
 
     // flat shading takes vertices that no two triangles share, and simplification takes vertices that they do. The mesh
-    // is simplified with shared vertices and split afterwards, for the GPU as for the CPU
+    // is simplified with shared vertices and split or creased afterwards, for the GPU as for the CPU
     [Test]
     public void simplifiedContourWithSplitNormalsIsSplitAfterwards( [ValueSource( nameof( variants ) )] Variant variant ) {
-        var shared = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Shared );
-        var split  = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Split );
+        var creased = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Creased );
+        var split   = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Split );
 
-        var sharedStatistics = shared.contour( drawFromGPU: false );
-        var splitStatistics  = split.contour( drawFromGPU: false );
+        var creasedStatistics = creased.contour( drawFromGPU: false );
+        var splitStatistics   = split.contour( drawFromGPU: false );
 
         assertFlatShaded( shown( split ) );
 
-        Assert.Less( sharedStatistics.vertexCount.Value, sharedStatistics.triangleCount.Value, "vertices of the mesh with shared normals, against its triangles" );
+        Assert.Less( creasedStatistics.vertexCount.Value, creasedStatistics.triangleCount.Value * 3, "vertices of the mesh with creased normals, against three for every triangle" );
 
         // the same simplification either way. The GPU's differs from one contour to the next
         if( variant.implementation != ImplementationType.GPU ) {
-            Assert.AreEqual( sharedStatistics.triangleCount, splitStatistics.triangleCount, "triangles" );
+            Assert.AreEqual( creasedStatistics.triangleCount, splitStatistics.triangleCount, "triangles" );
 
             CollectionAssert.AreEquivalent(
-                MeshComparison.trianglesOf( shown( shared ) ).Select( withoutNormals ),
+                MeshComparison.trianglesOf( shown( creased ) ).Select( withoutNormals ),
                 MeshComparison.trianglesOf( shown( split ) ).Select( withoutNormals ),
                 "the triangles, by the positions of their corners"
             );

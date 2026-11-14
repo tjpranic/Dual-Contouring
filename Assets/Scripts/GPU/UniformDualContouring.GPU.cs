@@ -7,7 +7,7 @@ using Implementation            = SurfaceExtractor.Implementation;
 using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
-using VertexNormals             = SurfaceExtractor.VertexNormals;
+using ContourVertices           = SurfaceExtractor.ContourVertices;
 using QEFSolverType             = QEFSolver.Type;
 
 public partial class UniformDualContouring {
@@ -32,7 +32,7 @@ public partial class UniformDualContouring {
                 int                       binarySearchIterations,
                 int                       surfaceCorrectionIterations,
                 IntersectionApproximation intersectionApproximation,
-                VertexNormals             vertexNormals,
+                ContourVertices           contourVertices,
                 int                       densityFunctionCount
             ) {
                 this.resolution                  = resolution;
@@ -40,7 +40,7 @@ public partial class UniformDualContouring {
                 this.binarySearchIterations      = binarySearchIterations;
                 this.surfaceCorrectionIterations = surfaceCorrectionIterations;
                 this.intersectionApproximation   = ( int )intersectionApproximation;
-                this.vertexNormals               = ( int )vertexNormals;
+                this.vertexNormals               = ( int )contourVertices;
                 this.densityFunctionCount        = densityFunctionCount;
             }
         }
@@ -86,7 +86,7 @@ public partial class UniformDualContouring {
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
             IntersectionApproximation    intersectionApproximation,
-            VertexNormals                vertexNormals
+            ContourVertices              contourVertices
         ) {
             this.prepareBuffers(
                 densityFunctions,
@@ -95,14 +95,14 @@ public partial class UniformDualContouring {
                 binarySearchIterations,
                 surfaceCorrectionIterations,
                 intersectionApproximation,
-                vertexNormals
+                contourVertices
             );
 
             this.buildVoxelGrid              ( resolution );
             this.sampleCornerDensities       ( resolution );
             this.calculateMinimizingVertices ( resolution );
 
-            if( vertexNormals == VertexNormals.Shared ) {
+            if( contourVertices == ContourVertices.Shared ) {
                 this.generateVertices( resolution );
             }
 
@@ -173,7 +173,7 @@ public partial class UniformDualContouring {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             IntersectionApproximation    intersectionApproximation,
-            VertexNormals                vertexNormals
+            ContourVertices              contourVertices
         ) {
             var densityFunctionData = densityFunctions.Select( ( densityFunction ) => new DensityFunction.Data( densityFunction ) ).ToArray( );
 
@@ -183,7 +183,7 @@ public partial class UniformDualContouring {
                 binarySearchIterations,
                 surfaceCorrectionIterations,
                 intersectionApproximation,
-                vertexNormals,
+                contourVertices,
                 densityFunctionData.Length
             );
 

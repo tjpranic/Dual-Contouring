@@ -1469,7 +1469,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
             }
         }
 
-        voxelizer.vertexNormals        = VertexNormals.Shared;
+        voxelizer.vertexNormals        = VertexNormals.Creased;
         voxelizer.keepDebugInformation = false;
 
         return this.voxelize( voxelizer ).mesh;

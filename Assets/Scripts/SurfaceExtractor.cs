@@ -47,7 +47,7 @@ public partial interface SurfaceExtractor {
             int                          surfaceCorrectionIterations,
             QEFSolver.Type               qefSolverType,
             IntersectionApproximation    intersectionApproximation,
-            VertexNormals                vertexNormals
+            ContourVertices              contourVertices
         );
 
     }
@@ -57,9 +57,28 @@ public partial interface SurfaceExtractor {
         LinearInterpolation
     }
 
+    // the normals of the mesh a voxelizer shows: creased by angle (BurstCreases), smooth across curved surfaces and
+    // broken at sharp edges, or split for flat shading. Creased has the value Shared had, which it replaced, so a
+    // scene saved with Shared vertex normals has creased ones
     public enum VertexNormals {
+        Creased,
+        Split
+    }
+
+    // what an implementation is asked to give: vertices that its triangles share, with the contour's normals, which the
+    // voxelizer creases or simplifies afterwards, or vertices split for flat shading, which the GPU implementations
+    // split themselves
+    public enum ContourVertices {
         Shared,
         Split
+    }
+
+    // the normal a creased vertex takes when its triangles all meet within the crease angle (BurstCreases): the normal
+    // the contour gave it, where that normal is within the angle of every one of its triangles, or the normal of its
+    // triangles
+    public enum SmoothNormals {
+        Contour,
+        Faces
     }
 
     [Flags]

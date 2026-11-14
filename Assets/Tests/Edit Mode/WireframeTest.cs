@@ -825,7 +825,7 @@ public class WireframeTest : ContouringTest {
     public void gpuContourWithTheWireframeOffDrawsNothing( ) {
         this.view( perspective: true );
 
-        var voxelizer = this.gpuVoxelizerShowing( GPUAlgorithm.Uniform, VertexNormals.Shared, twoCubes, materialColors );
+        var voxelizer = this.gpuVoxelizerShowing( GPUAlgorithm.Uniform, VertexNormals.Creased, twoCubes, materialColors );
         this.showReadBack( voxelizer, materialColors );
 
         var off = this.render( Look.Off );
@@ -839,7 +839,7 @@ public class WireframeTest : ContouringTest {
     public void gpuContourHasNoLinesAfterRelease( [Values] GPUAlgorithm algorithm ) {
         this.view( perspective: true );
 
-        var voxelizer = this.gpuVoxelizerShowing( algorithm, VertexNormals.Shared, twoCubes, materialColors );
+        var voxelizer = this.gpuVoxelizerShowing( algorithm, VertexNormals.Creased, twoCubes, materialColors );
         this.showReadBack( voxelizer, materialColors );
 
         voxelizer.release( );

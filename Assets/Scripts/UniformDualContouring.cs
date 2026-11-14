@@ -357,7 +357,7 @@ public partial class UniformDualContouring : Voxelizer {
             this.surfaceCorrectionIterations,
             this.qefSolverType,
             this.intersectionApproximation,
-            this.contourNormals
+            this.contourVertices
         );
     }
 

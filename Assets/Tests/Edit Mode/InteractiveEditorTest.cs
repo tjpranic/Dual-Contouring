@@ -1921,7 +1921,9 @@ public class InteractiveEditorTest {
         editor.contour( );
         Assert.AreEqual( 3 * 8 * 9 * 9, editor.voxelizer.debugDrawCount, "every edge, crossing or not" );
 
-        editor.voxelizer.debugFlags = Voxelizer.Debug.Minimizers;
+        // a minimizer for each vertex of the contour, which creasing makes more of: at 180 degrees nothing is creased
+        editor.voxelizer.creaseAngle = 180.0f;
+        editor.voxelizer.debugFlags  = Voxelizer.Debug.Minimizers;
         editor.contour( );
         Assert.AreEqual( 2 * editor.lastContour.Value.vertexCount, editor.voxelizer.debugDrawCount, "a vertex and a normal for each vertex of the shared mesh" );
     }

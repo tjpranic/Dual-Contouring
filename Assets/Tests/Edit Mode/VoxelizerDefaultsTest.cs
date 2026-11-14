@@ -2,11 +2,13 @@
 using UnityEngine;
 
 using ImplementationType = SurfaceExtractor.Implementation.Type;
+using VertexNormals      = SurfaceExtractor.VertexNormals;
+using SmoothNormals      = SurfaceExtractor.SmoothNormals;
 using QEFSolverType      = QEFSolver.Type;
 
 // a voxelizer that is added to a scene starts out contouring the way the papers describe: the vertex of a cell is the
 // minimizer of its QEF, and stays where the QEF puts it. It runs the managed implementation where the algorithm has one,
-// leaves the mesh of the contour as it is, and draws no wireframe until asked to
+// creases its normals at 40 degrees, does not simplify the mesh of the contour, and draws no wireframe until asked to
 public class VoxelizerDefaultsTest {
 
     private static void assertDefaults<T>( ImplementationType implementation = ImplementationType.Managed ) where T : Voxelizer {
@@ -18,6 +20,10 @@ public class VoxelizerDefaultsTest {
             Assert.AreEqual( implementation,    voxelizer.implementationType,          "implementation" );
             Assert.AreEqual( QEFSolverType.SVD, voxelizer.qefSolverType,               "solver" );
             Assert.AreEqual( 0,                 voxelizer.surfaceCorrectionIterations, "surface correction iterations" );
+
+            Assert.AreEqual( VertexNormals.Creased, voxelizer.vertexNormals, "vertex normals" );
+            Assert.AreEqual( 40.0f,                 voxelizer.creaseAngle,   "crease angle" );
+            Assert.AreEqual( SmoothNormals.Contour, voxelizer.smoothNormals, "smooth normals" );
 
             Assert.IsFalse( voxelizer.meshSimplification, "mesh simplification" );
             Assert.AreEqual( 0.05f, voxelizer.simplificationError, "simplification error" );

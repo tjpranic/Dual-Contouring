@@ -13,6 +13,8 @@ using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelizati
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using VertexNormals             = SurfaceExtractor.VertexNormals;
+using ContourVertices           = SurfaceExtractor.ContourVertices;
+using SmoothNormals             = SurfaceExtractor.SmoothNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 [RequireComponent( typeof( MeshRenderer ) )]
@@ -67,12 +69,19 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         set { this._intersectionApproximation = value; }
     }
 
-    [SerializeField( )]
-    private VertexNormals _vertexNormals = VertexNormals.Shared;
+    [SerializeField( ), Tooltip( "Creased: smooth across curved surfaces and broken where the triangles around a vertex meet at more than the crease angle. Split: flat, every triangle with vertices of its own" )]
+    private VertexNormals _vertexNormals = VertexNormals.Creased;
     public VertexNormals vertexNormals {
         get { return this._vertexNormals;  }
         set { this._vertexNormals = value; }
     }
+
+    // how creased vertex normals break (BurstCreases)
+    [Tooltip( "With creased vertex normals, triangles around a vertex that meet at more than this many degrees get vertices of their own. At 180 nothing is split" ), Range( 0.0f, 180.0f )]
+    public float creaseAngle = 40.0f;
+
+    [Tooltip( "With creased vertex normals, the normal of a vertex whose triangles all meet within the crease angle. Contour: the normal the contour gave it, where that is within the crease angle of every one of its triangles. Faces: the normal of its triangles" )]
+    public SmoothNormals smoothNormals = SmoothNormals.Contour;
 
     protected abstract Implementation implementation { get; set; }
 
@@ -81,10 +90,10 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         get { return 1.0f / ( 1 << this.resolution ); }
     }
 
-    // the normals an implementation is asked for. A mesh that is going to be simplified needs vertices that its
-    // triangles share, so it is asked for with shared normals and split afterwards
-    public VertexNormals contourNormals {
-        get { return this.meshSimplification ? VertexNormals.Shared : this.vertexNormals; }
+    // what an implementation is asked for. A mesh that is going to be creased or simplified needs vertices that its
+    // triangles share, so it is asked for with shared vertices, and creased or split afterwards
+    public ContourVertices contourVertices {
+        get { return this.meshSimplification || this.vertexNormals == VertexNormals.Creased ? ContourVertices.Shared : ContourVertices.Split; }
     }
 
     [Flags]
@@ -203,6 +212,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private static readonly ProfilerMarker voxelizeMarker      = new( "Voxelizer.Voxelize" );
     private static readonly ProfilerMarker simplifyMarker      = new( "Voxelizer.Simplify" );
     private static readonly ProfilerMarker splitVerticesMarker = new( "Voxelizer.SplitVertices" );
+    private static readonly ProfilerMarker creaseMarker        = new( "Voxelizer.Crease" );
     private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
     private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
 
@@ -258,7 +268,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     // called again and again.
     // - drawFromGPU: with the GPU implementation and the debug view off, draw the mesh straight from the compute
     //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode. A mesh that
-    //   is simplified is read back whatever this says, since it is simplified on the CPU.
+    //   is simplified is read back whatever this says, since it is simplified on the CPU. Creased vertex normals are
+    //   not creased yet when drawn this way: the GPU's shared vertices are drawn with the contour's normals until the
+    //   GPU creases them itself (Documents/Plans/Creased Normals.md, step 3).
     // - reorderVertices: reorder the vertex buffer, which makes the mesh a little faster to draw and takes 5 to 10% of
     //   a Burst contour of 128^3 cells
     public ContourStatistics contour( IEnumerable<DensityFunction> densityFunctions, bool drawFromGPU = true, bool reorderVertices = true ) {
@@ -311,8 +323,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             return new( stopwatch.Elapsed.TotalMilliseconds, null, null );
         }
 
-        // the GPU splits vertices for flat shading itself, in the contour kernel, unless it was asked for shared ones
-        var splitByGPU = !this.meshSimplification;
+        // the GPU splits vertices for flat shading itself, in the contour kernel, when it is asked for split ones
+        var splitByGPU = this.contourVertices == ContourVertices.Split;
 
         var ( mesh, corners, edges, voxels ) = voxelization.visit(
             ( voxelization ) => {
@@ -350,7 +362,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             simplifying.Stop( );
         }
 
-        this.finish( mesh, this.vertexNormals == VertexNormals.Split && !splitByGPU, reorderVertices );
+        mesh = this.finish( mesh, !splitByGPU, reorderVertices );
 
         captureDebugMarker.Begin( );
 
@@ -386,7 +398,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         simplifyMarker.End( );
 
-        this.finish( mesh, this.vertexNormals == VertexNormals.Split, reorderVertices );
+        mesh = this.finish( mesh, true, reorderVertices );
 
         // all of it is simplifying
         var milliseconds = stopwatch.Elapsed.TotalMilliseconds;
@@ -394,15 +406,27 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         return this.statisticsOf( milliseconds, milliseconds, mesh );
     }
 
-    // makes a mesh the contour that is shown: split for flat shading where asked, with its bounds, and its vertices
-    // in an order that draws well
-    private void finish( Mesh mesh, bool split, bool reorderVertices ) {
-        if( split ) {
+    // makes a mesh the contour that is shown, and gives it back: a mesh of shared vertices creased or split as the
+    // vertex normals say, with its bounds, and with its vertices in an order that draws well. Creasing makes a new
+    // mesh, and the mesh it was made from is destroyed. A mesh without vertices has nothing to crease
+    private Mesh finish( Mesh mesh, bool shared, bool reorderVertices ) {
+        if( shared && this.vertexNormals == VertexNormals.Split ) {
             splitVerticesMarker.Begin( );
 
             splitVertices( mesh );
 
             splitVerticesMarker.End( );
+        }
+        else if( shared && mesh.vertexCount > 0 ) {
+            creaseMarker.Begin( );
+
+            var creased = BurstCreases.crease( mesh, this.creaseAngle, this.smoothNormals, out _ );
+
+            destroy( mesh );
+
+            mesh = creased;
+
+            creaseMarker.End( );
         }
 
         finishMeshMarker.Begin( );
@@ -419,6 +443,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         mesh.hideFlags = contourMeshFlags;
 
         this.show( mesh );
+
+        return mesh;
     }
 
     private ContourStatistics statisticsOf( double milliseconds, double? simplificationMilliseconds, Mesh mesh ) {

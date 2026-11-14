@@ -9,7 +9,7 @@ using Implementation            = SurfaceExtractor.Implementation;
 using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
-using VertexNormals             = SurfaceExtractor.VertexNormals;
+using ContourVertices           = SurfaceExtractor.ContourVertices;
 using QEFSolverType             = QEFSolver.Type;
 
 public partial class UniformDualContouring {
@@ -33,7 +33,7 @@ public partial class UniformDualContouring {
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
             IntersectionApproximation    intersectionApproximation,
-            VertexNormals                vertexNormals
+            ContourVertices              contourVertices
         ) {
 
             // volumes work out where they are from their transforms on every sample

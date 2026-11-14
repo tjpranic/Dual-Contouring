@@ -9,7 +9,7 @@ using MaterialIndex   = SurfaceExtractor.MaterialIndex;
 using VoxelType       = SurfaceExtractor.Voxel.Type;
 using CPUVoxelization = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization = SurfaceExtractor.Implementation.GPU.Voxelization;
-using VertexNormals   = SurfaceExtractor.VertexNormals;
+using ContourVertices = SurfaceExtractor.ContourVertices;
 
 public partial class OccupancyDualContouring {
 
@@ -168,7 +168,7 @@ public partial class OccupancyDualContouring {
             int                          faceSearchIterations,
             bool                         splitQuads,
             bool                         keepVerticesInCells,
-            VertexNormals                vertexNormals
+            ContourVertices              contourVertices
         ) {
             var densityFunctionData = densityFunctions.Select( ( densityFunction ) => new DensityFunction.Data( densityFunction ) ).ToArray( );
 
@@ -248,7 +248,7 @@ public partial class OccupancyDualContouring {
             this.cellVertexCount = totals[0];
 
             var polygons = totals[1];
-            var split    = vertexNormals == VertexNormals.Split;
+            var split    = contourVertices == ContourVertices.Split;
 
             // a polygon is two or four triangles, one or two quads, and can add a vertex on its edge. With split
             // normals every triangle has three vertices of its own
@@ -370,7 +370,7 @@ public partial class OccupancyDualContouring {
             this.faceSearchIterations,
             this.splitQuads,
             this.keepVerticesInCells,
-            this.contourNormals
+            this.contourVertices
         );
     }
 

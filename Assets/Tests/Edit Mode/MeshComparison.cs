@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -47,6 +48,41 @@ public static class MeshComparison {
                 Assert.Fail( $"triangle {triangle} differs: expected {expectedTriangles[triangle]}, got {actualTriangles[triangle]}" );
             }
         }
+    }
+
+    // a new mesh of the triangles of a mesh, with its vertices at one position made one, which keeps the normal of the
+    // first of them: a creased mesh as it was before it was creased. The contours have no two vertices at one position,
+    // which step 0 of the mesh simplification plan counted
+    public static Mesh welded( Mesh mesh ) {
+        var vertices      = mesh.vertices;
+        var normals       = mesh.normals;
+        var indices       = new Dictionary<Vector3, int>( );
+        var places        = new int[vertices.Length];
+        var kept          = new List<Vector3>( );
+        var normalsOfKept = new List<Vector3>( );
+
+        for( var vertex = 0; vertex < vertices.Length; ++vertex ) {
+            if( !indices.TryGetValue( vertices[vertex], out var place ) ) {
+                place = kept.Count;
+
+                indices.Add( vertices[vertex], place );
+                kept.Add( vertices[vertex] );
+                normalsOfKept.Add( normals[vertex] );
+            }
+            places[vertex] = place;
+        }
+
+        var result = new Mesh { indexFormat = mesh.indexFormat };
+
+        result.SetVertices( kept );
+        result.SetNormals( normalsOfKept );
+        result.subMeshCount = mesh.subMeshCount;
+
+        for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+            result.SetTriangles( mesh.GetTriangles( subMesh ).Select( ( index ) => places[index] ).ToArray( ), subMesh );
+        }
+
+        return result;
     }
 
 }
