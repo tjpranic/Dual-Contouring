@@ -370,7 +370,7 @@ public partial class OccupancyDualContouring {
             this.faceSearchIterations,
             this.splitQuads,
             this.keepVerticesInCells,
-            this.vertexNormals
+            this.contourNormals
         );
     }
 

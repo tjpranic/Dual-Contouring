@@ -2,7 +2,7 @@
 
 Plan written 2026-11-13 for a mesh simplifier that runs on the finished mesh of any algorithm: quadric error edge collapse, with line quadrics and a progressive record of the collapses.
 
-**Status:** steps 0 to 2 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. All seven decisions were answered as recommended on 2026-11-14. Step 3 is next.
+**Status:** steps 0 to 3 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. All seven decisions were answered as recommended on 2026-11-14. Step 4 is next.
 
 **Papers,** all in `Documents/Papers/`:
 - *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): the algorithm.
@@ -61,28 +61,36 @@ It applies to all four algorithms and all three implementations, since it works 
 
 6. **Floats are not enough for a quadric kept about the origin.** The constant term of a vertex 100 cells from the origin is near 10⁴ times its area, where a float resolves about 10⁻³. The costs to be ordered on a flat region are zero or close to it. The Burst plan met the same limit in the octree's error test. Doubles cost Burst nothing in speed here, and the simplifier has no managed or GPU version to match. See decision 3.
    - **Step 1 measured it** (Measurements). On a ball of 128³ cells the cost of an edge is a distance of 0.009 cells, and a float quadric is off by 0.011. 86% of its costs are more than half wrong and a fifth are below zero. A double quadric is off by about a millionth of a cell at most.
-   - **The speed of doubles is not measured yet.** Step 3 times the simplifier.
+   - **The speed of doubles was not measured against floats:** there is no float simplifier to time. Step 3's times are of doubles.
 
 7. **With line quadrics the cost of a collapse is no longer a distance to the surface.** On a flat face of a cube it is the line term alone, and it grows as the face is merged down to two triangles. A bound on the whole cost would stop a cube far short of twelve triangles.
    - **So the two sums are kept apart,** twenty numbers a vertex: the heap orders by their sum, as the paper has it, and the bound is tested against the plane part alone.
    - **This is my addition.** The paper stops at a triangle count and does not need it.
+   - **Step 3 already keeps two sums apart for another reason** (finding 21), so with line quadrics a vertex has three.
 
 8. **The bound can be a length.** A vertex's plane quadric, divided by the area it stands for, is the mean squared distance to its planes weighted by area. Its root is a distance, which the setting gives in cells, as the project's tolerances are. The division is also my addition.
+   - **It is a distance to planes and not to the shape.** Step 3 measured the second: a vertex ends up at most about three times the error from the shape, and so does the middle of a triangle (finding 22).
 
 9. **Occupancy's triangles may cross after simplification.** Its split of every polygon is chosen so that triangles do not pass through each other, and a collapse undoes that choice. The inversion test catches a fold around the collapsed edge and nothing further away. Step 3 counts crossing pairs before and after with `MeshIntersections`. See decision 6.
+   - **Step 3 counted them** (Measurements). Of seven models at 64³, one gets crossing pairs it did not have: the turned shapes, 9 pairs among 1,680 triangles at the default error. The other six have none before or after, but for the new shapes, whose contour has 4 and keeps them up to an error of 0.05.
+   - **Uniform and Manifold contours cross themselves to begin with,** by hundreds of pairs on models with creases, and simplifying takes most of those away.
 
 10. **The collapse loop is serial.** Each collapse changes the costs around it, so the heap is worked one edge at a time. Building the quadrics and the first costs is parallel.
     - **An estimate and nothing more:** taking 52,000 vertices to their floor is about 50,000 collapses, each recomputing about ten edges with a solve, an inversion test and a heap move. That is perhaps 50 to 150 ms at 128³ and a quarter of it at 64³.
-    - **What it means for the editor:** at 128³ a contour with simplification will probably pass the 50 ms up to which a drag is followed live, and wait for changes to settle instead. The scheduler already does that by itself.
+    - **The estimate was too low.** Step 3 measured 248 ms for the three balls at 128³ and 48 ms at 64³ (Measurements): 4.4 microseconds a collapse, and eight times what the contour itself takes. Nothing was tuned; that is step 7.
+    - **What it means for the editor:** with simplification on, a drag is followed live up to 32³, where it takes 11 ms. At 64³ the contour and the simplification together are just over the 50 ms limit, and the editor waits for changes to settle. The scheduler does that by itself.
 
 11. **A changed simplification setting needs no new contour.** If the voxelizer keeps the unsimplified mesh, a new error bound is a new run of the simplifier, and a new detail is a walk through the record.
 
 12. **The order must not depend on chance.** Equal costs are common on flat regions when the line weight is zero. Ties go to the lower edge index, so the same mesh always simplifies the same way and hashes can be compared between runs.
+    - **Step 3 puts the area before the index:** of edges that cost the same, the one whose two ends stand for less area goes first. Every edge of a flat face along the grid costs exactly nothing, and going by the index alone one vertex takes its neighbours one after another, with every edge of it worked out again at each collapse. A cube at 128³ took 2.9 seconds that way and takes 0.17 with the area first. On a cube at 64³ a collapse works out 7 edges again, not 59.
+    - **The GPU's contours do not simplify the same way twice.** Its vertices come in a different order every time, and the order still decides between edges that cost the same and stand for the same area. The meshes are alike and not equal. A CPU contour simplifies the same way every time, which a test holds it to.
 
 13. **Garland and Heckbert do not say how large the "large penalty" on boundary planes is.** Step 2 measures what keeps a straight boundary between two materials straight and a round one round, and sets it.
     - **What the weight multiplies is my choice:** the plane through a sharp edge that stands on one of its triangles counts as that triangle's own plane does, a third of its area, times the weight. A weight of 1 then means that a line may leave its place sideways as far as the surface may leave its planes.
     - **Step 2 measured single collapses** (Measurements). Any weight above zero keeps the new vertex on the line. At zero a collapse into a line moves it by up to 1.4 cells where it is straight and 2 where it is round. Above zero the weight only sets what rounding a curved line costs, which grows with its root.
     - **It is 1 for now.** Whether a whole simplification keeps the lines needs the loop, so step 3 measures the lines after simplifying at 0.1, 1, 10 and 100 and settles it.
+    - **Step 3 settled it at 1,** and found that the weight was the wrong thing to ask of (finding 21). With the lines held to the bound by themselves, weights from 0.1 to 100 give the same lines to within a few edges.
     - **Occupancy's lines between materials are less exact:** 0.38 cells from the straight line and up to 0.67 from the round one, where Uniform's are within 0.03. At a weight of 1 a tenth of the collapses along its round line cost 0.29 cells, so a small error bound will refuse them. Step 3 shows what that does to its triangle counts.
 
 14. **Degenerate triangles have no plane.** A triangle without area adds nothing to a quadric, and a vertex whose faces cancel has no normal for its line. Liu et al. give such a vertex a point quadric of weight 1e-6 (section 4.2), which is used here too.
@@ -116,6 +124,20 @@ It applies to all four algorithms and all three implementations, since it works 
     - **What it costs:** on those two contours at 32³ it refuses an edge 21 and 24 times, beside about 2,600 and 1,600 collapses made.
     - **It has no proof.** The tests hold every mesh they collapse to its pieces, its Euler characteristic, the same two for each sub-mesh, and the counts of its special vertices and lines.
 
+21. **A sharp line needs an error bound of its own.** This is a flaw in my design that step 3's measurement found, and the largest change to it.
+    - **What went wrong:** the bound divided a vertex's whole error by all the area it stands for. On a flat face every collapse costs nothing, so a vertex of a line across the face comes to stand for a great deal of face and very little line, and no error of the line was ever over the bound. A circle between two materials on a flat face, of 12.8 cells' radius, came out with 12 sides and 1.3 cells off at an error of 0.05. Raising the weight to 100 only made it 0.14.
+    - **What is done:** the planes of the sharp edges are a second quadric with an area of its own, the thirds of the triangles they stand on. A collapse has to keep the surface within the error over the surface's area, and the lines within the error over theirs. The heap still orders by the sum of both, and the new vertex is still the best point of both.
+    - **What it gives:** the same circle keeps 62 of its 204 edges, with its vertices within 0.09 cells and the middles of its edges within 0.14, which is the three errors a curved surface gets.
+    - **It is thirty numbers a vertex with line quadrics,** not twenty (finding 7).
+
+22. **The error is not how far the mesh is from the shape.** Step 3 measured that on nine shapes whose distances are known, upright and turned, at 64³ (Measurements).
+    - **Vertices:** at most 2.1 to 3.2 times the error from the shape, at every error from 0.02 to 0.25 and for every algorithm.
+    - **Middles of triangles:** at most 3.3 times.
+    - **Corners:** a corner can slide along an edge it belongs to. Its vertex stands for little of the third face while the edge next to it has been collapsed into a vertex that stands for much of the other two, and the two can then collapse to a point a little way down the edge. A corner of the hexagonal prism ended 0.29 cells from its place at an error of 0.1, still on the shape.
+    - **The tests hold vertices to four times the error,** or to the distance the contour's own vertices already have.
+
+23. **A job works on a copy of what it is given.** The connectivity counted its stamps in a field of the struct. The build job counted in its copy, the collapse job started again from zero in another, among the stamps the first had left, and took old notes for new: on a capsule at 32³ the loop then read past the end of a list. Step 2's tests ran both in one job and could not see it. The counter is now in memory that every copy shares.
+
 ## Design
 
 ### Settings
@@ -125,7 +147,7 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
 | Setting | Default | What it does |
 |---|---|---|
 | Mesh Simplification | Off | Simplifies the mesh of every contour. |
-| Simplification Error | measured in step 3 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. |
+| Simplification Error | 0.05 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. Set in step 3: it takes the three balls at 128³ from 104,500 triangles to 4,644, with every vertex within about 0.15 cells of the shape. |
 | Line Quadric Weight | 1e-3 | The weight of the line quadrics. Zero gives Garland and Heckbert's algorithm as written. |
 | Detail | 0 | Which mesh of the record is shown: 0 is the simplest the error allows, 1 is the contour itself. |
 
@@ -141,8 +163,19 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
   - **`check`** gives the reason an edge may not collapse: locked, one of the five ways to break the link conditions, one of Hoppe's tests, the rule of finding 20, or a triangle that would turn over or lose its area.
   - **`collapse`** keeps the lower of the two vertices. It works out again the triangle counts and sharpness of the kept vertex's edges, its order, and the sharp counts of the vertices around it. The orders of the vertices around it are left alone: a collapse that the link conditions allow does not change them, and the tests compare with a mesh built from nothing.
   - **Hoppe's tests run on all sharp edges together:** open, of more than two triangles, and between materials.
+  
+  Built in step 3:
+  - **`simplify( mesh, error )`** reads a mesh of any implementation and gives a new one, through six stages with a profiler marker each: read the mesh, build the lists, quadrics (parallel), first costs (parallel), the loop, write the mesh.
+  - **Two quadrics and two areas per vertex** (finding 21).
+  - **`targetOf`** is Garland and Heckbert's choice of the new vertex: the best point, else the best on the edge (`BurstQuadric.minimizeBetween`), else the middle or an end. The middle is taken unless an end is better by more than rounding, so that a flat face gives the middle whether it lies along the grid or not.
+  - **The heap** holds only edges that are within the error bound and that `check` has not refused, ordered by cost, then area, then index (finding 12). The edges of both ends leave it before a collapse and the edges of the kept vertex go back in after.
+  - **Refused edges come back** when a collapse leaves a vertex next to one of their ends, since that is all that can change what `check` says. The draft had them come back only with a new cost, which would have left edges behind that could collapse. A test counts what the loop leaves.
+  - **`Statistics`:** collapses, how many of them put a vertex far from its edge (finding 19), and how many edges were worked out again.
 - **`Assets/Scripts/MeshSimplification.cs`:** the settings, the record as managed arrays, and the mesh at a level of detail.
-- **`Voxelizer.contour`:** the hook, between the mesh arriving and vertices being split.
+- **`Voxelizer.contour`:** the hook, between the mesh arriving and vertices being split. Built in step 3:
+  - **`cellSize`:** the size of a cell, which the error is given in. An octree has half as many leaves across as a grid of its resolution has cells.
+  - **`contourNormals`:** what an implementation is asked for, shared normals when the mesh is going to be simplified. The GPU is the only one it changes anything for.
+  - **The unsimplified mesh is destroyed** once it is simplified. Step 5 keeps it.
 
 ### The algorithm
 
@@ -151,12 +184,12 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
 3. **Costs,** in parallel. For every edge, the point of least error of both sums of both ends, and the error there.
    - **Position:** with a line weight above zero the system is always solvable. At zero the fallbacks are the paper's: the best point on the edge, then the better of its ends and middle.
 4. **The loop.** Take the cheapest edge. It is collapsed unless one of these refuses it:
-   - **Error:** the plane part at the new position is over the bound (findings 7 and 8).
+   - **Error:** the plane part at the new position is over the bound (findings 7 and 8), or the part of the sharp edges is over theirs (finding 21).
    - **Topology:** the link conditions of theorem B fail.
    - **Materials:** one of Hoppe's six tests says the curves between materials would change.
    - **Inversion:** a triangle around either end would turn over.
    
-   A refused edge leaves the heap and returns when a collapse next to it gives it a new cost. A collapse moves one end to the new position, gives it both ends' triangles, edges, sums and area, removes the triangles that lost a side, and recomputes the edges around it. It ends when the heap is empty.
+   A refused edge leaves the heap and returns when a collapse leaves a vertex next to one of its ends. A collapse moves one end to the new position, gives it both ends' triangles, edges, sums and area, removes the triangles that lost a side, and recomputes the edges around it. It ends when the heap is empty.
 5. **Normals.** The new vertex takes the sum of the two normals, each weighted by the area its vertex stands for, made unit length. Manifold's clusters add their members' normals the same way, without the weights.
 6. **The record.** Each collapse writes the vertex kept, the vertex removed, and the position and normal the kept one got.
 
@@ -201,13 +234,18 @@ There is no second implementation to compare with, so the tests hold the simplif
   - Two triangles on the same three vertices: no edge at them collapses, and vertices without triangles are passed over (finding 15).
   - Each of Hoppe's six cases around a boundary between materials, with lines that end and lines that meet (finding 16).
   - A fan that the best position would fold over.
-- **Shapes with known answers,** for every algorithm that contours them exactly: an upright cuboid becomes 8 vertices and 12 triangles at its corners, an octahedron 6 and 8, a pyramid 5 and 6, a hexagonal prism 12 and 20. A cuboid of two materials keeps a straight boundary between them, with 12 vertices and 20 triangles. Turned shapes within a tolerance measured in the step.
+- **Shapes with known answers,** for every algorithm that contours them exactly: an upright cuboid becomes 8 vertices and 12 triangles at its corners, an octahedron 6 and 8, a pyramid 5 and 6, a hexagonal prism 12 and 20. A cuboid of two materials keeps a straight boundary between them, with 12 vertices and 20 triangles. Turned shapes within a tolerance measured in the step. As step 3 built them:
+  - **The cuboid** is exact for every algorithm and implementation at any error, Occupancy and the GPU among them.
+  - **The other three** reach their counts at an error of 0.1 with Uniform, Adaptive and Manifold, on 32³ and 64³. Their corners are held to four times the error (finding 22). Occupancy does not reach them: its tilted faces are fitted and not exact.
+  - **The cuboid of two materials** is the slab with a band, which has two lines around it: 16 vertices and 28 triangles, with the band's vertices where the band begins and ends.
+  - **A round line on a flat face** stays within four errors of its circle (finding 21).
+  - **Turned shapes** do not reach the counts: their edges wobble by 0.3 cells in the contour itself. They are in the test of distances.
 - **Invariants,** over the models of `TopologyTest`, every algorithm, Burst and GPU, and Managed on small grids:
   - As many components and the same Euler characteristic as the contour, for the mesh and for each sub-mesh.
   - As many vertices of order 2, as many ends and meetings of sharp lines, and as many separate lines of open edges, of non-manifold edges and of edges between materials. The edges themselves get fewer: a line of 144 open edges is still one line when it has 20. The draft of this plan asked for as many open and non-manifold edges as the contour, which was wrong.
-  - No degenerate triangles, no winding conflicts, and no triangle turned over.
-  - Every vertex within the bound of the shape, by the exact distances.
-  - A lower bound never gives fewer triangles.
+  - No degenerate triangles, no winding conflicts, and no triangle turned over. As built: no triangle without area, and every vertex used. A turned triangle is what `check` refuses, tested in step 2.
+  - Every vertex within the bound of the shape, by the exact distances. As built: within four times the bound (finding 22).
+  - A lower bound never gives fewer triangles. It holds in all 121 contours of the test and in every row of the measurements.
   - The torus keeps its handle.
 - **The same every time:** two runs give the same mesh bit for bit.
 - **The record:**
@@ -251,11 +289,23 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **Measured:** the boundary weight on single collapses (Measurements, finding 13). It is 1 for now and step 3 settles it.
    - **Not timed.** Step 3 times the simplifier.
    - **Baselines after step 2:** edit mode 1914, play mode 21, 480 `Start` hashes unchanged.
-3. **The simplifier (large).** Heap, loop, bound, normals, the mesh out; the hook, the first two settings and the inspector; shared normals asked of the GPU. Line weight zero, so this step is Garland and Heckbert's algorithm with its own fallbacks. The shape, invariant and frame tests. **Measured here:** time by stage from 16³ to 128³ and Uniform at 256³, triangles against the error bound for each algorithm, distance to the shapes, and crossing triangle pairs before and after (finding 9). The default error comes out of this. Also left to this step by the earlier ones: the lines between materials after simplifying at boundary weights of 0.1, 1, 10 and 100 (finding 13), and the best points far from their edges (finding 19).
+3. **The simplifier (large).** Heap, loop, bound, normals, the mesh out; the hook, the first two settings and the inspector; shared normals asked of the GPU. Line weight zero, so this step is Garland and Heckbert's algorithm with its own fallbacks. The shape, invariant and frame tests. **Measured here:** time by stage from 16³ to 128³ and Uniform at 256³, triangles against the error bound for each algorithm, distance to the shapes, and crossing triangle pairs before and after (finding 9). The default error comes out of this. Also left to this step by the earlier ones: the lines between materials after simplifying at boundary weights of 0.1, 1, 10 and 100 (finding 13), and the best points far from their edges (finding 19). **Done 2026-11-14:**
+   - **Built:** the jobs and `simplify` in `BurstMeshSimplifier.cs`, `minimizeBetween` in `BurstQuadric.cs`, and the settings, `cellSize`, `contourNormals` and the hook in `Voxelizer.cs` (Design, Code). The two settings are fields under a **Mesh Simplification** heading, after Vertex Normals, which the inspector draws by itself. I checked that they are among the properties it draws, and did not look at the inspector.
+   - **Tests:** `MeshSimplificationTest.cs` is new, with 232 tests. `VoxelizerContourTest` has 71 more, `BurstQuadricTest` 4 and `BurstMeshSimplifierTest` 3, less the 4 of step 2 that went through the boundary weight. `ContouringPerformanceTest` has the simplifier by stage, run by hand like the rest of it.
+   - **Three things the measurements changed:**
+     - **Sharp lines have a bound of their own** (finding 21).
+     - **Ties go by area before index** (finding 12).
+     - **The default error is 0.05 cells.**
+   - **One bug the tests of step 2 could not see** (finding 23).
+   - **What I expected and did not find:** corners of polyhedra exactly in place. They are within three errors (finding 22).
+   - **Best points far from their edges** (finding 19): at most 25 collapses of 50,000 put a vertex more than two edge lengths from the middle of its edge, on the three balls at 128³, and no model has more. `check` refused up to 16 such edges on a contour. They do not show in the distances to the shapes, so nothing is done about them.
+   - **Deliberate mistakes:** 25 were tried and 24 failed a test. The one that passed was the tie by area, which only changes how long the loop takes. `Statistics` now counts the edges worked out again and a test holds a cube to 12 for each collapse, which the mistake fails.
+   - **Not done here:** the interactive editor does not know the two settings yet. It carries neither over in `select` and does not contour when one changes. That is step 6.
+   - **Baselines after step 3:** edit mode 2220, play mode 21, 480 `Start` hashes unchanged.
 4. **Line quadrics (small).** The second sum, the weight, the point quadric for degenerate vertices, what a vertex without a normal gets (finding 14), their tests. **Measured here:** weights 0, 1e-4, 1e-3, 1e-2 and 1e-1 as in the paper's figure 4: triangles, distance to the shapes, the smallest angle of the triangles, and time. The default weight is set from it.
 5. **The record (medium).** The record, the mesh at a level, the Detail setting, what the voxelizer keeps, `simplify`, their tests. **Measured here:** a change of detail and a change of error at 128³, against a whole contour.
 6. **Interactive editor and scenes (small).** The split signature, the statistics line, `select`, the editor tests, the scenes.
-7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
+7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. From step 3's times: the loop is 88% of the time at 4.4 microseconds a collapse, and building the lists is 11% and serial, 26 ms at 128³, as long as the contour itself. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
 
 ## Measurements
 
@@ -274,6 +324,120 @@ Each step compiles, passes every test, and is reviewed before the next one start
 - **The runs agree:** from 64³ up, the least and the most of the 7 are within 4% of the median on Burst. On the GPU the most is up to 55% above it.
 - **Triangles at 128³:** 104,500 from Uniform and Occupancy, 5,224 from Adaptive and 4,714 from Manifold.
 - **Against finding 10:** the estimate of 50 to 150 ms for the collapse loop at 128³ is two to five times a Burst Uniform contour.
+
+### The simplifier (step 3, 2026-11-14)
+
+All at a line weight of zero, with Burst contours, the octrees simplifying at 2e-4 first as in their scenes. Errors are in cells.
+
+**Time by stage,** the three balls at the default error of 0.05, median of 5 runs in ms with Unity in front:
+
+| Cells | Vertices | Left | Simplify | Build | Quadrics | Costs | Loop | The contour itself |
+|---|---|---|---|---|---|---|---|---|
+| Uniform 16³ | 760 | 414 | 1.6 | 0.4 | 0.1 | 0.1 | 1.0 | 0.4 |
+| Uniform 32³ | 3,216 | 655 | 10.6 | 1.7 | 0.2 | 0.1 | 8.4 | 1.4 |
+| Uniform 64³ | 13,000 | 1,241 | 47.7 | 6.7 | 0.6 | 0.3 | 39.9 | 5.7 |
+| Uniform 128³ | 52,224 | 2,296 | 247.7 | 26.4 | 2.0 | 0.9 | 217.6 | 29.4 |
+| Uniform 256³ | 208,900 | 4,405 | 1,521.7 | 104.0 | 7.7 | 3.6 | 1,404.0 | 179.4 |
+| Occupancy 128³ | 52,252 | 2,229 | 228.7 | 27.0 | 2.0 | 0.9 | 198.1 | 54.9 |
+| Adaptive 128³ | 2,586 | 1,964 | 4.1 | 1.7 | 0.2 | 0.1 | 2.0 | 32.4 |
+| Manifold 128³ | 2,359 | 1,829 | 3.6 | 1.5 | 0.2 | 0.1 | 1.6 | 34.1 |
+
+- **Reading and writing the mesh** are 2 ms together at 256³, less below, and left out.
+- **Other models at Uniform 128³:** a cube 179 ms, the cubes and sphere 189, the turned shapes 217, the cut-away sphere, which has 67,936 vertices, 366.
+- **The loop** takes 4.4 microseconds a collapse at 128³ and 6.9 at 256³.
+- **After an octree has simplified** there is little left to do, and it takes 4 ms.
+
+**Triangles left** at 128³:
+
+| Contour | Model | Contour | 0.005 | 0.01 | 0.02 | 0.05 | 0.1 | 0.25 | 0.5 |
+|---|---|---|---|---|---|---|---|---|---|
+| Uniform | Sphere | 55,600 | 30,084 | 13,216 | 6,178 | 2,234 | 1,056 | 398 | 196 |
+| Uniform | Three balls | 104,500 | 56,804 | 25,478 | 12,028 | 4,644 | 2,270 | 984 | 582 |
+| Uniform | Cubes and sphere | 68,812 | 20,152 | 8,768 | 4,054 | 1,558 | 724 | 314 | 170 |
+| Uniform | Cut-away sphere | 135,868 | 43,198 | 18,942 | 8,920 | 3,352 | 1,638 | 646 | 336 |
+| Uniform | Slab with band | 63,036 | 28 | 28 | 28 | 28 | 28 | 28 | 28 |
+| Uniform | Turned shapes | 90,832 | 16,238 | 9,328 | 5,836 | 3,316 | 2,182 | 1,338 | 1,160 |
+| Uniform | New shapes | 90,728 | 42,564 | 25,496 | 14,484 | 5,488 | 2,746 | 1,304 | 926 |
+| Occupancy | Sphere | 55,600 | 26,960 | 12,270 | 5,982 | 2,134 | 1,014 | 400 | 198 |
+| Occupancy | Three balls | 104,500 | 51,674 | 24,298 | 12,156 | 4,454 | 2,102 | 790 | 392 |
+| Occupancy | Cubes and sphere | 68,812 | 17,892 | 8,210 | 4,002 | 1,530 | 740 | 312 | 172 |
+| Occupancy | Cut-away sphere | 135,868 | 39,074 | 19,742 | 9,464 | 3,656 | 1,692 | 672 | 336 |
+| Occupancy | Slab with band | 63,036 | 28 | 28 | 28 | 28 | 28 | 28 | 28 |
+| Occupancy | Turned shapes | 90,876 | 11,712 | 9,030 | 6,392 | 3,326 | 1,822 | 768 | 414 |
+| Occupancy | New shapes | 90,748 | 40,474 | 24,388 | 13,422 | 5,416 | 2,574 | 1,062 | 554 |
+| Adaptive | Three balls | 5,224 | 5,138 | 5,072 | 4,936 | 3,980 | 2,664 | 1,184 | 660 |
+| Adaptive | Cut-away sphere | 3,036 | 2,906 | 2,870 | 2,746 | 2,296 | 1,818 | 940 | 442 |
+| Adaptive | Turned shapes | 9,662 | 4,014 | 3,602 | 3,272 | 2,768 | 2,124 | 1,408 | 1,212 |
+| Adaptive | New shapes | 11,416 | 7,460 | 6,574 | 5,804 | 4,498 | 3,202 | 1,728 | 1,096 |
+| Manifold | Three balls | 4,714 | 4,682 | 4,664 | 4,558 | 3,654 | 2,428 | 964 | 464 |
+| Manifold | Cut-away sphere | 2,988 | 2,882 | 2,842 | 2,748 | 2,290 | 1,816 | 946 | 434 |
+| Manifold | Turned shapes | 3,230 | 1,490 | 1,338 | 1,156 | 882 | 592 | 330 | 204 |
+| Manifold | New shapes | 5,536 | 4,628 | 4,360 | 4,074 | 3,356 | 2,400 | 1,198 | 592 |
+
+- **At the default** Uniform's three balls have 4,644 triangles, as many as Manifold's clustering leaves them at 2e-4, which is 4,714.
+- **A flat model** comes down to its corners at any error.
+- **Uniform does not get below 1,160 on the turned shapes,** where Occupancy gets to 414. I put that down to its edges of four triangles, which are sharp lines and held in place, and did not check.
+- **After an octree** the simplifier takes another quarter off at the default, and a half or more from 0.1.
+
+**Distance to the shape,** on nine shapes whose density is their distance (cuboid, ball, cylinder, cone, capsule, torus, pyramid, octahedron, hexagonal prism), upright and turned, at 64³. The worst vertex and the worst middle of a triangle over the shapes whose contour is not already further off than twice the error, in cells and as multiples of the error:
+
+| Contour | Error | Worst vertex | Worst middle |
+|---|---|---|---|
+| Uniform | 0.02 | 0.060 (3.0) | 0.028 (1.4) |
+| Uniform | 0.05 | 0.116 (2.3) | 0.121 (2.4) |
+| Uniform | 0.1 | 0.243 (2.4) | 0.291 (2.9) |
+| Uniform | 0.25 | 0.562 (2.2) | 0.800 (3.2) |
+| Manifold | 0.02 | 0.060 (3.0) | 0.028 (1.4) |
+| Manifold | 0.05 | 0.162 (3.2) | 0.121 (2.4) |
+| Manifold | 0.1 | 0.250 (2.5) | 0.291 (2.9) |
+| Manifold | 0.25 | 0.543 (2.2) | 0.800 (3.2) |
+| Occupancy | 0.05 | 0.109 (2.2) | 0.165 (3.3) |
+| Occupancy | 0.1 | 0.224 (2.2) | 0.273 (2.7) |
+| Occupancy | 0.25 | 0.513 (2.1) | 0.549 (2.2) |
+
+- **The worst vertex** is on the upright capsule nearly every time, and the worst middle on the turned cylinder or the upright cone.
+- **The contours themselves** have vertices up to 0.54 cells from a turned cone with Uniform and 0.44 from a turned pyramid with Occupancy. Simplifying does not move those further.
+- **Manifold here is without clustering.**
+- **Occupancy at 0.02 is left out:** the middle of a triangle of its own contour of the cone is 0.16 cells from the shape.
+
+**Pairs of triangles that pass through each other,** at 64³, in the contour and after simplifying:
+
+| Contour | Model | Contour | 0.02 | 0.05 | 0.1 | 0.25 | 0.5 |
+|---|---|---|---|---|---|---|---|
+| Occupancy | Turned shapes | 0 | 0 | 9 | 6 | 7 | 18 |
+| Occupancy | New shapes | 4 | 4 | 4 | 0 | 0 | 0 |
+| Occupancy | The other five | 0 | 0 | 0 | 0 | 0 | 0 |
+| Manifold | Three balls | 502 | 31 | 0 | 0 | 0 | 0 |
+| Manifold | Turned shapes | 1,015 | 481 | 215 | 42 | 10 | 10 |
+| Manifold | New shapes | 602 | 111 | 43 | 16 | 0 | 0 |
+| Uniform | Three balls | 498 | 49 | 20 | 7 | 4 | 4 |
+| Uniform | Turned shapes | 836 | 517 | 349 | 236 | 159 | 126 |
+| Uniform | New shapes | 607 | 206 | 132 | 91 | 33 | 35 |
+
+- **Manifold is without clustering** here too. It and Uniform also have 156 pairs on the cubes and sphere, and none after simplifying at any error.
+- **Occupancy's own contour of the new shapes has 4 pairs,** which its paper's rule should not leave. I did not look into why.
+
+**The lines between materials,** at 64³ with Uniform, after a whole simplification. For each: how many of the contour's edges the lines keep, and how far their vertices and the middles of their edges are from the true line.
+
+Before the lines had a bound of their own (finding 21), at an error of 0.05:
+
+| Line | Contour | Weight 0.1 | 1 | 10 | 100 |
+|---|---|---|---|---|---|
+| Round, on a flat face | 204 edges | 12, middles 3.64 | 23, middles 1.29 | 47, middles 0.35 | 95, middles 0.14 |
+
+With it:
+
+| Line | Error | Contour | Weight 0.1 | 1 | 10 | 100 |
+|---|---|---|---|---|---|---|
+| Straight, flat | 0.05 | 256 edges | 8, exact | 8, exact | 8, exact | 8, exact |
+| Round, flat | 0.05 | 204 edges | 62, middles 0.14 | 62, middles 0.14 | 62, middles 0.14 | 62, middles 0.14 |
+| Round, flat | 0.25 | 204 edges | 27, middles 0.70 | 28, middles 0.70 | 28, middles 0.70 | 28, middles 0.70 |
+| Round, crease | 0.05 | 204 edges | 38, middles 0.08 | 37, middles 0.07 | 42, middles 0.07 | 39, middles 0.14 |
+| Round, crease | 0.25 | 204 edges | 15, middles 0.67 | 15, middles 0.74 | 16, middles 0.71 | 16, middles 0.68 |
+
+- **Exact** means as near the true line as the contour's own vertices, 0.014 cells.
+- **At a weight of zero** the bound alone still holds the lines, with more edges: 89 on the round flat line at 0.05.
+- **Occupancy's round line on the flat face keeps 120 of its 204 edges** at either error. Its line is up to 0.67 cells from the circle in the contour and jumps from side to side of it, which no collapse within these errors can take out.
 
 ### The weight of boundary planes (step 2, 2026-11-14)
 

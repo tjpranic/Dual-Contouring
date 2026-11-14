@@ -328,4 +328,237 @@ public class VoxelizerContourTest : TopologyTest {
         }
     }
 
+
+    // ---- mesh simplification ----
+
+    // how far a collapse may leave the surface in these tests, in cells: far enough for every contour to lose most of
+    // its triangles
+    private const float simplificationError = 0.25f;
+
+    private Voxelizer createSimplifying( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Shared ) {
+        var voxelizer = this.create( variant, shapes, normals );
+
+        voxelizer.meshSimplification  = true;
+        voxelizer.simplificationError = simplificationError;
+
+        return voxelizer;
+    }
+
+    // with the setting on, the mesh that is shown is the contour, simplified
+    [Test]
+    public void contourWithSimplificationShowsTheSimplifiedContour( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var voxelizer = this.createSimplifying( variant, shapesOf( Model.ThreeBalls ) );
+
+        var statistics = voxelizer.contour( drawFromGPU: false );
+        var mesh       = shown( voxelizer );
+
+        // voxelize gives what contour simplifies
+        var contour    = this.voxelize( voxelizer ).mesh;
+        var simplified = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, out var simplification );
+
+        try {
+            Assert.Greater( simplification.collapses, contour.vertexCount / 2, "collapses" );
+
+            Assert.AreEqual( mesh.vertexCount,        statistics.vertexCount,   "vertices reported" );
+            Assert.AreEqual( triangleCountOf( mesh ), statistics.triangleCount, "triangles reported" );
+
+            Assert.AreEqual( BurstMeshSimplifierTest.shapeOf( contour ), BurstMeshSimplifierTest.shapeOf( mesh ), "shape" );
+
+            // the GPU hands its vertices over in a different order every time, and the order decides between edges that
+            // cost the same, so its simplified meshes are alike and not the same
+            if( variant.implementation == ImplementationType.GPU ) {
+                Assert.Less( triangleCountOf( mesh ), triangleCountOf( contour ) / 2, "triangles" );
+            }
+            else {
+                assertSameTriangles( simplified, mesh );
+            }
+
+            Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, mesh.hideFlags, "the mesh is not saved with the scene" );
+        }
+        finally {
+            Object.DestroyImmediate( simplified );
+        }
+    }
+
+    // with the setting off, and whatever the error is set to, the mesh is the contour
+    [Test]
+    public void contourWithoutSimplificationShowsTheContour( [ValueSource( nameof( variants ) )] Variant variant, [Values] VertexNormals normals ) {
+        var voxelizer = this.create( variant, shapesOf( Model.SphereCutaway ), normals );
+
+        voxelizer.simplificationError = 10.0f;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        Assert.AreEqual( normals, voxelizer.contourNormals, "the normals asked of the implementation" );
+
+        // the GPU splits vertices itself, the meshes of the others are split by contour
+        var expected = this.voxelize( voxelizer ).mesh;
+
+        if( normals == VertexNormals.Split && variant.implementation != ImplementationType.GPU ) {
+            Voxelizer.splitVertices( expected );
+        }
+
+        assertSameTriangles( expected, shown( voxelizer ) );
+    }
+
+    // a mesh drawn straight from the compute buffers never reaches the CPU, where it is simplified. With the setting on
+    // it is read back, whatever contour is asked to draw from
+    [Test]
+    public void simplifiedContourIsReadBackFromTheGPU( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] VertexNormals normals ) {
+        var voxelizer = this.create( new( algorithm, ImplementationType.GPU ), shapesOf( Model.ThreeBalls ), normals );
+
+        // drawing straight from the GPU reads the colours of the renderer's materials, and this renderer has none
+        voxelizer.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[0];
+
+        var direct = voxelizer.contour( drawFromGPU: true );
+
+        Assert.IsNull( direct.triangleCount, "triangles reported when drawing straight from the GPU" );
+
+        voxelizer.meshSimplification  = true;
+        voxelizer.simplificationError = simplificationError;
+
+        var statistics = voxelizer.contour( drawFromGPU: true );
+        var mesh       = shown( voxelizer );
+
+        Assert.IsNotNull( mesh, "the mesh that is shown" );
+        Assert.Greater( mesh.vertexCount, 0, "vertices" );
+
+        Assert.AreEqual( triangleCountOf( mesh ), statistics.triangleCount, "triangles reported" );
+
+        // it is asked for with shared normals, whatever the voxelizer's setting
+        Assert.AreEqual( VertexNormals.Shared, voxelizer.contourNormals, "the normals asked of the implementation" );
+
+        voxelizer.meshSimplification = false;
+
+        var contour = voxelizer.contour( drawFromGPU: false );
+
+        Assert.Less( statistics.triangleCount.Value, contour.triangleCount.Value / 2, "triangles, against the contour's" );
+    }
+
+    private static void assertFlatShaded( Mesh mesh ) {
+        var vertices  = mesh.vertices;
+        var normals   = mesh.normals;
+        var triangles = Enumerable.Range( 0, mesh.subMeshCount ).SelectMany( ( subMesh ) => mesh.GetTriangles( subMesh ) ).ToArray( );
+
+        Assert.AreEqual( triangles.Length, mesh.vertexCount, "a vertex for every corner of every triangle" );
+
+        CollectionAssert.AreEquivalent( Enumerable.Range( 0, triangles.Length ), triangles, "every vertex is used once" );
+
+        for( var index = 0; index < triangles.Length; index += 3 ) {
+            var a = vertices[triangles[index]];
+            var b = vertices[triangles[index + 1]];
+            var c = vertices[triangles[index + 2]];
+
+            // Vector3.normalized gives no direction to a vector shorter than 1e-5, which the cross product of two
+            // sides of a triangle of a fine grid is
+            var cross  = Vector3.Cross( b - a, c - a );
+            var normal = cross / cross.magnitude;
+
+            for( var corner = 0; corner < 3; ++corner ) {
+                Assert.LessOrEqual( ( normals[triangles[index + corner]] - normal ).magnitude, 1e-3f, $"normal of corner {corner} of triangle {index / 3} against the normal of its face" );
+            }
+        }
+    }
+
+    // flat shading takes vertices that no two triangles share, and simplification takes vertices that they do. The mesh
+    // is simplified with shared vertices and split afterwards, for the GPU as for the CPU
+    [Test]
+    public void simplifiedContourWithSplitNormalsIsSplitAfterwards( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var shared = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Shared );
+        var split  = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Split );
+
+        var sharedStatistics = shared.contour( drawFromGPU: false );
+        var splitStatistics  = split.contour( drawFromGPU: false );
+
+        assertFlatShaded( shown( split ) );
+
+        Assert.Less( sharedStatistics.vertexCount.Value, sharedStatistics.triangleCount.Value, "vertices of the mesh with shared normals, against its triangles" );
+
+        // the same simplification either way. The GPU's differs from one contour to the next
+        if( variant.implementation != ImplementationType.GPU ) {
+            Assert.AreEqual( sharedStatistics.triangleCount, splitStatistics.triangleCount, "triangles" );
+
+            CollectionAssert.AreEquivalent(
+                MeshComparison.trianglesOf( shown( shared ) ).Select( withoutNormals ),
+                MeshComparison.trianglesOf( shown( split ) ).Select( withoutNormals ),
+                "the triangles, by the positions of their corners"
+            );
+        }
+    }
+
+    // a triangle as MeshComparison describes it, a position and a normal for every corner, without the normals
+    private static string withoutNormals( string triangle ) {
+        return string.Join( " ", triangle.Split( ' ' ).Select( ( corner ) => corner.Split( '/' )[0] ) );
+    }
+
+    // split, a mesh has three vertices for every triangle, which passes 65,535 at 21,845 triangles. The three balls on
+    // 128^3 cells keep more than that at a small error
+    [Test]
+    public void simplifiedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( ) {
+        var voxelizer = this.createVoxelizer<UniformDualContouring>( 7, QEFSolverType.SVD, shapesOf( Model.ThreeBalls ) );
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.vertexNormals        = VertexNormals.Split;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.meshSimplification   = true;
+        voxelizer.simplificationError  = 0.01f;
+
+        var statistics = voxelizer.contour( drawFromGPU: false );
+        var mesh       = shown( voxelizer );
+
+        Assert.Greater( statistics.triangleCount.Value, 21845, "triangles" );
+        Assert.Less( statistics.triangleCount.Value, 104500 / 2, "triangles, against half of the contour's" );
+
+        Assert.AreEqual( UnityEngine.Rendering.IndexFormat.UInt32, mesh.indexFormat, "index format" );
+        Assert.AreEqual( statistics.triangleCount.Value * 3, mesh.vertexCount, "vertices" );
+
+        assertFlatShaded( mesh );
+    }
+
+    [Test]
+    public void contourOfNothingWithSimplificationShowsAnEmptyMesh( [ValueSource( nameof( variants ) )] Variant variant, [Values] VertexNormals normals ) {
+        var voxelizer = this.createSimplifying( variant, new Shape[0], normals );
+
+        var statistics = voxelizer.contour( drawFromGPU: false );
+
+        Assert.AreEqual( 0, shown( voxelizer ).vertexCount );
+        Assert.AreEqual( 0, statistics.vertexCount );
+        Assert.AreEqual( 0, statistics.triangleCount );
+    }
+
+    // the error is in cells, and a cell is what the grid is divided into: an octree of a depth has half as many leaves
+    // across as a grid of that resolution has cells
+    [Test]
+    public void cellSizeIsOneOverTheCellsAcross( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var voxelizer = this.create( variant, shapesOf( Model.Sphere ) );
+
+        Assert.AreEqual( 1.0f / 16.0f, voxelizer.cellSize, "the size of a cell of 16 across" );
+
+        voxelizer.resolution += 1;
+
+        Assert.AreEqual( 1.0f / 32.0f, voxelizer.cellSize, "the size of a cell of 32 across" );
+    }
+
+    // the error is measured in cells: the same shapes on a grid twice as fine, simplified at twice the error in cells,
+    // come out with about as many triangles
+    [Test]
+    public void simplificationErrorIsInCells( [Values( Algorithm.Uniform, Algorithm.Manifold, Algorithm.Occupancy )] Algorithm algorithm ) {
+        int trianglesAt( int cellsExponent, float error ) {
+            var voxelizer = this.createSimplifying( new( algorithm, ImplementationType.Burst ), shapesOf( Model.Sphere ) );
+
+            voxelizer.resolution         += cellsExponent - 4;
+            voxelizer.simplificationError = error;
+
+            return voxelizer.contour( drawFromGPU: false ).triangleCount.Value;
+        }
+
+        var coarse = trianglesAt( 5, 0.1f );
+        var fine   = trianglesAt( 6, 0.2f );
+        var finer  = trianglesAt( 6, 0.1f );
+
+        Assert.AreEqual( coarse, fine, coarse * 0.25, "triangles on 64^3 cells at 0.2 cells, against those on 32^3 at 0.1" );
+
+        Assert.Greater( finer, fine * 1.5, "triangles on 64^3 cells at 0.1 cells, against those at 0.2" );
+    }
+
 }

@@ -31,6 +31,11 @@ public partial class ManifoldDualContouring : Voxelizer {
         };
     }
 
+    // an octree of this depth has half as many leaves across as a grid of this resolution has cells
+    public override float cellSize {
+        get { return 1.0f / ( 1 << ( this.resolution - 1 ) ); }
+    }
+
     public override CPUVoxelization convert( GPUVoxelization voxelization ) {
         throw new NotImplementedException( );
     }

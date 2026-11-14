@@ -28,12 +28,15 @@ public class BurstQuadricTest {
 
     }
 
-    // a quadric: the sum of some items, each times its weight, and a point to take its error at
+    // a quadric: the sum of some items, each times its weight, a point to take its error at, and a segment to look
+    // for its best point on
     private struct Case {
 
         public int     start;
         public int     count;
         public double3 query;
+        public double3 from;
+        public double3 to;
 
     }
 
@@ -52,6 +55,13 @@ public class BurstQuadricTest {
         public NativeArray<bool>    solved;
         public NativeArray<double3> best;
         public NativeArray<double>  bestErrors;
+
+        // for every case: whether it has a best point on its segment, that point, and where the vertex of a collapsed
+        // edge along the segment goes and what the collapse costs
+        public NativeArray<bool>    between;
+        public NativeArray<double3> bestBetween;
+        public NativeArray<double3> targets;
+        public NativeArray<double>  targetCosts;
 
         public NativeArray<bool> managed;
 
@@ -87,6 +97,14 @@ public class BurstQuadricTest {
                 this.best[index]   = best;
 
                 this.bestErrors[index] = this.solved[index] ? sum.evaluate( best ) : double.NaN;
+
+                this.between[index]     = sum.minimizeBetween( this.cases[index].from, this.cases[index].to, out var bestBetween );
+                this.bestBetween[index] = bestBetween;
+
+                BurstMeshSimplifier.targetOf( sum, this.cases[index].from, this.cases[index].to, out var target, out var targetCost );
+
+                this.targets[index]     = target;
+                this.targetCosts[index] = targetCost;
             }
         }
 
@@ -104,6 +122,10 @@ public class BurstQuadricTest {
         public bool[]    solved;
         public double3[] best;
         public double[]  bestErrors;
+        public bool[]    between;
+        public double3[] bestBetween;
+        public double3[] targets;
+        public double[]  targetCosts;
 
         // adds a quadric and gives its index among the cases. Its items follow each other from firstItem( index ) on
         public int add( double3 query, params Item[] items ) {
@@ -113,8 +135,20 @@ public class BurstQuadricTest {
             return this.cases.Count - 1;
         }
 
+        // the same, with a segment
+        public int add( double3 from, double3 to, params Item[] items ) {
+            this.cases.Add( new Case { start = this.items.Count, count = items.Length, from = from, to = to } );
+            this.items.AddRange( items );
+
+            return this.cases.Count - 1;
+        }
+
         public int firstItem( int index ) {
             return this.cases[index].start;
+        }
+
+        public Case caseAt( int index ) {
+            return this.cases[index];
         }
 
         public void run( ) {
@@ -125,8 +159,12 @@ public class BurstQuadricTest {
             using var errors     = new NativeArray<double>( cases.Length, Allocator.TempJob );
             using var solved     = new NativeArray<bool>( cases.Length, Allocator.TempJob );
             using var best       = new NativeArray<double3>( cases.Length, Allocator.TempJob );
-            using var bestErrors = new NativeArray<double>( cases.Length, Allocator.TempJob );
-            using var managed    = new NativeArray<bool>( 1, Allocator.TempJob );
+            using var bestErrors  = new NativeArray<double>( cases.Length, Allocator.TempJob );
+            using var between     = new NativeArray<bool>( cases.Length, Allocator.TempJob );
+            using var bestBetween = new NativeArray<double3>( cases.Length, Allocator.TempJob );
+            using var targets     = new NativeArray<double3>( cases.Length, Allocator.TempJob );
+            using var targetCosts = new NativeArray<double>( cases.Length, Allocator.TempJob );
+            using var managed     = new NativeArray<bool>( 1, Allocator.TempJob );
 
             new QuadricJob {
                 items      = items,
@@ -136,8 +174,12 @@ public class BurstQuadricTest {
                 errors     = errors,
                 solved     = solved,
                 best       = best,
-                bestErrors = bestErrors,
-                managed    = managed
+                bestErrors  = bestErrors,
+                between     = between,
+                bestBetween = bestBetween,
+                targets     = targets,
+                targetCosts = targetCosts,
+                managed     = managed
             }.Run( );
 
             BurstTestSupport.assertRanUnderBurst( managed );
@@ -147,7 +189,11 @@ public class BurstQuadricTest {
             this.errors     = errors.ToArray( );
             this.solved     = solved.ToArray( );
             this.best       = best.ToArray( );
-            this.bestErrors = bestErrors.ToArray( );
+            this.bestErrors  = bestErrors.ToArray( );
+            this.between     = between.ToArray( );
+            this.bestBetween = bestBetween.ToArray( );
+            this.targets     = targets.ToArray( );
+            this.targetCosts = targetCosts.ToArray( );
         }
 
     }
@@ -672,6 +718,185 @@ public class BurstQuadricTest {
             assertClose( expected[index], run.best[index * 2], 1e-10, $"best point of patch {index}" );
 
             Assert.IsFalse( run.solved[( index * 2 ) + 1], $"patch {index} without line quadrics has a best point" );
+        }
+    }
+
+
+    // the error of planes at a point, each plane times its weight, one plane at a time
+    private static double errorOf( Item[] planes, double3 at ) {
+        return planes.Sum( ( item ) => item.weight * squared( math.dot( item.a, at - item.b ) ) );
+    }
+
+    // Garland and Heckbert, section 4: where the quadric has no best point, the best point along the segment. Along a
+    // segment the error of each plane is a parabola, and so is their sum: it is least where t is
+    // -sum( w ( n . along ) ( n . ( from - p ) ) ) / sum( w ( n . along )^2 ), or at the end nearest to that
+    [Test]
+    public void bestPointOnASegmentIsWhereTheErrorAlongItIsLeast( ) {
+        var random   = new System.Random( 11 );
+        var run      = new Run( );
+        var expected = new List<double3>( );
+        var planes   = new List<Item[]>( );
+        var inside   = 0;
+
+        for( var index = 0; index < 600; ++index ) {
+            // one or two planes have no best point, three or more have one that is mostly not on the segment
+            var items = new Item[1 + random.Next( 4 )];
+
+            for( var at = 0; at < items.Length; ++at ) {
+                items[at] = plane( direction( random ), point( random ), range( random, 0.1, 3.0 ) );
+            }
+
+            var from  = point( random );
+            var to    = point( random );
+            var along = to - from;
+
+            var t = -items.Sum( ( item ) => item.weight * math.dot( item.a, along ) * math.dot( item.a, from - item.b ) ) / items.Sum( ( item ) => item.weight * squared( math.dot( item.a, along ) ) );
+
+            if( t > 0.0 && t < 1.0 ) {
+                ++inside;
+            }
+
+            run.add( from, to, items );
+            expected.Add( from + ( along * math.clamp( t, 0.0, 1.0 ) ) );
+            planes.Add( items );
+        }
+
+        // both kinds are tested: the lowest point of the parabola on the segment, and past either end of it
+        Assert.Greater( inside, 100, "segments with their best point inside" );
+        Assert.Greater( expected.Count - inside, 100, "segments with their best point at an end" );
+
+        run.run( );
+
+        for( var index = 0; index < expected.Count; ++index ) {
+            Assert.IsTrue( run.between[index], $"segment {index} has a best point" );
+
+            assertClose( expected[index], run.bestBetween[index], 1e-9, $"best point on segment {index}" );
+
+            // no point of the segment is better
+            for( var step = 0; step <= 10; ++step ) {
+                var at = math.lerp( run.caseAt( index ).from, run.caseAt( index ).to, step / 10.0 );
+
+                Assert.LessOrEqual( errorOf( planes[index], run.bestBetween[index] ), errorOf( planes[index], at ) + 1e-12, $"error at the best point of segment {index} against a tenth of the way {step}" );
+            }
+        }
+    }
+
+    [Test]
+    public void segmentThatTheErrorDoesNotChangeAlongHasNoBestPoint( ) {
+        var random = new System.Random( 12 );
+        var run    = new Run( );
+
+        for( var index = 0; index < 200; ++index ) {
+            var normal   = direction( random );
+            var ( x, y ) = squareTo( normal );
+            var on       = point( random );
+
+            // in a plane, at any distance from it
+            var from = on + ( normal * range( random, -0.2, 0.2 ) ) + ( x * range( random, -0.3, 0.3 ) ) + ( y * range( random, -0.3, 0.3 ) );
+            var to   = from + ( x * range( random, -0.3, 0.3 ) ) + ( y * range( random, 0.05, 0.3 ) );
+
+            run.add( from, to, plane( normal, on ), plane( normal, on + ( x * 0.1 ) ) );
+
+            // along a crease
+            run.add( on + ( normal * 0.2 ), on - ( normal * 0.3 ), plane( x, on, 2.0 ), plane( y, on ), plane( math.normalize( x + y ), on ) );
+
+            // a segment without length, and no planes at all
+            run.add( from, from, plane( normal, on ) );
+            run.add( from, to );
+        }
+
+        run.run( );
+
+        for( var index = 0; index < run.between.Length; ++index ) {
+            Assert.IsFalse( run.between[index], $"segment {index} has a best point" );
+        }
+    }
+
+    // where the vertex of a collapsed edge goes (Garland and Heckbert, section 4): the best point of the quadric, else
+    // the best point of the edge, else the best of its middle and its ends
+    [Test]
+    public void collapsedEdgeGoesToTheBestPointThenTheBestOfTheEdgeThenItsMiddleOrAnEnd( ) {
+        var random = new System.Random( 13 );
+        var run    = new Run( );
+
+        var expected = new List<( double3 target, double cost, string what )>( );
+
+        for( var index = 0; index < 100; ++index ) {
+            var normal   = direction( random );
+            var ( x, y ) = squareTo( normal );
+            var on       = point( random );
+
+            // three planes that meet: where they meet, wherever the edge is
+            run.add( point( random ), point( random ), plane( normal, on ), plane( x, on ), plane( y, on ) );
+            expected.Add( ( on, 0.0, "planes that meet" ) );
+
+            // a flat face, and an edge of it: the middle of the edge
+            var from = on + ( x * range( random, -0.3, 0.3 ) ) + ( y * range( random, -0.3, 0.3 ) );
+            var to   = on + ( x * range( random, -0.3, 0.3 ) ) + ( y * range( random, -0.3, 0.3 ) );
+
+            run.add( from, to, plane( normal, on, 3.0 ) );
+            expected.Add( ( ( from + to ) * 0.5, 0.0, "an edge of a flat face" ) );
+
+            // a crease, and an edge across it from one face to the other: where the edge is nearest to the crease.
+            // The faces are the planes of x and of y, the crease runs along the normal
+            var first  = on + ( y * range( random, 0.05, 0.3 ) ) + ( normal * range( random, -0.3, 0.3 ) );
+            var second = on + ( x * range( random, 0.05, 0.3 ) ) + ( normal * range( random, -0.3, 0.3 ) );
+            var across = second - first;
+            var t      = -( ( math.dot( x, across ) * math.dot( x, first - on ) ) + ( math.dot( y, across ) * math.dot( y, first - on ) ) ) / ( squared( math.dot( x, across ) ) + squared( math.dot( y, across ) ) );
+            var best   = first + ( across * math.clamp( t, 0.0, 1.0 ) );
+
+            run.add( first, second, plane( x, on ), plane( y, on ) );
+            expected.Add( ( best, squared( math.dot( x, best - on ) ) + squared( math.dot( y, best - on ) ), "an edge across a crease" ) );
+
+            // a flat face with a line on it that a boundary plane holds, and an edge from the line into the face: the
+            // end on the line. The line runs along x through the first end
+            run.add( from, from + ( x * range( random, -0.2, 0.2 ) ) + ( y * range( random, 0.05, 0.3 ) ), plane( normal, on ), plane( y, from, 0.5 ) );
+            expected.Add( ( from, 0.0, "an edge from a line into a flat face" ) );
+
+            run.add( from + ( x * range( random, -0.2, 0.2 ) ) + ( y * range( random, 0.05, 0.3 ) ), from, plane( normal, on ), plane( y, from, 0.5 ) );
+            expected.Add( ( from, 0.0, "an edge from a flat face onto a line" ) );
+        }
+
+        run.run( );
+
+        for( var index = 0; index < expected.Count; ++index ) {
+            assertClose( expected[index].target, run.targets[index], 1e-9, $"{expected[index].what}, quadric {index}: where the vertex goes" );
+
+            Assert.AreEqual( expected[index].cost, run.targetCosts[index], 1e-12, $"{expected[index].what}, quadric {index}: what the collapse costs" );
+        }
+    }
+
+    // a plane a tenth of a unit from an edge that leans against it by a millionth of a radian. The error along the edge
+    // bends too little for a best point on it, and it still falls from one end to the other, so the end nearer to the
+    // plane is the best of the middle and the two ends
+    [Test]
+    public void collapsedEdgeGoesToTheBetterEndWhereTheErrorHardlyBendsAlongIt( ) {
+        var random = new System.Random( 14 );
+        var run    = new Run( );
+
+        var expected = new List<double3>( );
+
+        for( var index = 0; index < 200; ++index ) {
+            var normal   = direction( random );
+            var ( x, y ) = squareTo( normal );
+            var first    = point( random );
+            var second   = first + ( x * range( random, 0.05, 0.3 ) );
+
+            // the normal of the plane leans along the edge by the angle. With the plane below the edge the first end
+            // is the nearer one, with the plane above it the second
+            var leaning = math.normalize( normal + ( x * 1e-6 ) );
+            var below   = index % 2 == 0;
+
+            run.add( first, second, plane( leaning, first + ( normal * ( below ? -0.1 : 0.1 ) ) ) );
+            expected.Add( below ? first : second );
+        }
+
+        run.run( );
+
+        for( var index = 0; index < expected.Count; ++index ) {
+            Assert.IsFalse( run.between[index], $"edge {index} has a best point on it" );
+
+            assertClose( expected[index], run.targets[index], 0.0, $"where the vertex of edge {index} goes" );
         }
     }
 

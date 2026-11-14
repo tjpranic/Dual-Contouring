@@ -227,4 +227,92 @@ public class ContouringPerformanceTest : TopologyTest {
         );
     }
 
+
+    // the stages of the mesh simplifier, as its profiler markers are named
+    private static readonly string[] simplifierStages = { "ReadMesh", "Build", "Quadrics", "Costs", "Collapse", "BuildMesh" };
+
+    // how long simplifying the Burst contour of each algorithm takes, in all and stage by stage, at the error a
+    // voxelizer starts out with. The octrees simplify first, as in the "Simplification" scenes, and leave the simplifier
+    // far fewer triangles
+    [UnityTest, Performance]
+    public IEnumerator simplify( [Values] Algorithm algorithm, [Values( 4, 5, 6, 7, 8 )] int cellsExponent ) {
+        if( ( algorithm == Algorithm.Adaptive || algorithm == Algorithm.Manifold ) && cellsExponent > 7 ) {
+            Assert.Ignore( "an octree is at most 2^7 leaves across" );
+        }
+
+        var voxelizer = this.create( algorithm, ImplementationType.Burst, cellsExponent, model );
+
+        voxelizer.keepDebugInformation = false;
+
+        var mesh  = voxelizer.voxelize( voxelizer.GetComponentsInChildren<Volume>( ) ).visit( ( cpu ) => cpu.mesh, ( gpu ) => voxelizer.convert( gpu ).mesh );
+        var error = voxelizer.simplificationError * voxelizer.cellSize;
+
+        var recorders = simplifierStages.Select( ( stage ) => new ProfilerRecorder( $"MeshSimplifier.Burst.{stage}", 16, ProfilerRecorderOptions.SumAllSamplesInFrame ) ).ToArray( );
+        var samples   = new Dictionary<string, List<double>>( );
+
+        void record( string name, double milliseconds ) {
+            if( !samples.ContainsKey( name ) ) {
+                samples.Add( name, new( ) );
+            }
+            samples[name].Add( milliseconds );
+
+            Measure.Custom( new SampleGroup( name, SampleUnit.Millisecond ), milliseconds );
+        }
+
+        const int warmups      = 1;
+        const int measurements = 3;
+
+        var vertices  = 0;
+        var triangles = 0;
+
+        try {
+            foreach( var recorder in recorders ) {
+                recorder.Start( );
+            }
+
+            for( var run = 0; run < warmups + measurements; ++run ) {
+                GC.Collect( );
+
+                yield return null;
+
+                var before = recorders.Select( ( recorder ) => recorder.CurrentValue ).ToArray( );
+
+                var simplifying = Stopwatch.StartNew( );
+
+                var simplified = BurstMeshSimplifier.simplify( mesh, error, out _ );
+
+                simplifying.Stop( );
+
+                var after = recorders.Select( ( recorder ) => recorder.CurrentValue ).ToArray( );
+
+                vertices  = simplified.vertexCount;
+                triangles = simplified.triangles.Length / 3;
+
+                Object.DestroyImmediate( simplified );
+
+                if( run < warmups ) {
+                    continue;
+                }
+
+                record( "Simplify", simplifying.Elapsed.TotalMilliseconds );
+
+                for( var stage = 0; stage < simplifierStages.Length; ++stage ) {
+                    record( simplifierStages[stage], ( after[stage] - before[stage] ) / 1e6 );
+                }
+            }
+        }
+        finally {
+            foreach( var recorder in recorders ) {
+                recorder.Dispose( );
+            }
+        }
+
+        UnityEngine.Debug.Log(
+            $"[performance] simplify {algorithm} {1 << cellsExponent}^3: {mesh.vertexCount} vertices and {mesh.triangles.Length / 3} triangles to {vertices} and {triangles}, median of {measurements} in ms: " +
+            string.Join( ", ", samples.Select( ( group ) => $"{group.Key} {median( group.Value ):0.0}" ) )
+        );
+
+        Object.DestroyImmediate( mesh );
+    }
+
 }

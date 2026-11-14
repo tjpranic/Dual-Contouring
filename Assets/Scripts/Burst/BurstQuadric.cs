@@ -139,6 +139,11 @@ public struct BurstQuadric {
         };
     }
 
+    // the sum of the diagonal of A, which is the sum of the weights of the planes and the size the pivots are held to
+    public readonly double trace {
+        get { return this.a00 + this.a11 + this.a22; }
+    }
+
     // E(x) = xT A x + 2 bT x + c. It is a sum of squares, which rounding can leave just below zero
     public readonly double evaluate( double3 x ) {
         var error = math.dot( x, this.multiply( x ) ) + ( 2.0 * math.dot( this.b, x ) ) + this.c;
@@ -201,6 +206,28 @@ public struct BurstQuadric {
         x[p] = xp;
         x[q] = xq;
         x[r] = xr;
+
+        return true;
+    }
+
+    // the point of least error on the segment between two points, which Garland and Heckbert look for when the quadric
+    // has no point of least error (section 4). Along the segment the error is a parabola,
+    // E( from + t along ) = t^2 ( alongT A along ) + 2 t alongT ( A from + b ) + E( from ), and its lowest point with
+    // t from 0 to 1 is the one. A segment that the error does not change along has none, and gives false: its first
+    // term is then nothing but rounding against the size of A and of the segment
+    public readonly bool minimizeBetween( double3 from, double3 to, out double3 x ) {
+        var along = to - from;
+
+        var curvature = math.dot( along, this.multiply( along ) );
+        var slope     = math.dot( along, this.multiply( from ) + this.b );
+
+        if( !( curvature > PivotLimit * this.trace * math.dot( along, along ) ) ) {
+            x = default;
+
+            return false;
+        }
+
+        x = from + ( along * math.clamp( -slope / curvature, 0.0, 1.0 ) );
 
         return true;
     }

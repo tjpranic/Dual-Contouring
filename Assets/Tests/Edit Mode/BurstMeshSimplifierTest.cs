@@ -144,8 +144,6 @@ public class BurstMeshSimplifierTest : TopologyTest {
         [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
         [ReadOnly] public NativeArray<Operation>          operations;
 
-        public double boundaryWeight;
-
         // after the operations: goes through the edges this often, in their order, and collapses each that may be
         // collapsed into its midpoint
         public int passes;
@@ -170,7 +168,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
             this.managed[0] = BurstTestSupport.runningManaged( );
 
             this.mesh.build( this.positions, this.normals, this.triangles );
-            this.mesh.buildQuadrics( this.boundaryWeight );
+            this.mesh.buildQuadrics( );
 
             for( var index = 0; index < this.operations.Length; ++index ) {
                 var operation = this.operations[index];
@@ -221,7 +219,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
         public Vector3[]            writtenNormals;
         public BurstMesh.Triangle[] writtenTriangles;
 
-        public Run( Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, Operation[] operations = null, int passes = 0, double boundaryWeight = 1.0 ) {
+        public Run( Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, Operation[] operations = null, int passes = 0 ) {
             operations ??= new Operation[0];
 
             this.mesh = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
@@ -244,7 +242,6 @@ public class BurstMeshSimplifierTest : TopologyTest {
                 normals          = nativeNormals,
                 triangles        = nativeTriangles,
                 operations       = nativeOperations,
-                boundaryWeight   = boundaryWeight,
                 passes           = passes,
                 mesh             = this.mesh,
                 refusals         = refusals,
@@ -268,8 +265,8 @@ public class BurstMeshSimplifierTest : TopologyTest {
             this.writtenTriangles = writtenTriangles.AsArray( ).ToArray( );
         }
 
-        public Run( Builder builder, Operation[] operations = null, int passes = 0, double boundaryWeight = 1.0 )
-            : this( builder.positions.ToArray( ), builder.normals( ), builder.triangles.ToArray( ), operations, passes, boundaryWeight ) {
+        public Run( Builder builder, Operation[] operations = null, int passes = 0 )
+            : this( builder.positions.ToArray( ), builder.normals( ), builder.triangles.ToArray( ), operations, passes ) {
         }
 
         public void Dispose( ) {
@@ -856,53 +853,68 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
     // every vertex of a flat patch has the plane of the patch, weighted by a third of the area of its triangles. A
     // vertex of the rim also has, for each of its two open edges, the plane through the edge that stands on the patch,
-    // weighted by the boundary weight times a third of the area of the edge's triangle. A triangle of the patch is half
+    // weighted by a third of the area of the edge's triangle, in a quadric of its own. A triangle of the patch is half
     // a unit quad
     [Test]
-    public void quadricsHoldThePlanesOfTheTrianglesAndOfTheOpenEdges( [Values( 0.0, 1.0, 7.0 )] double weight ) {
+    public void quadricsHoldThePlanesOfTheTrianglesAndOfTheOpenEdges( ) {
         var builder = new Builder( ).patch( 4, 4 );
 
-        using var run = new Run( builder, boundaryWeight: weight );
+        using var run = new Run( builder );
 
+        // 0.5 up from the patch, 0.3 along x and 0.2 against y
         var offset = new double3( 0.3, -0.2, 0.5 );
 
-        double errorAt( int vertex ) {
+        double3 at( int vertex ) {
             var position = builder.positions[vertex];
 
-            return run.mesh.planes[vertex].evaluate( new double3( position.x, position.y, position.z ) + offset );
+            return new double3( position.x, position.y, position.z ) + offset;
         }
 
-        // inside: six triangles
-        Assert.AreEqual( 1.0,          run.mesh.areas[builder.at( 2, 2, 0 )], 1e-12, "area of a vertex inside" );
-        Assert.AreEqual( 1.0 * 0.25,   errorAt( builder.at( 2, 2, 0 ) ),      1e-12, "error of a vertex inside" );
+        // inside: six triangles and no sharp edge
+        var inside = builder.at( 2, 2, 0 );
+
+        Assert.AreEqual( 1.0,  run.mesh.areas[inside],                         1e-12, "area of a vertex inside" );
+        Assert.AreEqual( 0.25, run.mesh.planes[inside].evaluate( at( inside ) ), 1e-12, "error of a vertex inside" );
+        Assert.AreEqual( 0.0,  run.mesh.sharpAreas[inside],                           "area of the sharp edges of a vertex inside" );
+        Assert.AreEqual( 0.0,  run.mesh.sharpPlanes[inside].evaluate( at( inside ) ),   "error of the sharp edges of a vertex inside" );
 
         // on the rim along x: three triangles, and two open edges with a triangle each, both along x
-        Assert.AreEqual( 0.5, run.mesh.areas[builder.at( 2, 0, 0 )], 1e-12, "area of a vertex of the rim" );
-        Assert.AreEqual( ( 0.5 * 0.25 ) + ( weight * 2.0 * ( 0.5 / 3.0 ) * 0.04 ), errorAt( builder.at( 2, 0, 0 ) ), 1e-12, "error of a vertex of the rim" );
+        var rim = builder.at( 2, 0, 0 );
+
+        Assert.AreEqual( 0.5,                run.mesh.areas[rim],                           1e-12, "area of a vertex of the rim" );
+        Assert.AreEqual( 0.5 * 0.25,         run.mesh.planes[rim].evaluate( at( rim ) ),      1e-12, "error of a vertex of the rim" );
+        Assert.AreEqual( 1.0 / 3.0,          run.mesh.sharpAreas[rim],                      1e-12, "area of the sharp edges of a vertex of the rim" );
+        Assert.AreEqual( ( 1.0 / 3.0 ) * 0.04, run.mesh.sharpPlanes[rim].evaluate( at( rim ) ), 1e-12, "error of the sharp edges of a vertex of the rim" );
 
         // the corner at the origin: two triangles, an open edge along x and one along y
-        Assert.AreEqual( 1.0 / 3.0, run.mesh.areas[builder.at( 0, 0, 0 )], 1e-12, "area of a corner" );
-        Assert.AreEqual( ( 0.25 / 3.0 ) + ( weight * ( 0.5 / 3.0 ) * ( 0.09 + 0.04 ) ), errorAt( builder.at( 0, 0, 0 ) ), 1e-12, "error of a corner" );
+        var corner = builder.at( 0, 0, 0 );
+
+        Assert.AreEqual( 1.0 / 3.0,                        run.mesh.areas[corner],                              1e-12, "area of a corner" );
+        Assert.AreEqual( 0.25 / 3.0,                       run.mesh.planes[corner].evaluate( at( corner ) ),      1e-12, "error of a corner" );
+        Assert.AreEqual( 1.0 / 3.0,                        run.mesh.sharpAreas[corner],                         1e-12, "area of the sharp edges of a corner" );
+        Assert.AreEqual( ( 0.5 / 3.0 ) * ( 0.09 + 0.04 ),  run.mesh.sharpPlanes[corner].evaluate( at( corner ) ), 1e-12, "error of the sharp edges of a corner" );
     }
 
     // an edge between two materials has two triangles, and the plane that stands on each of them through the edge. On
     // a flat patch with the line between the materials along y those are four times the same plane for a vertex of
     // the line
     [Test]
-    public void quadricsHoldThePlanesOfTheEdgesBetweenMaterials( [Values( 0.0, 1.0, 7.0 )] double weight ) {
+    public void quadricsHoldThePlanesOfTheEdgesBetweenMaterials( ) {
         var builder = new Builder( ).patch( 4, 4, ( i, j ) => i < 2 ? 1 : 0 );
 
-        using var run = new Run( builder, boundaryWeight: weight );
+        using var run = new Run( builder );
 
         var vertex   = builder.at( 2, 2, 0 );
         var position = new double3( 2.0, 2.0, 0.0 );
 
         Assert.AreEqual( 2, run.mesh.sharpCounts[vertex], "sharp edges of a vertex of the line" );
 
-        Assert.AreEqual( ( 1.0 * 0.25 ) + ( weight * 4.0 * ( 0.5 / 3.0 ) * 0.09 ), run.mesh.planes[vertex].evaluate( position + new double3( 0.3, -0.2, 0.5 ) ), 1e-12, "error of a vertex of the line" );
+        Assert.AreEqual( 1.0 * 0.25,                 run.mesh.planes[vertex].evaluate( position + new double3( 0.3, -0.2, 0.5 ) ),      1e-12, "error of a vertex of the line" );
+        Assert.AreEqual( 4.0 * ( 0.5 / 3.0 ),        run.mesh.sharpAreas[vertex],                                                      1e-12, "area of the sharp edges of a vertex of the line" );
+        Assert.AreEqual( 4.0 * ( 0.5 / 3.0 ) * 0.09, run.mesh.sharpPlanes[vertex].evaluate( position + new double3( 0.3, -0.2, 0.5 ) ), 1e-12, "error of the sharp edges of a vertex of the line" );
 
         // along the line it costs nothing
-        Assert.AreEqual( 0.0, run.mesh.planes[vertex].evaluate( position + new double3( 0.0, 0.7, 0.0 ) ), 1e-12, "error along the line" );
+        Assert.AreEqual( 0.0, run.mesh.sharpPlanes[vertex].evaluate( position + new double3( 0.0, 0.7, 0.0 ) ), 1e-12, "error along the line" );
     }
 
     // ---- a collapse ----
@@ -949,14 +961,14 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
     [Test]
     public void collapseGivesTheKeptVertexWhatTheRemovedOneHad( ) {
-        // the lower third of the box is of a second material
-        var builder = new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 3 ), ( center, axis, side ) => center.z < 1 ? 1 : 0 );
+        // the half of the box left of x = 1 is of a second material, and the edge runs along the line between the two
+        var builder = new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 3 ), ( center, axis, side ) => center.x < 1 ? 1 : 0 );
 
         var a        = builder.at( 1, 1, 3 );
-        var b        = builder.at( 2, 1, 3 );
+        var b        = builder.at( 1, 2, 3 );
         var kept     = Math.Min( a, b );
         var removed  = Math.Max( a, b );
-        var position = new Vector3( 1.25f, 1.0f, 3.125f );
+        var position = new Vector3( 1.0f, 1.25f, 3.125f );
 
         using var before = new Run( builder );
         using var run    = new Run( builder, new[] { collapse( a, b, position ) } );
@@ -1019,8 +1031,16 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
         Assert.AreEqual( before.mesh.areas[a] + before.mesh.areas[b], run.mesh.areas[kept], 1e-12, "area of the kept vertex" );
 
+        Assert.Greater( before.mesh.sharpAreas[a], 0.0, "area of the sharp edges of an end before" );
+
+        Assert.AreEqual( before.mesh.sharpAreas[a] + before.mesh.sharpAreas[b], run.mesh.sharpAreas[kept], 1e-12, "area of the sharp edges of the kept vertex" );
+
         foreach( var point in new[] { new double3( 1.0, 2.0, 3.0 ), new double3( 0.3, -0.7, 4.1 ), new double3( 1.25, 1.0, 3.125 ) } ) {
             Assert.AreEqual( before.mesh.planes[a].evaluate( point ) + before.mesh.planes[b].evaluate( point ), run.mesh.planes[kept].evaluate( point ), 1e-9, $"error of the kept vertex at {point}" );
+
+            Assert.AreEqual(
+                before.mesh.sharpPlanes[a].evaluate( point ) + before.mesh.sharpPlanes[b].evaluate( point ), run.mesh.sharpPlanes[kept].evaluate( point ), 1e-9, $"error of the sharp edges of the kept vertex at {point}"
+            );
         }
 
         // and its normal is the sum of the two normals, each weighted by the area of its vertex
@@ -1134,6 +1154,13 @@ public class BurstMeshSimplifierTest : TopologyTest {
         finally {
             Object.DestroyImmediate( mesh );
         }
+    }
+
+    // what no allowed collapse changes about a mesh, as text
+    internal static string shapeOf( Mesh mesh ) {
+        using var run = new Run( mesh.vertices, mesh.normals, trianglesOf( mesh ) );
+
+        return shapeOf( run ).ToString( );
     }
 
     // collapses every edge that may be collapsed into its midpoint, going through the edges in their order a few
@@ -1270,7 +1297,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
         return this.voxelize( voxelizer ).mesh;
     }
 
-    private static BurstMesh.Triangle[] trianglesOf( Mesh mesh ) {
+    internal static BurstMesh.Triangle[] trianglesOf( Mesh mesh ) {
         var triangles = new List<BurstMesh.Triangle>( );
 
         for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
@@ -1312,6 +1339,124 @@ public class BurstMeshSimplifierTest : TopologyTest {
         var mesh = this.contourOf( contour, surface, 5 );
 
         assertCollapsesKeepTheShape( $"{contour} {surface}", mesh.vertices, mesh.normals, trianglesOf( mesh ), 0.2 );
+    }
+
+
+    // ---- the loop ----
+
+    // counts the edges that are left to collapse: within the error bound, and allowed
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct LeftToCollapseJob : IJob {
+
+        public double       limit;
+        public Connectivity mesh;
+
+        public NativeArray<int> left;
+
+        public void Execute( ) {
+            for( var edge = 0; edge < this.mesh.edgeCount; ++edge ) {
+                var ends = this.mesh.edges[edge];
+
+                if( ends.x == -1 ) {
+                    continue;
+                }
+
+                BurstMeshSimplifier.evaluate(
+                    this.mesh.planes[ends.x] + this.mesh.planes[ends.y], this.mesh.areas[ends.x] + this.mesh.areas[ends.y],
+                    this.mesh.sharpPlanes[ends.x] + this.mesh.sharpPlanes[ends.y], this.mesh.sharpAreas[ends.x] + this.mesh.sharpAreas[ends.y],
+                    this.mesh.positions[ends.x], this.mesh.positions[ends.y], this.limit, out var target, out _, out var within
+                );
+
+                if( within && this.mesh.check( edge, target ) == Refusal.None ) {
+                    ++this.left[0];
+                }
+            }
+        }
+
+    }
+
+    // runs the jobs of the simplifier one after the other, as BurstMeshSimplifier.simplify does, and counts what the
+    // loop left that it could have collapsed
+    private static ( int collapses, int left ) simplifyAndCountWhatIsLeft( Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double error ) {
+        using var nativePositions = new NativeArray<float3>( positions.Select( ( position ) => ( float3 )position ).ToArray( ), Allocator.TempJob );
+        using var nativeNormals   = new NativeArray<float3>( normals.Select( ( normal ) => ( float3 )normal ).ToArray( ), Allocator.TempJob );
+        using var nativeTriangles = new NativeArray<BurstMesh.Triangle>( triangles, Allocator.TempJob );
+        using var connectivity    = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
+
+        new BurstMeshSimplifier.BuildJob { positions = nativePositions, normals = nativeNormals, triangles = nativeTriangles, mesh = connectivity }.Run( );
+
+        connectivity.quadricsJob( ).Schedule( connectivity.vertexCount, 16 ).Complete( );
+
+        using var targets    = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob );
+        using var costs      = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob );
+        using var within     = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob );
+        using var heap       = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob );
+        using var places     = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob );
+        using var written    = new NativeList<float3>( Allocator.TempJob );
+        using var normalsOut = new NativeList<float3>( Allocator.TempJob );
+        using var faces      = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+        using var statistics = new NativeArray<BurstMeshSimplifier.Statistics>( 1, Allocator.TempJob );
+        using var refusals   = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
+        using var left       = new NativeArray<int>( 1, Allocator.TempJob );
+
+        new BurstMeshSimplifier.CostsJob {
+            limit       = error * error,
+            positions   = connectivity.positions,
+            planes      = connectivity.planes,
+            areas       = connectivity.areas,
+            sharpPlanes = connectivity.sharpPlanes,
+            sharpAreas  = connectivity.sharpAreas,
+            edges       = connectivity.edges.AsArray( ),
+            targets     = targets,
+            costs       = costs,
+            within      = within
+        }.Schedule( connectivity.edgeCount, 16 ).Complete( );
+
+        new BurstMeshSimplifier.CollapseJob {
+            limit       = error * error,
+            mesh        = connectivity,
+            targets     = targets,
+            costs       = costs,
+            within      = within,
+            heap        = heap,
+            places     = places,
+            positions  = written,
+            normals    = normalsOut,
+            triangles  = faces,
+            statistics = statistics,
+            refusals   = refusals
+        }.Run( );
+
+        new LeftToCollapseJob { limit = error * error, mesh = connectivity, left = left }.Run( );
+
+        return ( statistics[0].collapses, left[0] );
+    }
+
+    // the loop ends when its heap is empty. An edge that was refused is not in the heap, and has to come back when a
+    // collapse next to it changes what refused it, or it would be left behind while it could collapse
+    [Test]
+    public void loopLeavesNoEdgeThatCouldCollapse( [Values( 0.02, 0.1, 0.5 )] double error ) {
+        // the errors are in cells of a grid of 32^3, which is what the contours are of. The boxes are 4 to 6 across
+        var cell = 1.0 / 32.0;
+
+        void assertNothingLeft( string what, Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double unit ) {
+            var ( collapses, left ) = simplifyAndCountWhatIsLeft( positions, normals, triangles, error * unit );
+
+            Assert.Greater( collapses, 0, $"{what}: collapses" );
+            Assert.AreEqual( 0, left, $"{what}: edges left that could collapse, after {collapses} collapses" );
+        }
+
+        var box = new Builder( ).box( cells( 0, 0, 0 ), cells( 6, 5, 4 ), ( center, axis, side ) => center.z < 2 ? 1 : 0 );
+        var two = new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 6 ), ( center, axis, side ) => center.z < 3 ? 1 : 0 ).box( cells( 3, 3, 0 ), cells( 3, 3, 6 ) );
+
+        assertNothingLeft( "a box of two materials", box.positions.ToArray( ), box.normals( ), box.triangles.ToArray( ), 1.0 );
+        assertNothingLeft( "two boxes that share an edge", two.positions.ToArray( ), two.normals( ), two.triangles.ToArray( ), 1.0 );
+
+        foreach( var ( contour, surface ) in new[] { ( Contour.Uniform, Surface.ThreeBalls ), ( Contour.Uniform, Surface.TurnedShapes ), ( Contour.Occupancy, Surface.NewShapes ), ( Contour.Manifold, Surface.PlateAcrossBounds ) } ) {
+            var mesh = this.contourOf( contour, surface, 5 );
+
+            assertNothingLeft( $"{contour} {surface}", mesh.vertices, mesh.normals, trianglesOf( mesh ), cell );
+        }
     }
 
 }

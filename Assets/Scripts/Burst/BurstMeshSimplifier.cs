@@ -1,6 +1,10 @@
 using System;
+using Unity.Burst;
 using Unity.Collections;
+using Unity.Jobs;
 using Unity.Mathematics;
+using Unity.Profiling;
+using UnityEngine;
 
 // simplifies the mesh of a contour by collapsing edges, after Surface Simplification Using Quadric Error Metrics
 // (Garland and Heckbert), with the collapses that are allowed taken from Topology Preserving Edge Contraction (Dey,
@@ -65,7 +69,9 @@ public static class BurstMeshSimplifier {
         public NativeArray<double3>      positions;
         public NativeArray<double3>      normals;
         public NativeArray<double>       areas;        // a third of the area of each triangle the vertex stands for
-        public NativeArray<BurstQuadric> planes;       // the planes of those triangles, and of the sharp edges
+        public NativeArray<BurstQuadric> planes;       // the planes of those triangles, each weighted by that third
+        public NativeArray<double>       sharpAreas;   // the same thirds, of the triangles of its sharp edges alone
+        public NativeArray<BurstQuadric> sharpPlanes;  // the planes that hold those sharp edges in place (QuadricsJob)
         public NativeArray<int>          firstCorners;
         public NativeArray<int>          firstEdges;
         public NativeArray<byte>         orders;       // the order of Dey et al., section 3: 0, 1 or 2
@@ -86,13 +92,15 @@ public static class BurstMeshSimplifier {
         // the edges the last collapse removed
         public NativeList<int> removedEdges;
 
-        // notes on the vertices around the one being looked at. A note counts while its stamp is the current one
+        // notes on the vertices around the one being looked at. A note counts while its stamp is the current one. The
+        // current stamp is kept where every copy of this struct finds it: a job works on a copy, and a stamp counted
+        // up in the copy alone would start over in the next job, among the stamps the first one left
         private NativeArray<int>  stamps;
         private NativeArray<int>  notes;
         private NativeArray<byte> marks;
         private NativeList<int>   scratch;
         private NativeList<int2>  pairs;
-        private int               stamp;
+        private NativeArray<int>  lastStamp;
 
         private const byte Opposite = 1;
         private const byte Common   = 2;
@@ -102,6 +110,8 @@ public static class BurstMeshSimplifier {
             this.normals       = new NativeArray<double3>      ( vertexCount, allocator );
             this.areas         = new NativeArray<double>       ( vertexCount, allocator );
             this.planes        = new NativeArray<BurstQuadric> ( vertexCount, allocator );
+            this.sharpAreas    = new NativeArray<double>       ( vertexCount, allocator );
+            this.sharpPlanes   = new NativeArray<BurstQuadric> ( vertexCount, allocator );
             this.firstCorners  = new NativeArray<int>          ( vertexCount, allocator );
             this.firstEdges    = new NativeArray<int>          ( vertexCount, allocator );
             this.orders        = new NativeArray<byte>         ( vertexCount, allocator );
@@ -120,7 +130,12 @@ public static class BurstMeshSimplifier {
             this.marks         = new NativeArray<byte>         ( vertexCount, allocator );
             this.scratch       = new NativeList<int>           ( 64, allocator );
             this.pairs         = new NativeList<int2>          ( 64, allocator );
-            this.stamp         = 0;
+            this.lastStamp     = new NativeArray<int>          ( 1, allocator );
+        }
+
+        // a stamp that no note has yet
+        private int nextStamp( ) {
+            return ++this.lastStamp[0];
         }
 
         public void Dispose( ) {
@@ -128,6 +143,8 @@ public static class BurstMeshSimplifier {
             this.normals.Dispose( );
             this.areas.Dispose( );
             this.planes.Dispose( );
+            this.sharpAreas.Dispose( );
+            this.sharpPlanes.Dispose( );
             this.firstCorners.Dispose( );
             this.firstEdges.Dispose( );
             this.orders.Dispose( );
@@ -146,6 +163,7 @@ public static class BurstMeshSimplifier {
             this.marks.Dispose( );
             this.scratch.Dispose( );
             this.pairs.Dispose( );
+            this.lastStamp.Dispose( );
         }
 
         public readonly int vertexCount {
@@ -161,7 +179,7 @@ public static class BurstMeshSimplifier {
         }
 
         // the vertex at the other end of an edge
-        private readonly int across( int edge, int vertex ) {
+        public readonly int across( int edge, int vertex ) {
             var ends = this.edges[edge];
 
             return ends.x == vertex ? ends.y : ends.x;
@@ -219,7 +237,7 @@ public static class BurstMeshSimplifier {
 
             // an edge for every two vertices that share a triangle, made at the lower of the two
             for( var vertex = 0; vertex < this.vertexCount; ++vertex ) {
-                ++this.stamp;
+                var stamp = this.nextStamp( );
 
                 for( var corner = this.firstCorners[vertex]; corner != -1; corner = this.nextCorners[corner] ) {
                     var corners = this.triangles[corner / 3];
@@ -227,10 +245,10 @@ public static class BurstMeshSimplifier {
                     for( var other = 0; other < 3; ++other ) {
                         var neighbour = corners[other];
 
-                        if( neighbour <= vertex || this.stamps[neighbour] == this.stamp ) {
+                        if( neighbour <= vertex || this.stamps[neighbour] == stamp ) {
                             continue;
                         }
-                        this.stamps[neighbour] = this.stamp;
+                        this.stamps[neighbour] = stamp;
 
                         var edge = this.edges.Length;
 
@@ -257,12 +275,12 @@ public static class BurstMeshSimplifier {
         // works out again what follows from the triangles of a vertex: for each of its edges how many triangles it has
         // and whether it is sharp, and for the vertex how many sharp edges it has and its order
         private void refresh( int vertex ) {
-            ++this.stamp;
+            var stamp = this.nextStamp( );
 
             for( var end = this.firstEdges[vertex]; end != -1; end = this.nextEdges[end] ) {
                 var neighbour = this.across( end >> 1, vertex );
 
-                this.stamps[neighbour] = this.stamp;
+                this.stamps[neighbour] = stamp;
                 this.notes[neighbour]  = end >> 1;
 
                 this.edgeTriangles[end >> 1] = 0;
@@ -324,7 +342,7 @@ public static class BurstMeshSimplifier {
         //   first boundary.
         // The triangle counts of the edges of the vertex have to be up to date
         private byte orderOf( int vertex ) {
-            ++this.stamp;
+            var stamp = this.nextStamp( );
 
             // the vertices at the far ends of the first two edges that do not have two triangles
             var boundary = 0;
@@ -335,7 +353,7 @@ public static class BurstMeshSimplifier {
                 var neighbour = this.across( end >> 1, vertex );
 
                 // the first triangle met on the edge, none yet
-                this.stamps[neighbour] = this.stamp;
+                this.stamps[neighbour] = stamp;
                 this.notes[neighbour]  = -1;
                 this.marks[neighbour]  = ( byte )( this.edgeTriangles[end >> 1] == 2 ? 1 : 0 );
 
@@ -445,45 +463,31 @@ public static class BurstMeshSimplifier {
             }
         }
 
-        // the quadric of every vertex: the planes of its triangles, each weighted by a third of the triangle's area
-        // (Liu et al., equation 8), and for every sharp edge of the vertex and every triangle of that edge the plane
-        // through the edge that is square to the triangle (Garland and Heckbert, section 6). That plane counts as the
-        // triangle's own does, times the boundary weight
-        public void buildQuadrics( double boundaryWeight ) {
+        // the quadrics and the areas of every vertex, one after the other
+        public void buildQuadrics( ) {
+            var job = this.quadricsJob( );
+
             for( var vertex = 0; vertex < this.vertexCount; ++vertex ) {
-                this.planes[vertex] = default;
-                this.areas[vertex]  = 0.0;
+                job.Execute( vertex );
             }
+        }
 
-            for( var triangle = 0; triangle < this.triangleCount; ++triangle ) {
-                if( this.subMeshes[triangle] == -1 ) {
-                    continue;
-                }
-
-                var corners = this.triangles[triangle];
-
-                if( !BurstQuadric.triangle( this.positions[corners.x], this.positions[corners.y], this.positions[corners.z], out var plane, out var area ) ) {
-                    continue;
-                }
-
-                for( var corner = 0; corner < 3; ++corner ) {
-                    this.planes[corners[corner]] += plane * ( area / 3.0 );
-                    this.areas[corners[corner]]  += area / 3.0;
-                }
-
-                for( var corner = 0; corner < 3; ++corner ) {
-                    var start = corners[corner];
-                    var end   = corners[( corner + 1 ) % 3];
-
-                    if( this.edgeSharp[this.edgeBetween( start, end )] == Sharp.None ) {
-                        continue;
-                    }
-                    if( BurstQuadric.boundary( this.positions[start], this.positions[end], this.positions[corners[( corner + 2 ) % 3]], out var square ) ) {
-                        this.planes[start] += square * ( boundaryWeight * area / 3.0 );
-                        this.planes[end]   += square * ( boundaryWeight * area / 3.0 );
-                    }
-                }
-            }
+        // the job that works out the quadrics and the areas of the vertices
+        public QuadricsJob quadricsJob( ) {
+            return new QuadricsJob {
+                positions    = this.positions,
+                triangles    = this.triangles,
+                firstCorners = this.firstCorners,
+                nextCorners  = this.nextCorners,
+                firstEdges   = this.firstEdges,
+                nextEdges    = this.nextEdges.AsArray( ),
+                edges        = this.edges.AsArray( ),
+                edgeSharp    = this.edgeSharp.AsArray( ),
+                planes       = this.planes,
+                areas        = this.areas,
+                sharpPlanes  = this.sharpPlanes,
+                sharpAreas   = this.sharpAreas
+            };
         }
 
         // whether collapsing an edge into a vertex at the position keeps the mesh what it is: its topology (Dey et al.,
@@ -497,13 +501,13 @@ public static class BurstMeshSimplifier {
                 return Refusal.Locked;
             }
 
-            ++this.stamp;
+            var stamp = this.nextStamp( );
 
             // the vertices next to a, with the edge to each
             for( var end = this.firstEdges[a]; end != -1; end = this.nextEdges[end] ) {
                 var neighbour = this.across( end >> 1, a );
 
-                this.stamps[neighbour] = this.stamp;
+                this.stamps[neighbour] = stamp;
                 this.notes[neighbour]  = end >> 1;
                 this.marks[neighbour]  = 0;
             }
@@ -522,7 +526,7 @@ public static class BurstMeshSimplifier {
             for( var end = this.firstEdges[b]; end != -1; end = this.nextEdges[end] ) {
                 var neighbour = this.across( end >> 1, b );
 
-                if( neighbour == a || this.stamps[neighbour] != this.stamp ) {
+                if( neighbour == a || this.stamps[neighbour] != stamp ) {
                     continue;
                 }
                 if( ( this.marks[neighbour] & Opposite ) == 0 ) {
@@ -543,12 +547,12 @@ public static class BurstMeshSimplifier {
             this.pairs.Clear( );
 
             for( var corner = this.firstCorners[a]; corner != -1; corner = this.nextCorners[corner] ) {
-                if( this.oppositeBoth( corner, a, b, out var others ) ) {
+                if( this.oppositeBoth( stamp, corner, a, b, out var others ) ) {
                     this.pairs.Add( others );
                 }
             }
             for( var corner = this.firstCorners[b]; corner != -1; corner = this.nextCorners[corner] ) {
-                if( !this.oppositeBoth( corner, b, a, out var others ) ) {
+                if( !this.oppositeBoth( stamp, corner, b, a, out var others ) ) {
                     continue;
                 }
                 for( var earlier = 0; earlier < this.pairs.Length; ++earlier ) {
@@ -609,7 +613,7 @@ public static class BurstMeshSimplifier {
 
         // whether the triangle of a corner of a vertex stays when the edge to the other vertex is collapsed, with both
         // of its other vertices in the links of both. Gives those two, the lower first
-        private readonly bool oppositeBoth( int corner, int vertex, int other, out int2 others ) {
+        private readonly bool oppositeBoth( int stamp, int corner, int vertex, int other, out int2 others ) {
             var corners = this.triangles[corner / 3];
 
             others = default;
@@ -621,7 +625,7 @@ public static class BurstMeshSimplifier {
             var x = corners[( ( corner % 3 ) + 1 ) % 3];
             var y = corners[( ( corner % 3 ) + 2 ) % 3];
 
-            if( this.stamps[x] != this.stamp || this.stamps[y] != this.stamp || ( this.marks[x] & Common ) == 0 || ( this.marks[y] & Common ) == 0 ) {
+            if( this.stamps[x] != stamp || this.stamps[y] != stamp || ( this.marks[x] & Common ) == 0 || ( this.marks[y] & Common ) == 0 ) {
                 return false;
             }
 
@@ -701,12 +705,12 @@ public static class BurstMeshSimplifier {
 
             // its edges. What the sharp edges of the kept vertex add to the counts of the vertices around it is taken
             // off first, and put back below when the edges are known again
-            ++this.stamp;
+            var stamp = this.nextStamp( );
 
             for( var end = this.firstEdges[kept]; end != -1; end = this.nextEdges[end] ) {
                 var neighbour = this.across( end >> 1, kept );
 
-                this.stamps[neighbour] = this.stamp;
+                this.stamps[neighbour] = stamp;
 
                 if( this.edgeSharp[end >> 1] != Sharp.None ) {
                     --this.sharpCounts[neighbour];
@@ -722,7 +726,7 @@ public static class BurstMeshSimplifier {
                     --this.sharpCounts[neighbour];
                 }
 
-                if( neighbour == kept || this.stamps[neighbour] == this.stamp ) {
+                if( neighbour == kept || this.stamps[neighbour] == stamp ) {
                     // the collapsed edge itself, or an edge to a vertex the kept vertex has an edge to already
                     this.unlinkEdge( neighbour, end >> 1 );
 
@@ -750,6 +754,9 @@ public static class BurstMeshSimplifier {
             this.normals[kept]    = length > 0.0 ? normal / length : double3.zero;
             this.areas[kept]     += this.areas[removed];
             this.planes[kept]    += this.planes[removed];
+
+            this.sharpAreas[kept]  += this.sharpAreas[removed];
+            this.sharpPlanes[kept] += this.sharpPlanes[removed];
 
             this.sharpCounts[removed] = 0;
             this.orders[removed]      = 0;
@@ -821,6 +828,575 @@ public static class BurstMeshSimplifier {
             }
         }
 
+    }
+
+
+    // what the planes that hold the sharp edges in place weigh against the planes of the triangles, in where the
+    // vertex of a collapsed edge goes and in which edge is collapsed first. How far a vertex may leave either kind of
+    // plane is the error bound's to say, for each kind by itself (evaluate), and with that bound the weight changes
+    // little: from 0.1 to 100 the lines between materials come out the same to within a few edges
+    public const double SharpWeight = 1.0;
+
+    // the two quadrics of a vertex, and the areas they are means over.
+    // - The planes of its triangles, each weighted by a third of the triangle's area, and the sum of those thirds
+    //   (Liu et al., equation 8).
+    // - For every sharp edge of the vertex and every triangle of that edge, the plane through the edge that is square
+    //   to the triangle (Garland and Heckbert, section 6), weighted by the same third, and the sum of those.
+    // The two are kept apart because an error bound that is a distance has to divide each by its own area. A vertex
+    // of a line across a flat face comes to stand for a great deal of the face, where every collapse costs nothing,
+    // and for very little line. Divided by all of that area, no error of the line would ever be over the bound
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct QuadricsJob : IJobParallelFor {
+
+        [ReadOnly] public NativeArray<double3> positions;
+        [ReadOnly] public NativeArray<int3>    triangles;
+        [ReadOnly] public NativeArray<int>     firstCorners;
+        [ReadOnly] public NativeArray<int>     nextCorners;
+        [ReadOnly] public NativeArray<int>     firstEdges;
+        [ReadOnly] public NativeArray<int>     nextEdges;
+        [ReadOnly] public NativeArray<int2>    edges;
+        [ReadOnly] public NativeArray<Sharp>   edgeSharp;
+
+        [WriteOnly] public NativeArray<BurstQuadric> planes;
+        [WriteOnly] public NativeArray<double>       areas;
+        [WriteOnly] public NativeArray<BurstQuadric> sharpPlanes;
+        [WriteOnly] public NativeArray<double>       sharpAreas;
+
+        public void Execute( int vertex ) {
+            var sum       = default( BurstQuadric );
+            var area      = 0.0;
+            var sharpSum  = default( BurstQuadric );
+            var sharpArea = 0.0;
+
+            for( var corner = this.firstCorners[vertex]; corner != -1; corner = this.nextCorners[corner] ) {
+                var corners = this.triangles[corner / 3];
+
+                if( !BurstQuadric.triangle( this.positions[corners.x], this.positions[corners.y], this.positions[corners.z], out var plane, out var triangleArea ) ) {
+                    continue;
+                }
+
+                sum  += plane * ( triangleArea / 3.0 );
+                area += triangleArea / 3.0;
+
+                // the two edges of the triangle that the vertex is an end of
+                for( var side = 1; side <= 2; ++side ) {
+                    var end      = corners[( ( corner % 3 ) + side ) % 3];
+                    var opposite = corners[( ( corner % 3 ) + 3 - side ) % 3];
+
+                    if( this.sharp( vertex, end ) && BurstQuadric.boundary( this.positions[vertex], this.positions[end], this.positions[opposite], out var square ) ) {
+                        sharpSum  += square * ( triangleArea / 3.0 );
+                        sharpArea += triangleArea / 3.0;
+                    }
+                }
+            }
+
+            this.planes[vertex]      = sum;
+            this.areas[vertex]       = area;
+            this.sharpPlanes[vertex] = sharpSum;
+            this.sharpAreas[vertex]  = sharpArea;
+        }
+
+        private readonly bool sharp( int vertex, int other ) {
+            for( var end = this.firstEdges[vertex]; end != -1; end = this.nextEdges[end] ) {
+                var ends = this.edges[end >> 1];
+
+                if( ends.x == other || ends.y == other ) {
+                    return this.edgeSharp[end >> 1] != Sharp.None;
+                }
+            }
+            return false;
+        }
+
+    }
+
+    // where the vertex of a collapsed edge goes and what the collapse costs: the point of least error of the quadrics of
+    // both ends and the error there. Where there is no such point, the best point of the edge, and where the error
+    // does not change along the edge, the best of its middle and its ends (Garland and Heckbert, section 4). The middle
+    // is taken unless an end is better by more than the error may change along an edge without having a best point on
+    // it (BurstQuadric.minimizeBetween), and the first end unless the second is better by as much. On a flat face that
+    // makes it the middle whether rounding leaves the errors exactly equal or not
+    public static void targetOf( in BurstQuadric quadric, double3 first, double3 second, out double3 position, out double cost ) {
+        if( quadric.minimize( out position ) || quadric.minimizeBetween( first, second, out position ) ) {
+            cost = quadric.evaluate( position );
+
+            return;
+        }
+
+        position = ( first + second ) * 0.5;
+        cost     = quadric.evaluate( position );
+
+        var atFirst   = quadric.evaluate( first );
+        var atSecond  = quadric.evaluate( second );
+        var tolerance = BurstQuadric.PivotLimit * quadric.trace * math.distancesq( first, second );
+
+        if( atFirst < cost - tolerance ) {
+            position = first;
+            cost     = atFirst;
+        }
+        if( atSecond < cost - tolerance ) {
+            position = second;
+            cost     = atSecond;
+        }
+    }
+
+    // an edge as the loop sees it: where its vertex would go, what collapsing it costs, and whether that is within the
+    // error bound. It is given the two quadrics of both ends together, the areas they are means over, and the ends.
+    // - The target and the cost are those of the two quadrics together, the planes of the sharp edges times their
+    //   weight (targetOf).
+    // - The limit is the largest mean squared distance that is allowed. The error of the planes of the triangles at
+    //   the target, over the area the two ends stand for, is such a mean, weighted by area: the squared distance to
+    //   the surface the new vertex stands for. The error of the planes of the sharp edges over their area is the
+    //   squared distance the sharp lines have moved sideways. Each has to be within the limit by itself
+    public static void evaluate(
+        in BurstQuadric planes,
+        double          area,
+        in BurstQuadric sharpPlanes,
+        double          sharpArea,
+        double3         first,
+        double3         second,
+        double          limit,
+        out double3     target,
+        out double      cost,
+        out bool        within
+    ) {
+        targetOf( planes + ( sharpPlanes * SharpWeight ), first, second, out target, out cost );
+
+        within = planes.evaluate( target ) <= limit * area && sharpPlanes.evaluate( target ) <= limit * sharpArea;
+    }
+
+    // the target and the cost of every edge, and whether it is within the error bound
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct CostsJob : IJobParallelFor {
+
+        public double limit;
+
+        [ReadOnly] public NativeArray<double3>      positions;
+        [ReadOnly] public NativeArray<BurstQuadric> planes;
+        [ReadOnly] public NativeArray<double>       areas;
+        [ReadOnly] public NativeArray<BurstQuadric> sharpPlanes;
+        [ReadOnly] public NativeArray<double>       sharpAreas;
+        [ReadOnly] public NativeArray<int2>         edges;
+
+        [WriteOnly] public NativeArray<double3> targets;
+        [WriteOnly] public NativeArray<double>  costs;
+        [WriteOnly] public NativeArray<bool>    within;
+
+        public void Execute( int edge ) {
+            var a = this.edges[edge].x;
+            var b = this.edges[edge].y;
+
+            evaluate(
+                this.planes[a] + this.planes[b], this.areas[a] + this.areas[b], this.sharpPlanes[a] + this.sharpPlanes[b], this.sharpAreas[a] + this.sharpAreas[b],
+                this.positions[a], this.positions[b], this.limit, out var target, out var cost, out var within
+            );
+
+            this.targets[edge] = target;
+            this.costs[edge]   = cost;
+            this.within[edge]  = within;
+        }
+
+    }
+
+    // what a simplification did
+    public struct Statistics {
+
+        public int collapses;
+
+        // collapses whose new vertex is more than two lengths of its edge from the middle of the edge, which the best
+        // point of a quadric can be where the surface is almost flat, and edges that were not collapsed with such a point
+        public int farCollapses;
+        public int farRefusals;
+
+        // how many edges were worked out again, in all: after every collapse, the edges of the vertex it left
+        public int evaluations;
+
+    }
+
+    // takes the mesh of a contour into a connectivity
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct BuildJob : IJob {
+
+        [ReadOnly] public NativeArray<float3>             positions;
+        [ReadOnly] public NativeArray<float3>             normals;
+        [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
+
+        public Connectivity mesh;
+
+        public void Execute( ) {
+            this.mesh.build( this.positions, this.normals, this.triangles );
+        }
+
+    }
+
+    // Garland and Heckbert's loop (section 4.1): the edge that costs least is collapsed, and the costs of the edges of
+    // the vertex it leaves are worked out again, until no edge is left to collapse.
+    //
+    // The edges wait in a heap, the cheapest at the top, and of two that cost the same the one with the lower index, so
+    // that the same mesh is always simplified the same way. An edge is not in the heap while its cost is over the error
+    // bound, or while check refuses it. A cost changes only with the quadric or the position of an end of the edge,
+    // which is when that end is the vertex a collapse leaves. What check says can change with any collapse that leaves
+    // a vertex next to an end of the edge, so the refused edges of those vertices go back into the heap
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct CollapseJob : IJob {
+
+        // the largest mean squared distance that a collapse may leave a vertex at (evaluate)
+        public double limit;
+
+        public Connectivity mesh;
+
+        // for every edge, from evaluate
+        public NativeArray<double3> targets;
+        public NativeArray<double>  costs;
+        public NativeArray<bool>    within;
+
+        // the heap, as the edges in it, and for every edge its place in the heap or why it is not in it
+        public NativeArray<int> heap;
+        public NativeArray<int> places;
+
+        public NativeList<float3>             positions;
+        public NativeList<float3>             normals;
+        public NativeList<BurstMesh.Triangle> triangles;
+
+        // one statistics, and how often check gave each refusal
+        public NativeArray<Statistics> statistics;
+        public NativeArray<int>        refusals;
+
+        private int count;
+
+        private const int Out     = -1; // over the error bound, or removed
+        private const int Waiting = -2; // refused by check
+
+        public void Execute( ) {
+            this.count = 0;
+
+            for( var edge = 0; edge < this.mesh.edgeCount; ++edge ) {
+                if( this.mesh.edges[edge].x != -1 && this.within[edge] ) {
+                    this.heap[this.count] = edge;
+                    this.places[edge]     = this.count++;
+                }
+                else {
+                    this.places[edge] = Out;
+                }
+            }
+            for( var place = ( this.count / 2 ) - 1; place >= 0; --place ) {
+                this.sinkFrom( place );
+            }
+
+            var statistics = default( Statistics );
+
+            while( this.count > 0 ) {
+                var edge = this.heap[0];
+
+                this.removeAt( 0 );
+                this.places[edge] = Out;
+
+                var ends   = this.mesh.edges[edge];
+                var middle = ( this.mesh.positions[ends.x] + this.mesh.positions[ends.y] ) * 0.5;
+                var far    = math.distancesq( this.targets[edge], middle ) > 4.0 * math.distancesq( this.mesh.positions[ends.x], this.mesh.positions[ends.y] );
+
+                var refusal = this.mesh.check( edge, this.targets[edge] );
+
+                if( refusal != Refusal.None ) {
+                    this.places[edge] = Waiting;
+
+                    ++this.refusals[( int )refusal];
+
+                    if( far ) {
+                        ++statistics.farRefusals;
+                    }
+                    continue;
+                }
+
+                // the edges of both ends leave the heap before the collapse changes what they are ordered by, or
+                // removes them
+                this.takeOutEdgesOf( ends.x );
+                this.takeOutEdgesOf( ends.y );
+
+                var kept = this.mesh.collapse( edge, this.targets[edge] );
+
+                ++statistics.collapses;
+
+                if( far ) {
+                    ++statistics.farCollapses;
+                }
+
+                // the edges of the kept vertex cost what its new quadric and position make them cost
+                for( var end = this.mesh.firstEdges[kept]; end != -1; end = this.mesh.nextEdges[end], ++statistics.evaluations ) {
+                    var changed = end >> 1;
+                    var a       = this.mesh.edges[changed].x;
+                    var b       = this.mesh.edges[changed].y;
+
+                    evaluate(
+                        this.mesh.planes[a] + this.mesh.planes[b], this.mesh.areas[a] + this.mesh.areas[b], this.mesh.sharpPlanes[a] + this.mesh.sharpPlanes[b], this.mesh.sharpAreas[a] + this.mesh.sharpAreas[b],
+                        this.mesh.positions[a], this.mesh.positions[b], this.limit, out var target, out var cost, out var within
+                    );
+
+                    this.targets[changed] = target;
+                    this.costs[changed]   = cost;
+                    this.within[changed]  = within;
+
+                    if( within ) {
+                        this.add( changed );
+                    }
+                    else {
+                        this.places[changed] = Out;
+                    }
+                }
+
+                // and the edges of the vertices next to it that check refused may no longer be refused
+                for( var end = this.mesh.firstEdges[kept]; end != -1; end = this.mesh.nextEdges[end] ) {
+                    var neighbour = this.mesh.across( end >> 1, kept );
+
+                    for( var other = this.mesh.firstEdges[neighbour]; other != -1; other = this.mesh.nextEdges[other] ) {
+                        if( this.places[other >> 1] == Waiting ) {
+                            this.add( other >> 1 );
+                        }
+                    }
+                }
+            }
+
+            this.statistics[0] = statistics;
+
+            this.mesh.write( this.positions, this.normals, this.triangles );
+        }
+
+        private void takeOutEdgesOf( int vertex ) {
+            for( var end = this.mesh.firstEdges[vertex]; end != -1; end = this.mesh.nextEdges[end] ) {
+                if( this.places[end >> 1] >= 0 ) {
+                    this.removeAt( this.places[end >> 1] );
+                }
+                this.places[end >> 1] = Out;
+            }
+        }
+
+        // whether an edge goes before another: the cheaper of the two. Of two that cost the same, the one whose ends
+        // stand for less area, and of two that are the same in that too, the lower.
+        //
+        // On a flat face that lies along the grid every edge costs exactly nothing. Going by the index alone, the
+        // vertex of the first edge then takes one neighbour after another, and ends up with every triangle of the
+        // face around it: thousands of edges, each of them to be worked out again at every collapse. Going by area
+        // first, a vertex that has taken a neighbour waits until the vertices around it have done the same
+        private readonly bool before( int edge, int other ) {
+            if( this.costs[edge] != this.costs[other] ) {
+                return this.costs[edge] < this.costs[other];
+            }
+
+            var area      = this.areaOf( edge );
+            var otherArea = this.areaOf( other );
+
+            return area < otherArea || ( area == otherArea && edge < other );
+        }
+
+        // the area the two ends of an edge stand for
+        private readonly double areaOf( int edge ) {
+            var ends = this.mesh.edges[edge];
+
+            return this.mesh.areas[ends.x] + this.mesh.areas[ends.y];
+        }
+
+        private void put( int place, int edge ) {
+            this.heap[place]  = edge;
+            this.places[edge] = place;
+        }
+
+        private void add( int edge ) {
+            this.put( this.count++, edge );
+            this.riseFrom( this.count - 1 );
+        }
+
+        // takes the edge at a place out of the heap. Its own place is the caller's to set
+        private void removeAt( int place ) {
+            var last = this.heap[--this.count];
+
+            if( place == this.count ) {
+                return;
+            }
+
+            this.put( place, last );
+            this.riseFrom( place );
+            this.sinkFrom( this.places[last] );
+        }
+
+        private void riseFrom( int place ) {
+            var edge = this.heap[place];
+
+            while( place > 0 ) {
+                var parent = ( place - 1 ) / 2;
+
+                if( !this.before( edge, this.heap[parent] ) ) {
+                    break;
+                }
+
+                this.put( place, this.heap[parent] );
+
+                place = parent;
+            }
+
+            this.put( place, edge );
+        }
+
+        private void sinkFrom( int place ) {
+            var edge = this.heap[place];
+
+            while( true ) {
+                var child = ( place * 2 ) + 1;
+
+                if( child >= this.count ) {
+                    break;
+                }
+                if( child + 1 < this.count && this.before( this.heap[child + 1], this.heap[child] ) ) {
+                    ++child;
+                }
+                if( !this.before( this.heap[child], edge ) ) {
+                    break;
+                }
+
+                this.put( place, this.heap[child] );
+
+                place = child;
+            }
+
+            this.put( place, edge );
+        }
+
+    }
+
+    // reads a mesh into arrays: its vertices, their normals, and its triangles with the sub-mesh of each
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct ReadMeshJob : IJob {
+
+        [ReadOnly] public Mesh.MeshDataArray meshes;
+
+        public NativeArray<float3>             positions;
+        public NativeArray<float3>             normals;
+        public NativeArray<BurstMesh.Triangle> triangles;
+
+        public void Execute( ) {
+            var mesh = this.meshes[0];
+
+            mesh.GetVertices( this.positions.Reinterpret<Vector3>( ) );
+            mesh.GetNormals( this.normals.Reinterpret<Vector3>( ) );
+
+            var triangle = 0;
+
+            for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+                var indices = new NativeArray<int>( mesh.GetSubMesh( subMesh ).indexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+
+                mesh.GetIndices( indices, subMesh );
+
+                for( var index = 0; index < indices.Length; index += 3 ) {
+                    this.triangles[triangle++] = new BurstMesh.Triangle( indices[index], indices[index + 1], indices[index + 2], subMesh );
+                }
+
+                indices.Dispose( );
+            }
+        }
+
+    }
+
+    private static readonly ProfilerMarker readMeshMarker  = new( "MeshSimplifier.Burst.ReadMesh" );
+    private static readonly ProfilerMarker buildMarker     = new( "MeshSimplifier.Burst.Build" );
+    private static readonly ProfilerMarker quadricsMarker  = new( "MeshSimplifier.Burst.Quadrics" );
+    private static readonly ProfilerMarker costsMarker     = new( "MeshSimplifier.Burst.Costs" );
+    private static readonly ProfilerMarker collapseMarker  = new( "MeshSimplifier.Burst.Collapse" );
+    private static readonly ProfilerMarker buildMeshMarker = new( "MeshSimplifier.Burst.BuildMesh" );
+
+    // how many vertices and edges a worker takes at a time
+    private const int vertexBatch = 256;
+    private const int edgeBatch   = 256;
+
+    // the mesh of a contour, simplified: a new mesh with the same sub-meshes, and vertices with normals that its
+    // triangles share. The error is how far a collapse may leave a vertex from the planes of the surface it stands
+    // for, as a root mean square distance in the units of the mesh
+    public static Mesh simplify( Mesh mesh, double error, out Statistics statistics ) {
+        var triangleCount = 0;
+
+        for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+            triangleCount += ( int )mesh.GetIndexCount( subMesh ) / 3;
+        }
+
+        using var positions = new NativeArray<float3>( mesh.vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var normals   = new NativeArray<float3>( mesh.vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var triangles = new NativeArray<BurstMesh.Triangle>( triangleCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+
+        using( readMeshMarker.Auto( ) ) {
+            using var meshes = Mesh.AcquireReadOnlyMeshData( mesh );
+
+            new ReadMeshJob {
+                meshes    = meshes,
+                positions = positions,
+                normals   = normals,
+                triangles = triangles
+            }.Run( );
+        }
+
+        return simplify( positions, normals, triangles, error, out statistics );
+    }
+
+    public static Mesh simplify( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, double error, out Statistics statistics ) {
+        using var connectivity = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
+
+        using( buildMarker.Auto( ) ) {
+            new BuildJob {
+                positions = positions,
+                normals   = normals,
+                triangles = triangles,
+                mesh      = connectivity
+            }.Run( );
+        }
+
+        using( quadricsMarker.Auto( ) ) {
+            connectivity.quadricsJob( ).Schedule( connectivity.vertexCount, vertexBatch ).Complete( );
+        }
+
+        using var targets            = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var costs              = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var within             = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var heap               = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var places             = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var simplifiedPosition = new NativeList<float3>( Allocator.TempJob );
+        using var simplifiedNormals  = new NativeList<float3>( Allocator.TempJob );
+        using var simplifiedTriangle = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+        using var statisticsOut      = new NativeArray<Statistics>( 1, Allocator.TempJob );
+        using var refusals           = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
+
+        using( costsMarker.Auto( ) ) {
+            new CostsJob {
+                limit       = error * error,
+                positions   = connectivity.positions,
+                planes      = connectivity.planes,
+                areas       = connectivity.areas,
+                sharpPlanes = connectivity.sharpPlanes,
+                sharpAreas  = connectivity.sharpAreas,
+                edges       = connectivity.edges.AsArray( ),
+                targets     = targets,
+                costs       = costs,
+                within      = within
+            }.Schedule( connectivity.edgeCount, edgeBatch ).Complete( );
+        }
+
+        using( collapseMarker.Auto( ) ) {
+            new CollapseJob {
+                limit       = error * error,
+                mesh        = connectivity,
+                targets     = targets,
+                costs       = costs,
+                within      = within,
+                heap        = heap,
+                places     = places,
+                positions  = simplifiedPosition,
+                normals    = simplifiedNormals,
+                triangles  = simplifiedTriangle,
+                statistics = statisticsOut,
+                refusals   = refusals
+            }.Run( );
+        }
+
+        statistics = statisticsOut[0];
+
+        using( buildMeshMarker.Auto( ) ) {
+            return BurstMesh.createMesh( simplifiedPosition.AsArray( ), simplifiedNormals.AsArray( ), simplifiedTriangle.AsArray( ) );
+        }
     }
 
 }

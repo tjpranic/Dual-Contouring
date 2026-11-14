@@ -76,6 +76,17 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     protected abstract Implementation implementation { get; set; }
 
+    // the size of a cell of the grid in voxelizer object space, where the grid is 1 across
+    public virtual float cellSize {
+        get { return 1.0f / ( 1 << this.resolution ); }
+    }
+
+    // the normals an implementation is asked for. A mesh that is going to be simplified needs vertices that its
+    // triangles share, so it is asked for with shared normals and split afterwards
+    public VertexNormals contourNormals {
+        get { return this.meshSimplification ? VertexNormals.Shared : this.vertexNormals; }
+    }
+
     [Flags]
     public enum Debug {
         Off           = 0,
@@ -85,6 +96,15 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         Intersections = 8,
         Minimizers    = 16
     }
+
+    // what is done to the mesh of every contour before it is shown (BurstMeshSimplifier)
+    [Header( "Mesh Simplification" )]
+
+    [Tooltip( "Simplify the mesh of the contour by collapsing its edges, cheapest first, for as long as it stays within the error" )]
+    public bool meshSimplification = false;
+
+    [Tooltip( "How far a collapse may leave a vertex from the surface it stands for, as a root mean square distance in cells" ), Min( 0.0f )]
+    public float simplificationError = 0.05f;
 
     // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
     [Header( "Wireframe" )]
@@ -173,6 +193,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     public int debugDrawCount { get; private set; }
 
     private static readonly ProfilerMarker voxelizeMarker      = new( "Voxelizer.Voxelize" );
+    private static readonly ProfilerMarker simplifyMarker      = new( "Voxelizer.Simplify" );
     private static readonly ProfilerMarker splitVerticesMarker = new( "Voxelizer.SplitVertices" );
     private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
     private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
@@ -213,7 +234,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     // contours the density functions and shows the result in place of whatever contour was shown before, so it can be
     // called again and again.
     // - drawFromGPU: with the GPU implementation and the debug view off, draw the mesh straight from the compute
-    //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode.
+    //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode. A mesh that
+    //   is simplified is read back whatever this says, since it is simplified on the CPU.
     // - reorderVertices: reorder the vertex buffer, which makes the mesh a little faster to draw and takes 5 to 10% of
     //   a Burst contour of 128^3 cells
     public ContourStatistics contour( IEnumerable<DensityFunction> densityFunctions, bool drawFromGPU = true, bool reorderVertices = true ) {
@@ -227,7 +249,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         this.stopDrawingFromGPU( );
 
-        if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU ) {
+        if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU && !this.meshSimplification ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
             this.directToGPU = voxelization.tryVisit(
                 ( GPUVoxelization voxelization ) => {
@@ -264,20 +286,14 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             return new( stopwatch.Elapsed.TotalMilliseconds, null, null );
         }
 
+        // the GPU splits vertices for flat shading itself, in the contour kernel, unless it was asked for shared ones
+        var splitByGPU = !this.meshSimplification;
+
         var ( mesh, corners, edges, voxels ) = voxelization.visit(
             ( voxelization ) => {
-                var mesh = voxelization.mesh;
+                splitByGPU = false;
 
-                // convert to flat shading by splitting vertices. The GPU does that itself, in the contour kernel
-                if( this.vertexNormals == VertexNormals.Split ) {
-                    splitVerticesMarker.Begin( );
-
-                    splitVertices( mesh );
-
-                    splitVerticesMarker.End( );
-                }
-
-                return ( mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
+                return ( voxelization.mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
             },
             ( voxelization ) => {
                 // with the debug view off nothing looks at the corners, edges and voxels, which take far longer to
@@ -290,6 +306,28 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                 return ( converted.mesh, converted.corners, converted.edges, converted.voxels );
             }
         );
+
+        // a mesh without triangles has nothing to simplify, and no buffers to read
+        if( this.meshSimplification && mesh.vertexCount > 0 ) {
+            simplifyMarker.Begin( );
+
+            var simplified = BurstMeshSimplifier.simplify( mesh, this.simplificationError * this.cellSize, out _ );
+
+            destroy( mesh );
+
+            mesh = simplified;
+
+            simplifyMarker.End( );
+        }
+
+        // convert to flat shading by splitting vertices
+        if( this.vertexNormals == VertexNormals.Split && !splitByGPU ) {
+            splitVerticesMarker.Begin( );
+
+            splitVertices( mesh );
+
+            splitVerticesMarker.End( );
+        }
 
         finishMeshMarker.Begin( );
 
