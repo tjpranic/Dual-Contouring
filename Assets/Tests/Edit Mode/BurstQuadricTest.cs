@@ -17,7 +17,8 @@ public class BurstQuadricTest {
         Plane,     // a: unit normal, b: a point of the plane
         Triangle,  // a, b, c: its vertices
         Boundary,  // a, b: the ends of the edge, c: the vertex opposite to it
-        Line       // a: a point of the line, b: its direction, of any length
+        Line,      // a: a point of the line, b: its direction, of any length
+        Point      // a: the point
     }
 
     private struct Item {
@@ -57,11 +58,12 @@ public class BurstQuadricTest {
         public NativeArray<double>  bestErrors;
 
         // for every case: whether it has a best point on its segment, that point, and where the vertex of a collapsed
-        // edge along the segment goes and what the collapse costs
+        // edge along the segment goes, what the collapse costs, and whether targetOf says that is a best point
         public NativeArray<bool>    between;
         public NativeArray<double3> bestBetween;
         public NativeArray<double3> targets;
         public NativeArray<double>  targetCosts;
+        public NativeArray<bool>    targetsBest;
 
         public NativeArray<bool> managed;
 
@@ -82,6 +84,7 @@ public class BurstQuadricTest {
                         case Kind.Triangle: made    = BurstQuadric.triangle( item.a, item.b, item.c, out quadric, out area ); break;
                         case Kind.Boundary: made    = BurstQuadric.boundary( item.a, item.b, item.c, out quadric );           break;
                         case Kind.Line:     made    = BurstQuadric.line( item.a, item.b, out quadric );                       break;
+                        case Kind.Point:    quadric = BurstQuadric.point( item.a );                                       break;
                     }
 
                     this.made[at]  = made;
@@ -101,8 +104,7 @@ public class BurstQuadricTest {
                 this.between[index]     = sum.minimizeBetween( this.cases[index].from, this.cases[index].to, out var bestBetween );
                 this.bestBetween[index] = bestBetween;
 
-                BurstMeshSimplifier.targetOf( sum, this.cases[index].from, this.cases[index].to, out var target, out var targetCost );
-
+                this.targetsBest[index] = BurstMeshSimplifier.targetOf( sum, this.cases[index].from, this.cases[index].to, out var target, out var targetCost );
                 this.targets[index]     = target;
                 this.targetCosts[index] = targetCost;
             }
@@ -126,6 +128,7 @@ public class BurstQuadricTest {
         public double3[] bestBetween;
         public double3[] targets;
         public double[]  targetCosts;
+        public bool[]    targetsBest;
 
         // adds a quadric and gives its index among the cases. Its items follow each other from firstItem( index ) on
         public int add( double3 query, params Item[] items ) {
@@ -164,6 +167,7 @@ public class BurstQuadricTest {
             using var bestBetween = new NativeArray<double3>( cases.Length, Allocator.TempJob );
             using var targets     = new NativeArray<double3>( cases.Length, Allocator.TempJob );
             using var targetCosts = new NativeArray<double>( cases.Length, Allocator.TempJob );
+            using var targetsBest = new NativeArray<bool>( cases.Length, Allocator.TempJob );
             using var managed     = new NativeArray<bool>( 1, Allocator.TempJob );
 
             new QuadricJob {
@@ -179,6 +183,7 @@ public class BurstQuadricTest {
                 bestBetween = bestBetween,
                 targets     = targets,
                 targetCosts = targetCosts,
+                targetsBest = targetsBest,
                 managed     = managed
             }.Run( );
 
@@ -194,6 +199,7 @@ public class BurstQuadricTest {
             this.bestBetween = bestBetween.ToArray( );
             this.targets     = targets.ToArray( );
             this.targetCosts = targetCosts.ToArray( );
+            this.targetsBest = targetsBest.ToArray( );
         }
 
     }
@@ -212,6 +218,10 @@ public class BurstQuadricTest {
 
     private static Item line( double3 point, double3 direction, double weight = 1.0 ) {
         return new Item { kind = Kind.Line, a = point, b = direction, weight = weight };
+    }
+
+    private static Item point( double3 at, double weight ) {
+        return new Item { kind = Kind.Point, a = at, weight = weight };
     }
 
     private static double range( System.Random random, double minimum, double maximum ) {
@@ -425,6 +435,51 @@ public class BurstQuadricTest {
         Assert.IsFalse( run.made[0], "the line has a quadric" );
 
         Assert.AreEqual( 0.0, run.errors[0], "error" );
+    }
+
+    // Liu et al., section 4.2: a vertex without a normal has no line, and is held to itself in its place. The quadric
+    // of a point is the squared distance to it, and the best point of several is their centre, each by its weight
+    [Test]
+    public void pointQuadricIsTheSquaredDistanceToItsPoint( ) {
+        var random  = new System.Random( 31 );
+        var run     = new Run( );
+        var errors  = new List<double>( );
+        var centres = new List<double3>( );
+        var least   = new List<double>( );
+
+        for( var index = 0; index < 200; ++index ) {
+            var count   = 1 + random.Next( 4 );
+            var query   = point( random ) * 2.0;
+            var items   = new List<Item>( );
+            var centre  = double3.zero;
+            var weights = 0.0;
+
+            for( var at = 0; at < count; ++at ) {
+                items.Add( point( point( random ), range( random, 0.1, 2.0 ) ) );
+
+                centre  += items[at].a * items[at].weight;
+                weights += items[at].weight;
+            }
+
+            centre /= weights;
+
+            run.add( query, items.ToArray( ) );
+
+            errors.Add( items.Sum( ( item ) => item.weight * math.distancesq( query, item.a ) ) );
+            centres.Add( centre );
+            least.Add( items.Sum( ( item ) => item.weight * math.distancesq( centre, item.a ) ) );
+        }
+
+        run.run( );
+
+        for( var index = 0; index < errors.Count; ++index ) {
+            assertClose( errors[index], run.errors[index], 1e-12, $"sum of the squared distances to the points of case {index}" );
+
+            Assert.IsTrue( run.solved[index], $"case {index} has a best point" );
+
+            assertClose( centres[index], run.best[index],       1e-12, $"best point of case {index}" );
+            assertClose( least[index],   run.bestErrors[index], 1e-12, $"error at the best point of case {index}" );
+        }
     }
 
     // Garland and Heckbert, section 6: the plane added for a triangle of an edge that is to keep its shape runs through
@@ -863,6 +918,10 @@ public class BurstQuadricTest {
             assertClose( expected[index].target, run.targets[index], 1e-9, $"{expected[index].what}, quadric {index}: where the vertex goes" );
 
             Assert.AreEqual( expected[index].cost, run.targetCosts[index], 1e-12, $"{expected[index].what}, quadric {index}: what the collapse costs" );
+
+            // only the first of the five kinds has a point of least error, and targetOf says so
+            Assert.AreEqual( index % 5 == 0, run.solved[index],      $"{expected[index].what}, quadric {index}: has a best point" );
+            Assert.AreEqual( index % 5 == 0, run.targetsBest[index], $"{expected[index].what}, quadric {index}: the vertex goes to a best point" );
         }
     }
 

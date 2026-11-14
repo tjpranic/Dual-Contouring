@@ -471,6 +471,7 @@ MonoBehaviour:
   _vertexNormals: 1
   meshSimplification: 0
   simplificationError: 0.05
+  lineQuadricWeight: 0.00001
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -513,6 +514,7 @@ MonoBehaviour:
   _vertexNormals: 1
   meshSimplification: 0
   simplificationError: 0.05
+  lineQuadricWeight: 0.00001
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -556,6 +558,7 @@ MonoBehaviour:
   _vertexNormals: 1
   meshSimplification: 0
   simplificationError: 0.05
+  lineQuadricWeight: 0.00001
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -678,6 +681,7 @@ MonoBehaviour:
   _vertexNormals: 1
   meshSimplification: 0
   simplificationError: 0.05
+  lineQuadricWeight: 0.00001
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}

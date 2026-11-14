@@ -141,8 +141,16 @@ public class MeshSimplificationTest : TopologyTest {
         return voxelizer;
     }
 
-    private Mesh simplify( Mesh mesh, Voxelizer voxelizer, double errorInCells ) {
-        var simplified = BurstMeshSimplifier.simplify( mesh, errorInCells * voxelizer.cellSize, out _ );
+    // the weight of the line quadrics that a voxelizer starts out with (VoxelizerDefaultsTest), and one far above it
+    private const double defaultWeight = 1e-5;
+    private const double heavyWeight   = 1e-2;
+
+    private Mesh simplify( Mesh mesh, Voxelizer voxelizer, double errorInCells, double lineWeight ) {
+        return this.simplify( mesh, voxelizer, errorInCells, lineWeight, out _ );
+    }
+
+    private Mesh simplify( Mesh mesh, Voxelizer voxelizer, double errorInCells, double lineWeight, out BurstMeshSimplifier.Statistics statistics ) {
+        var simplified = BurstMeshSimplifier.simplify( mesh, errorInCells * voxelizer.cellSize, lineWeight, out statistics );
 
         this.meshes.Add( simplified );
 
@@ -151,6 +159,25 @@ public class MeshSimplificationTest : TopologyTest {
 
     private static int triangleCountOf( Mesh mesh ) {
         return Enumerable.Range( 0, mesh.subMeshCount ).Sum( ( subMesh ) => ( int )mesh.GetIndexCount( subMesh ) / 3 );
+    }
+
+    // the mean over the triangles of a mesh of the smallest angle of each, in degrees
+    private static double meanSmallestAngleOf( Mesh mesh ) {
+        var positions = mesh.vertices;
+        var indices   = mesh.triangles;
+        var sum       = 0.0;
+
+        for( var index = 0; index < indices.Length; index += 3 ) {
+            var smallest = 180.0f;
+
+            for( var corner = 0; corner < 3; ++corner ) {
+                var at = positions[indices[index + corner]];
+
+                smallest = Mathf.Min( smallest, Vector3.Angle( positions[indices[index + ( ( corner + 1 ) % 3 )]] - at, positions[indices[index + ( ( corner + 2 ) % 3 )]] - at ) );
+            }
+            sum += smallest;
+        }
+        return sum / ( indices.Length / 3 );
     }
 
     // the smallest area of the triangles of a mesh
@@ -211,13 +238,14 @@ public class MeshSimplificationTest : TopologyTest {
     public void polyhedronBecomesItsCornersAndFaces(
         [Values] Exact algorithm,
         [Values( DensityFunction.Type.Pyramid, DensityFunction.Type.Octahedron, DensityFunction.Type.HexagonalPrism )] DensityFunction.Type type,
-        [Values( 5, 6 )] int cellsExponent
+        [Values( 5, 6 )] int cellsExponent,
+        [Values( 0.0, defaultWeight )] double lineWeight
     ) {
         var extents   = ShapeContourTest.extentsOf( type );
         var shape     = new Shape( type, ShapeContourTest.center, extents, Combination.Union, MaterialIndex.Material0 );
         var voxelizer = this.voxelizerOf( contourOf( algorithm ), new[] { shape }, cellsExponent );
 
-        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, 0.1 );
+        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, 0.1, lineWeight );
         var corners    = ShapeDistanceTest.polyhedronOf( type, extents ).corners;
 
         this.assertVerticesAreTheCorners( simplified, voxelizer.GetComponentsInChildren<Volume>( )[0], corners, voxelizer.cellSize, ( float )( distanceFactor * 0.1 ), $"{type}" );
@@ -238,13 +266,14 @@ public class MeshSimplificationTest : TopologyTest {
     [Test]
     public void cuboidBecomesEightVerticesAndTwelveTriangles(
         [Values( Contour.UniformBurst, Contour.AdaptiveBurst, Contour.ManifoldBurst, Contour.OccupancyBurst, Contour.UniformGPU, Contour.OccupancyGPU, Contour.UniformManaged )] Contour contour,
-        [Values( 0.01, 0.1 )] double error
+        [Values( 0.01, 0.1 )] double error,
+        [Values( 0.0, defaultWeight )] double lineWeight
     ) {
         var extents   = new Vector3( 0.25f, 0.2f, 0.3f );
         var shape     = cuboid( ShapeContourTest.center, extents );
         var voxelizer = this.voxelizerOf( contour, new[] { shape }, isManaged( contour ) ? 4 : 5 );
 
-        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, error );
+        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, error, lineWeight );
 
         var corners = Enumerable.Range( 0, 8 ).Select(
             ( corner ) => new Vector3( ( corner & 1 ) == 0 ? -extents.x : extents.x, ( corner & 2 ) == 0 ? -extents.y : extents.y, ( corner & 4 ) == 0 ? -extents.z : extents.z )
@@ -259,9 +288,9 @@ public class MeshSimplificationTest : TopologyTest {
     // around it, straight on each face. Its simplest mesh has the eight corners and the eight points where the lines
     // cross the edges of the cuboid, and the lines stay where the band begins and ends
     [Test]
-    public void cuboidOfTwoMaterialsKeepsTheLinesBetweenThem( [Values] Exact algorithm, [Values( 5, 6 )] int cellsExponent ) {
+    public void cuboidOfTwoMaterialsKeepsTheLinesBetweenThem( [Values] Exact algorithm, [Values( 5, 6 )] int cellsExponent, [Values( 0.0, defaultWeight )] double lineWeight ) {
         var voxelizer  = this.voxelizerOf( contourOf( algorithm ), slabWithBand, cellsExponent );
-        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, 0.1 );
+        var simplified = this.simplify( this.voxelize( voxelizer ).mesh, voxelizer, 0.1, lineWeight );
         var cell       = voxelizer.cellSize;
 
         Assert.AreEqual( 16, simplified.vertexCount,          "vertices" );
@@ -321,10 +350,15 @@ public class MeshSimplificationTest : TopologyTest {
     // bound by itself for that reason (BurstMeshSimplifier.QuadricsJob), and the circle stays a circle: its vertices
     // and the middles of its edges are within the same few errors of it as vertices are of a curved surface
     [Test]
-    public void roundLineOnAFlatFaceStaysRound( [Values( Contour.UniformBurst, Contour.ManifoldBurst )] Contour contour, [Values( 5, 6 )] int cellsExponent, [Values( 0.05, 0.25 )] double error ) {
+    public void roundLineOnAFlatFaceStaysRound(
+        [Values( Contour.UniformBurst, Contour.ManifoldBurst )] Contour contour,
+        [Values( 5, 6 )] int cellsExponent,
+        [Values( 0.05, 0.25 )] double error,
+        [Values( 0.0, defaultWeight, heavyWeight )] double lineWeight
+    ) {
         var voxelizer  = this.voxelizerOf( contour, slabWithDisc, cellsExponent );
         var mesh       = this.voxelize( voxelizer ).mesh;
-        var simplified = this.simplify( mesh, voxelizer, error );
+        var simplified = this.simplify( mesh, voxelizer, error, lineWeight );
         var cell       = voxelizer.cellSize;
 
         var line      = edgesBetweenSubMeshes( simplified );
@@ -347,9 +381,10 @@ public class MeshSimplificationTest : TopologyTest {
 
     // the simplified mesh of every contour has the pieces, the handles and the lines of the contour: BurstMeshSimplifierTest
     // .shapeOf says what those are. It has no triangle without area, uses every vertex it has, and a larger error
-    // leaves no more triangles than a smaller one
+    // leaves no more triangles than a smaller one. All of that at any weight of the line quadrics, which changes the
+    // order of the collapses and where their vertices go
     [Test]
-    public void simplifiedContourHasTheShapeOfTheContour( [Values] Contour contour, [Values] Surface surface ) {
+    public void simplifiedContourHasTheShapeOfTheContour( [Values] Contour contour, [Values] Surface surface, [Values( 0.0, defaultWeight, heavyWeight )] double lineWeight ) {
         var voxelizer = this.voxelizerOf( contour, shapesOf( surface ), isManaged( contour ) ? 4 : 5 );
         var mesh      = this.voxelize( voxelizer ).mesh;
 
@@ -361,7 +396,7 @@ public class MeshSimplificationTest : TopologyTest {
         var previous = triangleCountOf( mesh );
 
         foreach( var error in errors ) {
-            var simplified = this.simplify( mesh, voxelizer, error );
+            var simplified = this.simplify( mesh, voxelizer, error, lineWeight );
             var triangles  = triangleCountOf( simplified );
             var what       = $"at an error of {error}, {mesh.vertexCount} vertices and {triangleCountOf( mesh )} triangles became {simplified.vertexCount} and {triangles}";
 
@@ -382,15 +417,14 @@ public class MeshSimplificationTest : TopologyTest {
     // every edge of a flat face along the grid costs exactly nothing. Of edges that cost the same the one whose ends
     // stand for less area is collapsed first, so the vertices of the face take their neighbours in turn. Going by the
     // order of the edges alone, one vertex takes its neighbours one after another and has much of the face around it
-    // for most of the run, with every one of its edges worked out again at each collapse
+    // for most of the run, with every one of its edges worked out again at each collapse. That is without line
+    // quadrics. With them a collapse costs more the more its vertex stands for, and the same follows from the costs
     [Test]
-    public void flatFaceIsNotGatheredAroundOneVertex( [Values( 5, 6 )] int cellsExponent ) {
+    public void flatFaceIsNotGatheredAroundOneVertex( [Values( 5, 6 )] int cellsExponent, [Values( 0.0, defaultWeight )] double lineWeight ) {
         var voxelizer = this.voxelizerOf( Contour.UniformBurst, new[] { cube( ShapeContourTest.center, 0.3f ) }, cellsExponent );
         var mesh      = this.voxelize( voxelizer ).mesh;
 
-        var simplified = BurstMeshSimplifier.simplify( mesh, 0.05 * voxelizer.cellSize, out var statistics );
-
-        this.meshes.Add( simplified );
+        var simplified = this.simplify( mesh, voxelizer, 0.05, lineWeight, out var statistics );
 
         Assert.AreEqual( 8, simplified.vertexCount, "vertices" );
 
@@ -401,14 +435,64 @@ public class MeshSimplificationTest : TopologyTest {
         Assert.LessOrEqual( each, 12.0, "edges worked out again for each collapse" );
     }
 
-    // the same mesh simplifies the same way every time
+    // ---- line quadrics ----
+
+    // the planes of a flat face do not say where on it a vertex goes, and those of a straight edge not where along it:
+    // without line quadrics most edges of a model with flat faces have no point of least error, and their vertices go
+    // to the middle or an end of the edge (BurstMeshSimplifier.targetOf). With line quadrics every edge has such a
+    // point (Liu et al., section 4.2), on flat faces, on faces that are flat to within rounding, and on round ones
     [Test]
-    public void simplifyingTwiceGivesTheSameMesh( [Values( Contour.UniformBurst, Contour.OccupancyBurst, Contour.ManifoldClustered )] Contour contour, [Values( Surface.ThreeBalls, Surface.CubesAndSphere, Surface.NewShapes )] Surface surface ) {
+    public void withLineQuadricsEveryEdgeHasAPointOfLeastError(
+        [Values( Contour.UniformBurst, Contour.OccupancyBurst, Contour.ManifoldClustered )] Contour contour,
+        [Values( Surface.CubesAndSphere, Surface.SlabWithBand, Surface.TurnedShapes, Surface.ThreeBalls )] Surface surface
+    ) {
         var voxelizer = this.voxelizerOf( contour, shapesOf( surface ), 5 );
         var mesh      = this.voxelize( voxelizer ).mesh;
 
-        var first  = this.simplify( mesh, voxelizer, 0.1 );
-        var second = this.simplify( mesh, voxelizer, 0.1 );
+        this.simplify( mesh, voxelizer, 0.05, defaultWeight, out var with );
+
+        Assert.Greater( with.evaluations, mesh.vertexCount / 4, "edges worked out again with line quadrics" );
+        Assert.AreEqual( 0, with.withoutBestPoint, "edges without a point of least error with line quadrics" );
+
+        // the slab is flat all over, and the contour of a uniform grid has all of its faces
+        if( surface == Surface.SlabWithBand && contour != Contour.ManifoldClustered ) {
+            this.simplify( mesh, voxelizer, 0.05, 0.0, out var without );
+
+            Assert.Greater( without.withoutBestPoint, without.evaluations / 2, $"edges without a point of least error without line quadrics, of {without.evaluations}" );
+        }
+    }
+
+    // Liu et al., figure 4: a higher weight holds every vertex nearer to where the vertices it stands for were, which
+    // spreads the vertices more evenly and gives triangles that are less thin. It also moves vertices off the planes
+    // of their triangles, so fewer collapses stay within the error and more triangles are left. A flat face with a
+    // round line on it shows both: without the weight no vertex is left inside the face, and it is all thin triangles
+    // from one side of the line to the other
+    [Test]
+    public void higherLineWeightEvensOutTheTriangles( [Values( 5, 6 )] int cellsExponent ) {
+        var voxelizer = this.voxelizerOf( Contour.UniformBurst, slabWithDisc, cellsExponent );
+        var mesh      = this.voxelize( voxelizer ).mesh;
+
+        var light = this.simplify( mesh, voxelizer, 0.05, defaultWeight );
+        var heavy = this.simplify( mesh, voxelizer, 0.05, heavyWeight );
+
+        Debug.Log( $"{1 << cellsExponent}: {triangleCountOf( light )} triangles with a mean smallest angle of {meanSmallestAngleOf( light ):F1} at {defaultWeight}, {triangleCountOf( heavy )} with {meanSmallestAngleOf( heavy ):F1} at {heavyWeight}" );
+
+        Assert.Greater( meanSmallestAngleOf( heavy ), meanSmallestAngleOf( light ) * 1.2, "mean smallest angle at the higher weight, against 1.2 times that at the lower" );
+        Assert.Greater( triangleCountOf( heavy ), triangleCountOf( light ), "triangles at the higher weight" );
+    }
+
+    // the same mesh simplifies the same way every time
+    [Test]
+    public void simplifyingTwiceGivesTheSameMesh(
+        [Values( Contour.UniformBurst, Contour.OccupancyBurst, Contour.ManifoldClustered )] Contour contour,
+        [Values( Surface.ThreeBalls, Surface.CubesAndSphere, Surface.NewShapes )] Surface surface,
+        [Values( 0.0, defaultWeight )] double lineWeight
+    ) {
+        var voxelizer = this.voxelizerOf( contour, shapesOf( surface ), 5 );
+        var mesh      = this.voxelize( voxelizer ).mesh;
+
+        var first  = this.simplify( mesh, voxelizer, 0.1, lineWeight );
+        var second = this.simplify( mesh, voxelizer, 0.1, lineWeight );
 
         Assert.Less( first.vertexCount, mesh.vertexCount, "vertices" );
 
@@ -444,7 +528,8 @@ public class MeshSimplificationTest : TopologyTest {
     public void simplifiedVerticesStayNearTheShape(
         [Values( Contour.UniformBurst, Contour.ManifoldBurst, Contour.OccupancyBurst )] Contour contour,
         [ValueSource( nameof( types ) )] DensityFunction.Type type,
-        [Values] ShapeContourTest.Turn turn
+        [Values] ShapeContourTest.Turn turn,
+        [Values( 0.0, defaultWeight )] double lineWeight
     ) {
         var extents   = type == DensityFunction.Type.Ellipsoid ? Vector3.one * 0.3f : ShapeContourTest.extentsOf( type );
         var shape     = new Shape( type, ShapeContourTest.center, ShapeContourTest.rotationOf( turn ), extents, Combination.Union, MaterialIndex.Material0 );
@@ -460,7 +545,7 @@ public class MeshSimplificationTest : TopologyTest {
         var contourDistance = furthest( mesh );
 
         foreach( var error in new[] { 0.05, 0.1, 0.25 } ) {
-            var simplified = this.simplify( mesh, voxelizer, error );
+            var simplified = this.simplify( mesh, voxelizer, error, lineWeight );
             var distance   = furthest( simplified );
 
             Assert.LessOrEqual(

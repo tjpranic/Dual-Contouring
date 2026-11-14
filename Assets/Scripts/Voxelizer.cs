@@ -106,6 +106,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     [Tooltip( "How far a collapse may leave a vertex from the surface it stands for, as a root mean square distance in cells" ), Min( 0.0f )]
     public float simplificationError = 0.05f;
 
+    [Tooltip( "How much every vertex is held to the line through it along the normal of its triangles, against the planes of those triangles. A little settles where the vertices of flat regions go and in which order. More evens out the triangles and leaves more of them" ), Min( 0.0f )]
+    public float lineQuadricWeight = 1e-5f;
+
     // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
     [Header( "Wireframe" )]
 
@@ -311,7 +314,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         if( this.meshSimplification && mesh.vertexCount > 0 ) {
             simplifyMarker.Begin( );
 
-            var simplified = BurstMeshSimplifier.simplify( mesh, this.simplificationError * this.cellSize, out _ );
+            var simplified = BurstMeshSimplifier.simplify( mesh, this.simplificationError * this.cellSize, this.lineQuadricWeight, out _ );
 
             destroy( mesh );
 

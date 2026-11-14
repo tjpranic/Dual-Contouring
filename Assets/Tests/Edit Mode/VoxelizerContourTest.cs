@@ -354,7 +354,7 @@ public class VoxelizerContourTest : TopologyTest {
 
         // voxelize gives what contour simplifies
         var contour    = this.voxelize( voxelizer ).mesh;
-        var simplified = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, out var simplification );
+        var simplified = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, voxelizer.lineQuadricWeight, out var simplification );
 
         try {
             Assert.Greater( simplification.collapses, contour.vertexCount / 2, "collapses" );
@@ -377,6 +377,32 @@ public class VoxelizerContourTest : TopologyTest {
         }
         finally {
             Object.DestroyImmediate( simplified );
+        }
+    }
+
+    // the weight of the line quadrics is the voxelizer's: with one far above what it starts out with, the mesh is the
+    // one the simplifier gives at that weight and not the one it gives otherwise
+    [Test]
+    public void lineQuadricWeightIsTheVoxelizers( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm ) {
+        var voxelizer = this.createSimplifying( new( algorithm, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ) );
+        var usual     = voxelizer.lineQuadricWeight;
+
+        voxelizer.lineQuadricWeight = 0.05f;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var contour  = this.voxelize( voxelizer ).mesh;
+        var expected = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, 0.05f, out _ );
+        var other    = BurstMeshSimplifier.simplify( contour, simplificationError * voxelizer.cellSize, usual, out _ );
+
+        try {
+            assertSameTriangles( expected, shown( voxelizer ) );
+
+            Assert.AreNotEqual( triangleCountOf( other ), triangleCountOf( expected ), "triangles at the two weights" );
+        }
+        finally {
+            Object.DestroyImmediate( expected );
+            Object.DestroyImmediate( other );
         }
     }
 

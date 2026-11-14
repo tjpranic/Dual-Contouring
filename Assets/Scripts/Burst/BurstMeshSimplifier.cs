@@ -72,6 +72,7 @@ public static class BurstMeshSimplifier {
         public NativeArray<BurstQuadric> planes;       // the planes of those triangles, each weighted by that third
         public NativeArray<double>       sharpAreas;   // the same thirds, of the triangles of its sharp edges alone
         public NativeArray<BurstQuadric> sharpPlanes;  // the planes that hold those sharp edges in place (QuadricsJob)
+        public NativeArray<BurstQuadric> lines;        // the lines of the vertices it stands for (QuadricsJob)
         public NativeArray<int>          firstCorners;
         public NativeArray<int>          firstEdges;
         public NativeArray<byte>         orders;       // the order of Dey et al., section 3: 0, 1 or 2
@@ -112,6 +113,7 @@ public static class BurstMeshSimplifier {
             this.planes        = new NativeArray<BurstQuadric> ( vertexCount, allocator );
             this.sharpAreas    = new NativeArray<double>       ( vertexCount, allocator );
             this.sharpPlanes   = new NativeArray<BurstQuadric> ( vertexCount, allocator );
+            this.lines         = new NativeArray<BurstQuadric> ( vertexCount, allocator );
             this.firstCorners  = new NativeArray<int>          ( vertexCount, allocator );
             this.firstEdges    = new NativeArray<int>          ( vertexCount, allocator );
             this.orders        = new NativeArray<byte>         ( vertexCount, allocator );
@@ -145,6 +147,7 @@ public static class BurstMeshSimplifier {
             this.planes.Dispose( );
             this.sharpAreas.Dispose( );
             this.sharpPlanes.Dispose( );
+            this.lines.Dispose( );
             this.firstCorners.Dispose( );
             this.firstEdges.Dispose( );
             this.orders.Dispose( );
@@ -464,8 +467,8 @@ public static class BurstMeshSimplifier {
         }
 
         // the quadrics and the areas of every vertex, one after the other
-        public void buildQuadrics( ) {
-            var job = this.quadricsJob( );
+        public void buildQuadrics( double lineWeight ) {
+            var job = this.quadricsJob( lineWeight );
 
             for( var vertex = 0; vertex < this.vertexCount; ++vertex ) {
                 job.Execute( vertex );
@@ -473,8 +476,9 @@ public static class BurstMeshSimplifier {
         }
 
         // the job that works out the quadrics and the areas of the vertices
-        public QuadricsJob quadricsJob( ) {
+        public QuadricsJob quadricsJob( double lineWeight ) {
             return new QuadricsJob {
+                lineWeight   = lineWeight,
                 positions    = this.positions,
                 triangles    = this.triangles,
                 firstCorners = this.firstCorners,
@@ -486,7 +490,8 @@ public static class BurstMeshSimplifier {
                 planes       = this.planes,
                 areas        = this.areas,
                 sharpPlanes  = this.sharpPlanes,
-                sharpAreas   = this.sharpAreas
+                sharpAreas   = this.sharpAreas,
+                lines        = this.lines
             };
         }
 
@@ -758,6 +763,8 @@ public static class BurstMeshSimplifier {
             this.sharpAreas[kept]  += this.sharpAreas[removed];
             this.sharpPlanes[kept] += this.sharpPlanes[removed];
 
+            this.lines[kept] += this.lines[removed];
+
             this.sharpCounts[removed] = 0;
             this.orders[removed]      = 0;
 
@@ -837,16 +844,27 @@ public static class BurstMeshSimplifier {
     // little: from 0.1 to 100 the lines between materials come out the same to within a few edges
     public const double SharpWeight = 1.0;
 
-    // the two quadrics of a vertex, and the areas they are means over.
+    // what the point that stands in for a line weighs (Liu et al., section 4.2), times the area of its vertex
+    public const double PointWeight = 1e-6;
+
+    // the three quadrics of a vertex, and the areas the first two are means over.
     // - The planes of its triangles, each weighted by a third of the triangle's area, and the sum of those thirds
     //   (Liu et al., equation 8).
     // - For every sharp edge of the vertex and every triangle of that edge, the plane through the edge that is square
     //   to the triangle (Garland and Heckbert, section 6), weighted by the same third, and the sum of those.
-    // The two are kept apart because an error bound that is a distance has to divide each by its own area. A vertex
-    // of a line across a flat face comes to stand for a great deal of the face, where every collapse costs nothing,
-    // and for very little line. Divided by all of that area, no error of the line would ever be over the bound
+    // - Its line: the squared distance to the line through the vertex along the normal of its triangles, which is
+    //   the sum of their normals weighted by area (Liu et al., equations 12 to 15), times the line weight and the
+    //   area of the vertex (equation 16). A vertex whose triangles' normals cancel has no line, and gets the squared
+    //   distance to itself with a weight that is next to nothing. At a line weight of zero a vertex has neither.
+    // The first two are kept apart because an error bound that is a distance has to divide each by its own area. A
+    // vertex of a line across a flat face comes to stand for a great deal of the face, where every collapse costs
+    // nothing, and for very little line. Divided by all of that area, no error of the line would ever be over the
+    // bound. The third is kept apart because it is no distance to the surface at all, and the bound is not for it:
+    // on a flat face it grows with every collapse, and a bound on it would stop a cube short of twelve triangles
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct QuadricsJob : IJobParallelFor {
+
+        public double lineWeight;
 
         [ReadOnly] public NativeArray<double3> positions;
         [ReadOnly] public NativeArray<int3>    triangles;
@@ -861,12 +879,14 @@ public static class BurstMeshSimplifier {
         [WriteOnly] public NativeArray<double>       areas;
         [WriteOnly] public NativeArray<BurstQuadric> sharpPlanes;
         [WriteOnly] public NativeArray<double>       sharpAreas;
+        [WriteOnly] public NativeArray<BurstQuadric> lines;
 
         public void Execute( int vertex ) {
             var sum       = default( BurstQuadric );
             var area      = 0.0;
             var sharpSum  = default( BurstQuadric );
             var sharpArea = 0.0;
+            var normal    = double3.zero;
 
             for( var corner = this.firstCorners[vertex]; corner != -1; corner = this.nextCorners[corner] ) {
                 var corners = this.triangles[corner / 3];
@@ -877,6 +897,9 @@ public static class BurstMeshSimplifier {
 
                 sum  += plane * ( triangleArea / 3.0 );
                 area += triangleArea / 3.0;
+
+                // the normal of the triangle times twice its area
+                normal += math.cross( this.positions[corners.y] - this.positions[corners.x], this.positions[corners.z] - this.positions[corners.x] );
 
                 // the two edges of the triangle that the vertex is an end of
                 for( var side = 1; side <= 2; ++side ) {
@@ -894,6 +917,16 @@ public static class BurstMeshSimplifier {
             this.areas[vertex]       = area;
             this.sharpPlanes[vertex] = sharpSum;
             this.sharpAreas[vertex]  = sharpArea;
+
+            var line = default( BurstQuadric );
+
+            if( this.lineWeight > 0.0 ) {
+                line = BurstQuadric.line( this.positions[vertex], normal, out var along )
+                    ? along * ( this.lineWeight * area )
+                    : BurstQuadric.point( this.positions[vertex] ) * ( PointWeight * area );
+            }
+
+            this.lines[vertex] = line;
         }
 
         private readonly bool sharp( int vertex, int other ) {
@@ -914,12 +947,18 @@ public static class BurstMeshSimplifier {
     // does not change along the edge, the best of its middle and its ends (Garland and Heckbert, section 4). The middle
     // is taken unless an end is better by more than the error may change along an edge without having a best point on
     // it (BurstQuadric.minimizeBetween), and the first end unless the second is better by as much. On a flat face that
-    // makes it the middle whether rounding leaves the errors exactly equal or not
-    public static void targetOf( in BurstQuadric quadric, double3 first, double3 second, out double3 position, out double cost ) {
-        if( quadric.minimize( out position ) || quadric.minimizeBetween( first, second, out position ) ) {
+    // makes it the middle whether rounding leaves the errors exactly equal or not. Gives whether the quadric had a
+    // point of least error
+    public static bool targetOf( in BurstQuadric quadric, double3 first, double3 second, out double3 position, out double cost ) {
+        if( quadric.minimize( out position ) ) {
             cost = quadric.evaluate( position );
 
-            return;
+            return true;
+        }
+        if( quadric.minimizeBetween( first, second, out position ) ) {
+            cost = quadric.evaluate( position );
+
+            return false;
         }
 
         position = ( first + second ) * 0.5;
@@ -937,21 +976,26 @@ public static class BurstMeshSimplifier {
             position = second;
             cost     = atSecond;
         }
+
+        return false;
     }
 
     // an edge as the loop sees it: where its vertex would go, what collapsing it costs, and whether that is within the
-    // error bound. It is given the two quadrics of both ends together, the areas they are means over, and the ends.
-    // - The target and the cost are those of the two quadrics together, the planes of the sharp edges times their
-    //   weight (targetOf).
+    // error bound. It is given the three quadrics of both ends together, the areas they are means over, and the ends.
+    // - The target and the cost are those of the three quadrics together, the planes of the sharp edges times their
+    //   weight (targetOf): the lines are part of what a collapse costs and of where its vertex goes, as Liu et al.
+    //   have it, and no part of the bound.
     // - The limit is the largest mean squared distance that is allowed. The error of the planes of the triangles at
     //   the target, over the area the two ends stand for, is such a mean, weighted by area: the squared distance to
     //   the surface the new vertex stands for. The error of the planes of the sharp edges over their area is the
-    //   squared distance the sharp lines have moved sideways. Each has to be within the limit by itself
-    public static void evaluate(
+    //   squared distance the sharp lines have moved sideways. Each has to be within the limit by itself.
+    // Gives whether the quadrics together had a point of least error
+    public static bool evaluate(
         in BurstQuadric planes,
         double          area,
         in BurstQuadric sharpPlanes,
         double          sharpArea,
+        in BurstQuadric lines,
         double3         first,
         double3         second,
         double          limit,
@@ -959,9 +1003,11 @@ public static class BurstMeshSimplifier {
         out double      cost,
         out bool        within
     ) {
-        targetOf( planes + ( sharpPlanes * SharpWeight ), first, second, out target, out cost );
+        var best = targetOf( planes + ( sharpPlanes * SharpWeight ) + lines, first, second, out target, out cost );
 
         within = planes.evaluate( target ) <= limit * area && sharpPlanes.evaluate( target ) <= limit * sharpArea;
+
+        return best;
     }
 
     // the target and the cost of every edge, and whether it is within the error bound
@@ -975,6 +1021,7 @@ public static class BurstMeshSimplifier {
         [ReadOnly] public NativeArray<double>       areas;
         [ReadOnly] public NativeArray<BurstQuadric> sharpPlanes;
         [ReadOnly] public NativeArray<double>       sharpAreas;
+        [ReadOnly] public NativeArray<BurstQuadric> lines;
         [ReadOnly] public NativeArray<int2>         edges;
 
         [WriteOnly] public NativeArray<double3> targets;
@@ -987,7 +1034,7 @@ public static class BurstMeshSimplifier {
 
             evaluate(
                 this.planes[a] + this.planes[b], this.areas[a] + this.areas[b], this.sharpPlanes[a] + this.sharpPlanes[b], this.sharpAreas[a] + this.sharpAreas[b],
-                this.positions[a], this.positions[b], this.limit, out var target, out var cost, out var within
+                this.lines[a] + this.lines[b], this.positions[a], this.positions[b], this.limit, out var target, out var cost, out var within
             );
 
             this.targets[edge] = target;
@@ -1007,8 +1054,10 @@ public static class BurstMeshSimplifier {
         public int farCollapses;
         public int farRefusals;
 
-        // how many edges were worked out again, in all: after every collapse, the edges of the vertex it left
+        // how many edges were worked out again, in all: after every collapse, the edges of the vertex it left. And
+        // how many of those had no point of least error, so that their vertex went to a point of the edge instead
         public int evaluations;
+        public int withoutBestPoint;
 
     }
 
@@ -1031,8 +1080,8 @@ public static class BurstMeshSimplifier {
     // Garland and Heckbert's loop (section 4.1): the edge that costs least is collapsed, and the costs of the edges of
     // the vertex it leaves are worked out again, until no edge is left to collapse.
     //
-    // The edges wait in a heap, the cheapest at the top, and of two that cost the same the one with the lower index, so
-    // that the same mesh is always simplified the same way. An edge is not in the heap while its cost is over the error
+    // The edges wait in a heap, the cheapest at the top. Two that cost the same go by area and then by index (before),
+    // so that the same mesh is always simplified the same way. An edge is not in the heap while its cost is over the error
     // bound, or while check refuses it. A cost changes only with the quadric or the position of an end of the edge,
     // which is when that end is the vertex a collapse leaves. What check says can change with any collapse that leaves
     // a vertex next to an end of the edge, so the refused edges of those vertices go back into the heap
@@ -1126,10 +1175,14 @@ public static class BurstMeshSimplifier {
                     var a       = this.mesh.edges[changed].x;
                     var b       = this.mesh.edges[changed].y;
 
-                    evaluate(
+                    var best = evaluate(
                         this.mesh.planes[a] + this.mesh.planes[b], this.mesh.areas[a] + this.mesh.areas[b], this.mesh.sharpPlanes[a] + this.mesh.sharpPlanes[b], this.mesh.sharpAreas[a] + this.mesh.sharpAreas[b],
-                        this.mesh.positions[a], this.mesh.positions[b], this.limit, out var target, out var cost, out var within
+                        this.mesh.lines[a] + this.mesh.lines[b], this.mesh.positions[a], this.mesh.positions[b], this.limit, out var target, out var cost, out var within
                     );
+
+                    if( !best ) {
+                        ++statistics.withoutBestPoint;
+                    }
 
                     this.targets[changed] = target;
                     this.costs[changed]   = cost;
@@ -1307,8 +1360,9 @@ public static class BurstMeshSimplifier {
 
     // the mesh of a contour, simplified: a new mesh with the same sub-meshes, and vertices with normals that its
     // triangles share. The error is how far a collapse may leave a vertex from the planes of the surface it stands
-    // for, as a root mean square distance in the units of the mesh
-    public static Mesh simplify( Mesh mesh, double error, out Statistics statistics ) {
+    // for, as a root mean square distance in the units of the mesh. The line weight is that of the lines of the
+    // vertices against the planes of their triangles (QuadricsJob), which has no unit
+    public static Mesh simplify( Mesh mesh, double error, double lineWeight, out Statistics statistics ) {
         var triangleCount = 0;
 
         for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
@@ -1330,10 +1384,10 @@ public static class BurstMeshSimplifier {
             }.Run( );
         }
 
-        return simplify( positions, normals, triangles, error, out statistics );
+        return simplify( positions, normals, triangles, error, lineWeight, out statistics );
     }
 
-    public static Mesh simplify( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, double error, out Statistics statistics ) {
+    public static Mesh simplify( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, double error, double lineWeight, out Statistics statistics ) {
         using var connectivity = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
 
         using( buildMarker.Auto( ) ) {
@@ -1346,7 +1400,7 @@ public static class BurstMeshSimplifier {
         }
 
         using( quadricsMarker.Auto( ) ) {
-            connectivity.quadricsJob( ).Schedule( connectivity.vertexCount, vertexBatch ).Complete( );
+            connectivity.quadricsJob( lineWeight ).Schedule( connectivity.vertexCount, vertexBatch ).Complete( );
         }
 
         using var targets            = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
@@ -1368,6 +1422,7 @@ public static class BurstMeshSimplifier {
                 areas       = connectivity.areas,
                 sharpPlanes = connectivity.sharpPlanes,
                 sharpAreas  = connectivity.sharpAreas,
+                lines       = connectivity.lines,
                 edges       = connectivity.edges.AsArray( ),
                 targets     = targets,
                 costs       = costs,

@@ -279,7 +279,7 @@ public class ContouringPerformanceTest : TopologyTest {
 
                 var simplifying = Stopwatch.StartNew( );
 
-                var simplified = BurstMeshSimplifier.simplify( mesh, error, out _ );
+                var simplified = BurstMeshSimplifier.simplify( mesh, error, voxelizer.lineQuadricWeight, out _ );
 
                 simplifying.Stop( );
 

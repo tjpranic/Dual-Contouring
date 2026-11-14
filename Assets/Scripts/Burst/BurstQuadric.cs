@@ -111,6 +111,18 @@ public struct BurstQuadric {
         return true;
     }
 
+    // the squared distance to the point, which stands in for the line of a vertex that has no normal to run a line
+    // along (Liu et al., section 4.2)
+    public static BurstQuadric point( double3 point ) {
+        return new BurstQuadric {
+            a00 = 1.0,
+            a11 = 1.0,
+            a22 = 1.0,
+            b   = -point,
+            c   = math.dot( point, point )
+        };
+    }
+
     // the quadric whose error is the sum of the two errors (Garland and Heckbert, section 4)
     public static BurstQuadric operator +( in BurstQuadric quadric, in BurstQuadric other ) {
         return new BurstQuadric {

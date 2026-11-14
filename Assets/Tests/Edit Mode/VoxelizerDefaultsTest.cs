@@ -21,6 +21,7 @@ public class VoxelizerDefaultsTest {
 
             Assert.IsFalse( voxelizer.meshSimplification, "mesh simplification" );
             Assert.AreEqual( 0.05f, voxelizer.simplificationError, "simplification error" );
+            Assert.AreEqual( 1e-5f, voxelizer.lineQuadricWeight,   "line quadric weight" );
 
             Assert.AreEqual( Wireframe.Look.Off, voxelizer.wireframe,          "wireframe" );
             Assert.AreEqual( 1.0f,               voxelizer.wireframeLineWidth, "wireframe line width" );
