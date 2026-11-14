@@ -171,6 +171,28 @@ public class RemeshSchedulerTest {
         Assert.AreEqual( State.Due, scheduler.update( 1.02, "C", automatic, active ), "still fast enough for changes that keep coming" );
     }
 
+    // what a mesh was made from can be lost while the mesh is still shown. It is then of nothing, and is contoured
+    // again by the rules for any change: at once where that is allowed, since nothing has changed lately
+    [Test]
+    public void aMeshThatIsOfNothingAnyMoreIsContouredAgain( ) {
+        var scheduler = showing( 0.2 );
+
+        Assert.AreEqual( State.UpToDate, scheduler.update( 5.0, "A", automatic, active ) );
+
+        scheduler.invalidate( );
+
+        Assert.AreEqual( State.Due, scheduler.update( 5.0, "A", automatic, active ) );
+
+        scheduler.invalidate( );
+
+        Assert.AreEqual( State.Manual,     scheduler.update( 6.0, "A", manual,    active ) );
+        Assert.AreEqual( State.Background, scheduler.update( 6.0, "A", automatic, inactive ) );
+
+        scheduler.contoured( 7.0, "A", 0.2, active );
+
+        Assert.AreEqual( State.UpToDate, scheduler.update( 8.0, "A", automatic, active ) );
+    }
+
     [Test]
     public void theDebounceIntervalCanBeSet( ) {
         var scheduler = showing( 0.2 );

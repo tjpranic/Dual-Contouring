@@ -2,7 +2,7 @@
 
 Plan written 2026-11-13 for a mesh simplifier that runs on the finished mesh of any algorithm: quadric error edge collapse, with line quadrics and a progressive record of the collapses.
 
-**Status:** steps 0 to 5 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). Step 5 (2026-11-14) added the record of collapses, **Simplification Detail** and `Voxelizer.simplify`. All seven decisions were answered as recommended on 2026-11-14. Step 6 is next.
+**Status:** steps 0 to 6 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). Step 5 (2026-11-14) added the record of collapses, **Simplification Detail** and `Voxelizer.simplify`. Step 6 (2026-11-14) taught the interactive editor the settings and added four example scenes. All seven decisions were answered as recommended on 2026-11-14. Step 7 is next.
 
 **Papers,** all in `Documents/Papers/`:
 - *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): the algorithm.
@@ -255,9 +255,34 @@ The unsimplified mesh and the record of its last contour, as a `Mesh` and manage
 - The line under **Contour** shows the sizes before and after.
 - Nothing changes in `Interactive Editor.unity`: the voxelizers in it take the defaults, which are off.
 
+As step 6 built it:
+
+- **Three signatures, not two.** Whether the mesh is simplified is part of what a contour depends on, since turning it on or off takes a contour (finding 11). The error and the line weight are what the collapses depend on, and the detail is what the mesh shown depends on beside those. With simplification off the last two are empty, and the settings do nothing.
+- **A scheduler for each,** of the same kind as the one that decides when to contour, because each kind of work takes its own time: at 128³ a simplified contour takes 290 ms, simplifying it again 260 and another detail 4. With one time for all three, a drag of the detail would wait as a drag of a shape does, or be paused after a slow contour.
+  - **The contour comes first.** While a contour is owed nothing else is looked at, and the contour brings the simplification settings with it.
+  - **Simplifying again starts from the contour's time,** which it cannot take longer than, until it has a time of its own.
+  - **The detail waits for its first change to settle,** and follows a drag after that.
+- **The managed implementations too.** They contour only when asked, because that takes seconds. Simplifying is Burst code whatever made the contour, so a new error or detail shows by itself for them as well. Turning simplification on is a contour, and waits for the button.
+- **A mesh whose contour is forgotten** is contoured again when a simplification setting changes: after a script recompile the mesh is still shown and `simplify` has nothing to make another from. A contour of nothing has nothing to simplify and counts as up to date.
+- **The inspector** says "Simplifying" for "Contouring" where that is what is due, and has a second line under the last contour: "Simplified from 52,224 vertices, 104,500 triangles". The first line keeps the time of the contour and has the sizes of what is shown now.
+- **`select`** carries the four settings over to the other algorithm's voxelizer.
+
 ### Example scenes
 
 New scenes in `Assets/Scenes/Mesh Simplification`, copies of Burst scenes with the setting on. Which ones is decided at that step, with a Uniform and an Occupancy scene, one with several materials and one with flat shading among them.
+
+As step 6 made them, each a copy of a Burst scene with simplification on at the defaults, on 64³ cells where the scene it is copied from has 8³ or 16³, and with the wireframe drawn over the surface so that the triangles show:
+
+| Scene | Copied from | Shading | Triangles |
+|---|---|---|---|
+| Uniform Sphere | Uniform, Burst, Sphere | Smooth | 38,460 to 1,888 |
+| Uniform Multiple Materials | Uniform, Burst, Multiple Materials | Flat | 24,964 to 32, sixteen of each material |
+| Occupancy CSG Operations | Occupancy, Burst, CSG Operations | Flat | 33,932 to 2,024 |
+| Uniform Half Detail | Uniform, Burst, CSG Operations | Flat | 33,932 to 17,846, at a detail of 0.5 |
+
+- **Nothing else differs** from the scenes they are copied from: the resolution, the simplification settings and the wireframe.
+- **A fifth was made and taken out again:** Manifold's Simplification scene, whose octree clusters at 0.014 and leaves 396 triangles, of which the simplifier takes 12.
+- **No existing scene was changed,** and none is in the build settings, which list no scenes.
 
 ## Tests
 
@@ -320,7 +345,14 @@ There is no second implementation to compare with, so the tests hold the simplif
   - `simplify` gives nothing in the six cases it has no simplified contour in, and leaves the mesh that is shown.
   - `contour` shows the mesh at the detail, and reports the sizes before.
   - The error stays in the cells of the kept contour after the resolution is changed.
-- **Editor:** the settings carry over in `select`; a change of detail does not contour; undo.
+- **Editor:** the settings carry over in `select`; a change of detail does not contour; undo. As step 6 built them:
+  - Whether the voxelizers contoured or simplified is read off their profiler markers, and a test holds that reading to a contour with and without simplification.
+  - A change of detail shows another mesh without a contour, for all nine variants, the managed ones among them. Its first change waits to settle and says that the simplification is what is owed. Changed back, as by an undo, it shows the first mesh again. Every material keeps its sub-mesh, and the inspector's sizes follow.
+  - A change of error or line weight simplifies again without a contour, and shows what a contour under those settings shows.
+  - Turning simplification on or off contours, and waits for the button with a managed implementation.
+  - With simplification off the other three settings do nothing.
+  - A mesh whose contour was forgotten is contoured again for another detail, and a contour of nothing is up to date at any.
+  - The signature of a contour changes with simplification on or off, and not with the error, the weight or the detail.
 - **Performance:** `ContouringPerformanceTest` gains the simplifier, by stage.
 
 ## Steps
@@ -387,7 +419,13 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **Deliberate mistakes:** 31 were tried and every one failed a test.
    - **Not done here:** the interactive editor does not call `simplify` or know the setting. That is step 6.
    - **Baselines after step 5:** edit mode 2702, play mode 21, 480 `Start` hashes unchanged.
-6. **Interactive editor and scenes (small).** The split signature, the statistics line, `select`, the editor tests, the scenes.
+6. **Interactive editor and scenes (small).** The split signature, the statistics line, `select`, the editor tests, the scenes. **Done 2026-11-14:**
+   - **Built:** in `InteractiveEditor.cs` the three signatures, a scheduler for each, `select`, and the inspector's lines; `RemeshScheduler.invalidate`; four scenes in `Assets/Scenes/Mesh Simplification` (Design).
+   - **Otherwise than planned:** three signatures and three schedulers where the plan had two signatures, and the managed implementations simplify by themselves (Design, Interactive editor).
+   - **Tests:** 35 more, in `InteractiveEditorTest` and `RemeshSchedulerTest`.
+   - **Deliberate mistakes:** 23 were tried and 21 failed a test. The two that passed were lines of the editor that did what the same update does a few lines on, and both are gone.
+   - **Not looked at:** the inspector, and the scenes on screen. Each scene was opened beside what was open, contoured, and closed again, which is where the triangle counts above are from. `Interactive Editor.unity` was open throughout and is unchanged.
+   - **Baselines after step 6:** edit mode 2737, play mode 21, 480 `Start` hashes unchanged.
 7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. From step 4: whether the vertex should be placed by the planes alone (finding 24), if large flat faces at small errors turn out to matter. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. From step 3's times: the loop is 88% of the time at 4.4 microseconds a collapse, and building the lists is 11% and serial, 26 ms at 128³, as long as the contour itself. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
 
 ## Measurements

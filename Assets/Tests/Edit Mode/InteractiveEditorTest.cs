@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using Unity.Profiling;
 using UnityEngine;
 
 using Object             = UnityEngine.Object;
@@ -193,6 +194,10 @@ public class InteractiveEditorTest {
         uniform.wireframeLineWidth          = 2.5f;
         uniform.wireframeLineColor          = Color.red;
         uniform.wireframeFillColor          = Color.blue;
+        uniform.meshSimplification          = true;
+        uniform.simplificationError         = 0.125f;
+        uniform.lineQuadricWeight           = 0.25f;
+        uniform.simplificationDetail        = 0.75f;
 
         editor.select( algorithm );
 
@@ -212,6 +217,10 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 2.5f,                                           octree.wireframeLineWidth );
         Assert.AreEqual( Color.red,                                      octree.wireframeLineColor );
         Assert.AreEqual( Color.blue,                                     octree.wireframeFillColor );
+        Assert.IsTrue( octree.meshSimplification );
+        Assert.AreEqual( 0.125f,                                         octree.simplificationError );
+        Assert.AreEqual( 0.25f,                                          octree.lineQuadricWeight );
+        Assert.AreEqual( 0.75f,                                          octree.simplificationDetail );
 
         editor.select( Algorithm.Uniform );
 
@@ -252,6 +261,10 @@ public class InteractiveEditorTest {
         other.wireframeLineWidth          = 2.5f;
         other.wireframeLineColor          = Color.red;
         other.wireframeFillColor          = Color.blue;
+        other.meshSimplification          = true;
+        other.simplificationError         = 0.125f;
+        other.lineQuadricWeight           = 0.25f;
+        other.simplificationDetail        = 0.75f;
 
         editor.select( Algorithm.Occupancy );
 
@@ -268,6 +281,10 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 2.5f,                                           occupancy.wireframeLineWidth );
         Assert.AreEqual( Color.red,                                      occupancy.wireframeLineColor );
         Assert.AreEqual( Color.blue,                                     occupancy.wireframeFillColor );
+        Assert.IsTrue( occupancy.meshSimplification );
+        Assert.AreEqual( 0.125f,                                         occupancy.simplificationError );
+        Assert.AreEqual( 0.25f,                                          occupancy.lineQuadricWeight );
+        Assert.AreEqual( 0.75f,                                          occupancy.simplificationDetail );
 
         // back, from settings that say something else
         other.resolution                  = 3;
@@ -1002,6 +1019,8 @@ public class InteractiveEditorTest {
         ["intersection"]            = ( null, ( p ) => p.editor.voxelizer.intersectionApproximation   = Approximation.LinearInterpolation ),
         ["vertex normals"]          = ( null, ( p ) => p.editor.voxelizer.vertexNormals               = VertexNormals.Split ),
         ["debug flags"]             = ( null, ( p ) => p.editor.voxelizer.debugFlags                  = Voxelizer.Debug.Corners ),
+        ["mesh simplification"]     = ( null, ( p ) => p.editor.voxelizer.meshSimplification          = true ),
+        ["mesh simplification off"] = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.meshSimplification = false ),
         ["adaptive simplification"] = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).simplification = true ),
         ["adaptive threshold"]      = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).errorThreshold = 0.5f ),
         ["adaptive topology safe"]  = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).topologySafe   = false ),
@@ -1033,6 +1052,11 @@ public class InteractiveEditorTest {
         ["wireframe"]                    = ( null, ( p ) => p.editor.voxelizer.wireframe          = Wireframe.Look.LinesOnly ),
         ["wireframe line width"]         = ( null, ( p ) => p.editor.voxelizer.wireframeLineWidth = 3.0f ),
         ["wireframe colours"]            = ( null, ( p ) => { p.editor.voxelizer.wireframeLineColor = Color.red; p.editor.voxelizer.wireframeFillColor = Color.blue; } ),
+
+        // how a contour is simplified takes no contour to change
+        ["simplification error"]         = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.simplificationError  = 0.5f ),
+        ["line quadric weight"]          = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.lineQuadricWeight    = 0.5f ),
+        ["simplification detail"]        = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.simplificationDetail = 0.5f ),
         ["renderer materials"]           = ( null, ( p ) => p.editor.GetComponent<MeshRenderer>( ).sharedMaterials = new Material[3] ),
         ["unselected voxelizer setting"] = ( null, ( p ) => ( p.editor.voxelizerOf( Algorithm.Adaptive ) as AdaptiveDualContouring ).errorThreshold = 0.5f ),
         ["unselected voxelizer resolution"] = ( null, ( p ) => p.editor.voxelizerOf( Algorithm.Manifold ).resolution = 7 ),
@@ -1224,6 +1248,369 @@ public class InteractiveEditorTest {
 
         Assert.AreSame( mesh, shown( editor ) );
         Assert.AreEqual( 3, mesh.subMeshCount );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // ---- mesh simplification ----
+
+    // the starter model on 32 cells or leaves across, simplified far enough to lose most of its triangles
+    private InteractiveEditor createSimplifying( Variant variant ) {
+        var editor = configure( this.createEditor( 5.0f ), variant );
+
+        addStarterModel( editor.transform );
+
+        editor.voxelizer.resolution         += 1;
+        editor.voxelizer.meshSimplification  = true;
+        editor.voxelizer.simplificationError = 0.25f;
+
+        return editor;
+    }
+
+    private static int triangleCountOf( Mesh mesh ) {
+        return Enumerable.Range( 0, mesh.subMeshCount ).Sum( ( subMesh ) => ( int )mesh.GetIndexCount( subMesh ) / 3 );
+    }
+
+    // what the voxelizers have done since this was made, from their profiler markers: a voxelizer that contours
+    // spends time in the first, and one that simplifies, in a contour or by itself, in the second
+    private sealed class Work : IDisposable {
+
+        private ProfilerRecorder voxelizing = new( "Voxelizer.Voxelize", 1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
+        private ProfilerRecorder simplifying = new( "Voxelizer.Simplify", 1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
+
+        private readonly long voxelizingBefore;
+        private readonly long simplifyingBefore;
+
+        public Work( ) {
+            this.voxelizingBefore  = this.voxelizing.CurrentValue;
+            this.simplifyingBefore = this.simplifying.CurrentValue;
+        }
+
+        public bool contoured {
+            get { return this.voxelizing.CurrentValue != this.voxelizingBefore; }
+        }
+
+        public bool simplified {
+            get { return this.simplifying.CurrentValue != this.simplifyingBefore; }
+        }
+
+        public void Dispose( ) {
+            this.voxelizing.Dispose( );
+            this.simplifying.Dispose( );
+        }
+
+    }
+
+    // the test of the tests above: a contour shows as one, and one that is simplified as both
+    [Test]
+    public void aContourShowsInTheWorkOfTheVoxelizers( ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        using( var work = new Work( ) ) {
+            Assert.IsFalse( work.contoured,  "contoured before anything was" );
+            Assert.IsFalse( work.simplified, "simplified before anything was" );
+
+            editor.contour( );
+
+            Assert.IsTrue( work.contoured,  "contoured" );
+            Assert.IsTrue( work.simplified, "simplified" );
+        }
+
+        editor.voxelizer.meshSimplification = false;
+
+        using( var work = new Work( ) ) {
+            editor.contour( );
+
+            Assert.IsTrue( work.contoured,   "contoured" );
+            Assert.IsFalse( work.simplified, "simplified with simplification off" );
+        }
+    }
+
+    // the detail picks a mesh between the simplest and the contour, which the voxelizer has from what it kept of its
+    // last contour. The editor shows it by itself, for every implementation, the managed ones too, and does not
+    // contour for it
+    [Test]
+    public void aChangeOfDetailShowsAnotherMeshWithoutContouring( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = this.createSimplifying( variant );
+
+        // a material more than the shapes use, which needs a sub-mesh in every mesh that is shown
+        this.giveMaterials( editor, 3 );
+
+        this.time = 0.0;
+
+        var contour  = editor.contour( );
+        var simplest = shown( editor );
+        var count    = triangleCountOf( simplest );
+
+        Assert.Less( count, contour.unsimplifiedTriangleCount.Value / 2, "triangles of the simplest mesh, against the contour's" );
+
+        using var work = new Work( );
+
+        editor.voxelizer.simplificationDetail = 0.5f;
+
+        // the first change waits to settle, as a change of the shapes does, and says what it is waiting for
+        this.tickAt( editor, 1.0 );
+
+        Assert.AreEqual( RemeshScheduler.State.Waiting, editor.state );
+        Assert.IsTrue( editor.stateIsOfSimplification, "the simplification is what is owed" );
+        Assert.AreSame( simplest, shown( editor ) );
+
+        this.tickAt( editor, 1.0 + editor.debounce );
+
+        Assert.IsFalse( work.contoured,  "contoured" );
+        Assert.IsTrue( work.simplified, "simplified" );
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+        Assert.IsFalse( editor.stateIsOfSimplification, "something about the simplification is still owed" );
+
+        Assert.IsTrue( simplest == null, "the simplest mesh is still there" );
+
+        var half = triangleCountOf( shown( editor ) );
+
+        Assert.Greater( half, count * 2,                              "triangles at a detail of 0.5, against the simplest" );
+        Assert.Less( half, contour.unsimplifiedTriangleCount.Value, "triangles at a detail of 0.5, against the contour's" );
+
+        // the inspector's line has the sizes of what is shown now, and the time of the contour
+        Assert.AreEqual( half,                              editor.lastContour.Value.triangleCount,             "triangles reported" );
+        Assert.AreEqual( shown( editor ).vertexCount,       editor.lastContour.Value.vertexCount,               "vertices reported" );
+        Assert.AreEqual( contour.unsimplifiedTriangleCount, editor.lastContour.Value.unsimplifiedTriangleCount, "triangles before simplification reported" );
+        Assert.AreEqual( contour.milliseconds,              editor.lastContour.Value.milliseconds,              "time reported" );
+
+        Assert.AreEqual( 3, shown( editor ).subMeshCount, "sub-meshes, one for every material" );
+
+        // and back, as by an undo
+        editor.voxelizer.simplificationDetail = 0.0f;
+
+        this.tickAt( editor, 2.0, 2.0 + editor.debounce );
+
+        Assert.IsFalse( work.contoured, "contoured" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+        Assert.AreEqual( count, triangleCountOf( shown( editor ) ), "triangles at a detail of 0 again" );
+    }
+
+    // under another error or line weight the contour that is kept is simplified again, which takes no contour either.
+    // What is shown is what contouring under those settings shows
+    [Test]
+    public void aChangeOfErrorOrLineWeightSimplifiesAgainWithoutContouring(
+        [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation,
+        [Values( "error", "line weight" )] string setting
+    ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, implementation ) );
+
+        editor.voxelizer.simplificationDetail = 0.25f;
+
+        this.time = 0.0;
+        editor.contour( );
+
+        var first = MeshComparison.trianglesOf( shown( editor ) );
+
+        using( var work = new Work( ) ) {
+            if( setting == "error" ) {
+                editor.voxelizer.simplificationError = 0.05f;
+            }
+            else {
+                editor.voxelizer.lineQuadricWeight = 0.05f;
+            }
+
+            this.tickAt( editor, 1.0, 1.0 + editor.debounce );
+
+            Assert.IsFalse( work.contoured,  "contoured" );
+            Assert.IsTrue( work.simplified, "simplified" );
+        }
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+        var simplified = MeshComparison.trianglesOf( shown( editor ) );
+
+        CollectionAssert.AreNotEqual( first, simplified, "triangles under the other setting" );
+
+        // a contour under the settings as they are now shows the same
+        editor.contour( );
+
+        CollectionAssert.AreEqual( MeshComparison.trianglesOf( shown( editor ) ), simplified, "triangles, against those of a contour" );
+    }
+
+    // nothing is kept of a contour that was not simplified, so turning simplification on takes a contour, and so does
+    // turning it off. A managed implementation waits to be asked for it, as for any contour
+    [Test]
+    public void turningSimplificationOnOrOffContours( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = this.createSimplifying( variant );
+
+        editor.voxelizer.meshSimplification = false;
+
+        this.time = 0.0;
+
+        var whole = editor.contour( ).triangleCount.Value;
+        var time  = 0.0;
+
+        foreach( var on in new[] { true, false } ) {
+            using var work = new Work( );
+
+            editor.voxelizer.meshSimplification = on;
+
+            time += 10.0;
+            this.tickAt( editor, time, time + editor.debounce );
+
+            if( variant.implementation == ImplementationType.Managed ) {
+                Assert.IsFalse( work.contoured,  $"contoured by itself with simplification {( on ? "on" : "off" )}" );
+                Assert.IsFalse( work.simplified, $"simplified by itself with simplification {( on ? "on" : "off" )}" );
+                Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
+
+                editor.contour( );
+            }
+
+            Assert.IsTrue( work.contoured, $"contoured with simplification {( on ? "on" : "off" )}" );
+            Assert.AreEqual( on, work.simplified, $"simplified with simplification {( on ? "on" : "off" )}" );
+
+            this.tickAt( editor, time + 1.0 );
+
+            Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+            if( on ) {
+                Assert.Less( triangleCountOf( shown( editor ) ), whole / 2, "triangles with simplification on" );
+            }
+            else {
+                Assert.AreEqual( whole, triangleCountOf( shown( editor ) ), "triangles with simplification off again" );
+            }
+        }
+    }
+
+    // with simplification off, how a contour would be simplified changes nothing
+    [Test]
+    public void theSimplificationSettingsDoNothingWhileItIsOff( ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        editor.voxelizer.meshSimplification = false;
+
+        this.time = 0.0;
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        using var work = new Work( );
+
+        editor.voxelizer.simplificationError  = 0.01f;
+        editor.voxelizer.lineQuadricWeight    = 0.5f;
+        editor.voxelizer.simplificationDetail = 0.5f;
+
+        this.tickAt( editor, 1.0, 2.0 );
+
+        Assert.IsFalse( work.contoured,  "contoured" );
+        Assert.IsFalse( work.simplified, "simplified" );
+        Assert.AreSame( mesh, shown( editor ) );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+        Assert.AreEqual( "", editor.simplifierSignature( ), "what the collapses depend on" );
+        Assert.AreEqual( "", editor.detailSignature( ),     "what the mesh shown depends on" );
+    }
+
+    // the two signatures of how a contour is simplified: the collapses depend on the error and the line weight, and
+    // which mesh they give on the detail
+    [Test]
+    public void theSimplificationSignaturesFollowTheirSettings( ) {
+        var editor    = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Burst ) );
+        var voxelizer = editor.voxelizer;
+
+        var simplifier = editor.simplifierSignature( );
+        var detail     = editor.detailSignature( );
+
+        voxelizer.simplificationDetail = 0.5f;
+
+        Assert.AreEqual( simplifier, editor.simplifierSignature( ),    "what the collapses depend on, at another detail" );
+        Assert.AreNotEqual( detail,  editor.detailSignature( ),        "what the mesh shown depends on, at another detail" );
+
+        detail = editor.detailSignature( );
+
+        voxelizer.simplificationError = 0.5f;
+
+        Assert.AreNotEqual( simplifier, editor.simplifierSignature( ), "what the collapses depend on, under another error" );
+        Assert.AreEqual( detail,        editor.detailSignature( ),     "what the mesh shown depends on, under another error" );
+
+        simplifier = editor.simplifierSignature( );
+
+        voxelizer.lineQuadricWeight = 0.5f;
+
+        Assert.AreNotEqual( simplifier, editor.simplifierSignature( ), "what the collapses depend on, under another line weight" );
+        Assert.AreEqual( detail,        editor.detailSignature( ),     "what the mesh shown depends on, under another line weight" );
+    }
+
+    // forgets what the voxelizer kept of its last contour, as a script recompile does: the mesh stays shown
+    private static void forgetSimplification( Voxelizer voxelizer ) {
+        var kept = typeof( Voxelizer ).GetField( "simplification", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic );
+
+        Assert.IsNotNull( kept.GetValue( voxelizer ), "what the voxelizer kept of its contour" );
+
+        kept.SetValue( voxelizer, null );
+    }
+
+    // after a script recompile the mesh is still shown and what it was simplified from is gone. A change of detail
+    // then takes a contour, which a Burst implementation makes by itself and a managed one waits to be asked for
+    [Test]
+    public void aContourThatWasForgottenIsContouredAgainForAnotherDetail( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, implementation ) );
+
+        this.time = 0.0;
+        editor.contour( );
+
+        var mesh  = shown( editor );
+        var count = triangleCountOf( mesh );
+
+        forgetSimplification( editor.voxelizer );
+
+        editor.enabled = false;
+        editor.enabled = true;
+
+        using var work = new Work( );
+
+        this.tickAt( editor, 1.0, 2.0 );
+
+        Assert.IsFalse( work.contoured, "contoured with nothing changed" );
+        Assert.AreSame( mesh, shown( editor ) );
+
+        editor.voxelizer.simplificationDetail = 0.5f;
+
+        this.tickAt( editor, 3.0, 3.0 + editor.debounce );
+
+        if( implementation == ImplementationType.Managed ) {
+            Assert.IsFalse( work.contoured, "contoured by itself" );
+            Assert.AreSame( mesh, shown( editor ) );
+            Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
+
+            // and it stays that way, without trying again
+            this.tickAt( editor, 4.0, 5.0 );
+
+            Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
+
+            editor.contour( );
+        }
+
+        Assert.IsTrue( work.contoured, "contoured" );
+
+        this.tickAt( editor, 6.0 );
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+        Assert.Greater( triangleCountOf( shown( editor ) ), count * 2, "triangles at a detail of 0.5, against the simplest" );
+    }
+
+    // a contour of nothing has nothing to simplify, and is up to date at any detail
+    [Test]
+    public void aContourOfNothingIsUpToDateAtAnyDetail( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, implementation ) );
+
+        editor.voxelizer.meshSimplification = true;
+
+        this.time = 0.0;
+        editor.contour( );
+
+        Assert.AreEqual( 0, shown( editor ).vertexCount, "vertices of a contour of nothing" );
+
+        using var work = new Work( );
+
+        editor.voxelizer.simplificationDetail = 0.5f;
+        editor.voxelizer.simplificationError  = 0.5f;
+
+        this.tickAt( editor, 1.0, 2.0, 3.0 );
+
+        Assert.IsFalse( work.contoured, "contoured" );
         Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
     }
 

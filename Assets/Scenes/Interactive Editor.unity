@@ -469,7 +469,7 @@ MonoBehaviour:
   _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
-  meshSimplification: 0
+  meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
@@ -513,11 +513,11 @@ MonoBehaviour:
   _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
-  meshSimplification: 0
+  meshSimplification: 1
   simplificationError: 0.05
-  lineQuadricWeight: 0.00001
+  lineQuadricWeight: 0.01
   simplificationDetail: 0
-  wireframe: 0
+  wireframe: 1
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
   wireframeFillColor: {r: 0, g: 0, b: 0, a: 1}
@@ -558,11 +558,11 @@ MonoBehaviour:
   _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
-  meshSimplification: 0
+  meshSimplification: 1
   simplificationError: 0.05
-  lineQuadricWeight: 0.00001
+  lineQuadricWeight: 0.01
   simplificationDetail: 0
-  wireframe: 0
+  wireframe: 1
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
   wireframeFillColor: {r: 0, g: 0, b: 0, a: 1}
@@ -682,11 +682,11 @@ MonoBehaviour:
   _qefSolver: 1
   _intersectionApproximation: 0
   _vertexNormals: 1
-  meshSimplification: 0
+  meshSimplification: 1
   simplificationError: 0.05
-  lineQuadricWeight: 0.00001
+  lineQuadricWeight: 0.01
   simplificationDetail: 0
-  wireframe: 0
+  wireframe: 1
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
   wireframeFillColor: {r: 0, g: 0, b: 0, a: 1}

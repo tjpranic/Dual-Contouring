@@ -51,6 +51,12 @@ public sealed class RemeshScheduler {
         this.changedAt      = double.NegativeInfinity;
     }
 
+    // the mesh shown is no longer known to be of anything, as when what it was made from is gone: the next update
+    // that may contour does
+    public void invalidate( ) {
+        this.shownSignature = null;
+    }
+
     // a contour of the signature ended at the given time, by itself or when asked to
     public void contoured( double now, string signature, double duration, bool active ) {
         this.shownSignature = signature;
