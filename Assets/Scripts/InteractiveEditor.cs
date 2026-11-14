@@ -8,6 +8,7 @@ using UnityEngine;
 using MaterialIndex      = SurfaceExtractor.MaterialIndex;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using Combination        = DensityFunction.Combination;
+using VertexNormals      = SurfaceExtractor.VertexNormals;
 
 // contours the shapes below it in edit mode, with one of its four voxelizers at a time. Each voxelizer keeps its own
 // settings, and only the selected one shows in the inspector. Shapes are read off their transforms as Unity shows
@@ -224,6 +225,8 @@ public class InteractiveEditor : MonoBehaviour {
             to.qefSolverType               = from.qefSolverType;
             to.intersectionApproximation   = from.intersectionApproximation;
             to.vertexNormals               = from.vertexNormals;
+            to.creaseAngle                 = from.creaseAngle;
+            to.smoothNormals               = from.smoothNormals;
             to.debugFlags                  = from.debugFlags;
 
             to.meshSimplification   = from.meshSimplification;
@@ -525,6 +528,13 @@ public class InteractiveEditor : MonoBehaviour {
         append( voxelizer.implementationType );
         append( voxelizer.qefSolverType );
         append( voxelizer.vertexNormals );
+
+        // how creased normals break, which says nothing about split ones
+        if( voxelizer.vertexNormals == VertexNormals.Creased ) {
+            append( voxelizer.creaseAngle );
+            append( voxelizer.smoothNormals );
+        }
+
         append( ( int )voxelizer.debugFlags );
         append( voxelizer.meshSimplification );
 

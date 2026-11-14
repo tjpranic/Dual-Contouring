@@ -2,7 +2,7 @@
 
 Plan written 2026-11-14 for the TODO item "Edges on shared vertex meshes look horrendous": vertex normals that are smooth across curved surfaces and break at sharp edges, for every algorithm and implementation, on contoured and simplified meshes alike.
 
-**Status:** steps 0 to 3 done on 2026-11-14. Step 4 waits for review. The investigation behind the plan was done on 2026-11-14 with a probe outside the repo. It is summarized under Findings, and its pictures are described there.
+**Status:** complete. Steps 0 to 5 were done on 2026-11-14. Every algorithm and implementation creases its normals by angle, Burst on the CPU and the GPU on the GPU, after mesh simplification too, and so does the interactive editor. The README describes it. The investigation behind the plan was done on 2026-11-14 with a probe outside the repo. It is summarized under Findings, and its pictures are described there.
 
 The user decided three things on 2026-11-14, in their words:
 1. "Yes, replace the Shared setting". The new mode takes the place of Shared Vertex Normals.
@@ -416,11 +416,64 @@ Each step compiles, passes every test, and is reviewed before the next one start
        - the open scene unmodified;
        - the console clean once the mutants' errors were cleared and the real sources recompiled and reimported.
 4. **Interactive editor (small).** Carry-over, signature, and a live look in the editor scene with the user's scene left unmodified.
+   - **Done 2026-11-14:**
+     - **Built:**
+       - `InteractiveEditor.select` carries the crease angle and Smooth Normals over, as it does Vertex Normals.
+       - `signatureOf` holds both, but only under creased normals: under Split they change nothing about the mesh, and changing them should not contour again.
+       - **The inspector needed nothing.** The selected voxelizer's own inspector shows the two settings right after Vertex Normals.
+     - **Tests:** in `InteractiveEditorTest`, five new cases of the signature tests and the two carry-over tests extended.
+       - **The signature changes with:** the crease angle, Smooth Normals, and Occupancy's crease angle.
+       - **It stays the same with:** either of them under split normals.
+     - **The tests catch a mistake** (`mutations_creases_step4.py`). All 5 were caught:
+       - either setting left out of `select`;
+       - either setting left out of the signature;
+       - both signed under split normals too.
+     - **Live, in the open editor scene:**
+       - **Found as it was:** the user had saved the scene's Manifold voxelizer with creased normals (in "Creased normals", f19e6b9). It is the selected one, Burst at 256³ leaves, with mesh simplification on.
+       - **Its crease angle set by script, without undo:** 15° contoured again by itself to 2,584 vertices, with crisp edges and smooth curves; 180° to 1,793, the old Shared look, with the edges smeared across the simplified triangles; back at 40°, 2,175.
+       - **Each contour waited for the editor's debounce,** and for Unity to be the active application, as the scheduler has it.
+       - **Put back:** the settings it had (creased, 40°, Contour). The editor was up to date again, and the scene unmodified throughout.
+     - **Verification:**
+       - edit mode 3326 of 3326 (3321 and the 5 new signature cases) and play mode 21 of 21;
+       - the open scene unmodified;
+       - the console clean.
 5. **Measurements and documentation (small).**
    - CPU and GPU times and vertex counts at 64³ to 256³.
    - A README section on Vertex Normals.
    - Scene changes, if decision 4 says so.
    - This plan marked complete.
+   - **Done 2026-11-14:**
+     - **Whole contours** (`CreasedContourTiming.cs`, medians of 5, Unity in front): `contour( drawFromGPU: false )`, so with the mesh built and its vertices reordered. "Uncreased" for Burst is 180° under Contour, which still runs the pass, so the pass's own cost is step 1's (7 ms at 128³, 28 ms at 256³ on the three balls).
+
+       | Burst | Uncreased | Creased | Split |
+       |---|---|---|---|
+       | Uniform, three balls, 128³ | 38.1 ms, 52,224 | 36.9 ms, 53,581 | 38.1 ms, 313,500 |
+       | Uniform, three balls, 256³ | 210 ms, 208,900 | 211 ms, 211,439 | 219 ms, 1,253,628 |
+       | Uniform, NewShapes, 256³ | 326 ms, 182,492 | 327 ms, 190,000 | 331 ms, 1,096,032 |
+       | Occupancy, three balls, 256³ | 314 ms, 208,940 | 312 ms, 210,080 | 319 ms, 1,253,628 |
+       | Occupancy, NewShapes, 256³ | 456 ms, 182,734 | 461 ms, 188,366 | 455 ms, 1,096,140 |
+
+       All three settings cost the same within the noise. The pass and the split each take a small part of a contour.
+     - **The GPU drawn straight from its buffers:** `voxelize` and the counts read, which waits for the GPU. "Uncreased" is shared vertices asked for as a simplifying voxelizer asks for them, without the crease's kernels.
+
+       | GPU | Uncreased | Creased | Split |
+       |---|---|---|---|
+       | Occupancy, three balls, 128³ | 6.3 ms | 7.3 ms | 6.5 ms |
+       | Occupancy, three balls, 256³ | 34.5 ms | 39.1 ms | 34.8 ms |
+       | Occupancy, NewShapes, 256³ | 54.6 ms | 58.7 ms | 54.9 ms |
+       | Uniform, three balls, 128³ | 107.6 ms | 108.7 ms | 106.0 ms |
+       | Uniform, NewShapes, 128³ | 240.8 ms | 243.2 ms | 241.0 ms |
+
+       The crease's kernels add about 1 ms at 128³ and 4 to 5 ms at 256³. Read back, Occupancy's 128³ contour takes 22 ms creased against 32 ms split, which has six times the vertices to read.
+     - **The scenes** (decision 4): each was looked at first, opened as a preview scene and drawn under both settings (`ScenePreview.cs`). Creased showed smooth curves and crisp edges where Split showed facets, and boxes alike under both.
+       - **The three Mesh Simplification scenes on Split** (Occupancy CSG Operations, Uniform Half Detail, Uniform Multiple Materials) were switched to Creased (`SceneSwitch.cs`): each opened beside the open scene, set, saved and closed. Each file changed by its normals and the two new fields at their defaults.
+       - **The interactive editor scene** needed nothing more from this step. The user had saved its Manifold voxelizer creased (f19e6b9), and during this step its other three as well: the file on disk has all four creased, uncommitted.
+     - **The README:**
+       - a **Vertex Normals** section after Shapes: the settings, why, how, where it works, what it adds, what it costs, Shared, and what it does not do;
+       - vertex normals among the settings the interactive editor carries over;
+       - `BurstCreases.cs`, `GPUCreases.cs` and `CreaseNormals.compute` in the code layout.
+     - **`AGENTS.md`:** a short Creased Normals section on the two implementations and how their tests work.
+     - **Verification:** no code changed in this step, and no test loads a scene, so step 4's runs stand: edit mode 3326 of 3326, play mode 21 of 21. The open scene stayed unmodified.
 
 ## Out of scope
 

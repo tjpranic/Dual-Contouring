@@ -1,7 +1,6 @@
 # Dual Contouring
 
 ## TODO
-- Edges on shared vertex meshes look horrendous
 - Remove any LINQ code
 
 ## IN PROGRESS
@@ -12,3 +11,5 @@
 - See if it's possible to parallelize Manifold Dual Contouring
     Possible. Plan has been drafted.
 - Better custom inspectors
+- Edges on shared vertex meshes look horrendous
+    Fixed with the creased normals feature

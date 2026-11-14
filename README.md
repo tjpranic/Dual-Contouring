@@ -56,6 +56,49 @@ Knowing the new shapes makes the Burst and GPU implementations slower over cuboi
 
 Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed` and `Assets/Scenes/<Algorithm>/Burst`. For Uniform Dual Contouring those two folders are under `CPU`, next to `GPU`. Occupancy-Based Dual Contouring has `Burst` and `GPU`.
 
+## Vertex Normals
+Every voxelizer has a **Vertex Normals** setting, with two more after it:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Vertex Normals | Creased | **Creased:** smooth across curved surfaces and broken at sharp edges. **Split:** flat, every triangle with vertices of its own. |
+| Crease Angle | 40 | With creased normals, triangles around a vertex that meet at more than this many degrees get vertices of their own. At 180 nothing is split. |
+| Smooth Normals | Contour | With creased normals, the normal of a vertex whose triangles all meet within the angle. **Contour** keeps the normal the contour gave it, where that is within the angle of every one of its triangles. **Faces** takes the normal of its triangles. |
+
+**Why creased:** a vertex that the faces of a sharp edge share has one normal, halfway between them, and every triangle around it shades towards that normal. The edge comes out smeared across a cell, and where it crosses the grid at an angle, as a sawtooth. On a simplified mesh, or one an octree simplified, the large triangles smear it across whole faces. Split normals keep every edge sharp but facet every curved surface.
+
+**How it creases:**
+- **Grouping:** around every vertex its triangles go into groups by their normals, the largest corner first. Each triangle joins the group whose normal is nearest, if that is within the crease angle, and starts a group otherwise.
+- **Normals:** each group becomes a vertex of its own, whose normal is the group's triangles' normals weighted by their angles at the vertex.
+- **Why the group's normal:** comparing with it, and not with the triangle next to it, keeps a run of triangles that turn a little at a time, such as a cone's tip, from becoming one group.
+- **No corner ends up further than the crease angle from its triangle.** Should a group's normal move too far from a triangle in it as others join, that triangle gets a group of its own.
+- **Flat triangles:** a triangle too flat to have a normal has no say in any group. Its angles are all within 0.06° of 0° or 180°, as along the edge of a polygon Occupancy-Based Dual Contouring splits.
+
+**Where it works:** every algorithm and implementation, after mesh simplification, in play mode and in the interactive editor.
+- **The managed and Burst implementations:** a Burst pass creases their meshes, `BurstCreases`.
+- **The GPU implementations:** they crease their own in a compute shader, drawn straight from the GPU or read back. The groups are Burst's, and the normals within 0.001° of Burst's on every contour tested.
+
+**What it adds,** with Burst at 128³ cells:
+
+| Model | Uncreased | Creased | Split |
+|---|---|---|---|
+| Three balls | 52,224 | 53,581 | 313,500 |
+| The new shapes | 45,270 | 49,089 | 272,184 |
+| Three balls, simplified | 2,268 | 2,732 | 13,764 |
+
+**Cost:** about what splitting costs.
+- **Burst:** 7 ms at 128³ and 28 ms at 256³ on the three balls, against Burst contours of 28 and 173 ms.
+- **GPU, Occupancy-Based Dual Contouring:** about 1 ms at 128³ and 5 ms at 256³.
+- **GPU, Uniform Dual Contouring:** too little to see beside its own contour of 100 to 250 ms at 128³. That implementation also reads back two numbers after its contour to size the crease, which waits for the GPU to finish.
+
+**Shared normals:** before creased normals there were shared ones, which Creased replaced. At 180° under Contour a voxelizer shows what Shared showed, triangle for triangle. A scene saved with Shared vertex normals opens with creased ones.
+
+**What it does not do:**
+- **Slivers:** where a triangle of the contour straddles a sharp edge, the edge shows a small notch, in every mode, Split included. That comes from where the vertices are placed, not from the normals.
+- **The GPU at 0°:** it can split triangles that lie in one plane, which Burst keeps together. The GPU's square root is not exact, and at 0° only exactly equal normals stay together.
+
+The interactive editor's scene and three of the Mesh Simplification scenes (CSG Operations, Half Detail and Multiple Materials) use creased normals.
+
 ## Wireframe
 Every voxelizer can draw the edges of its contour's triangles over the contour. Its inspector has a **Wireframe** section:
 
@@ -167,7 +210,7 @@ How it compares with Manifold Dual Contouring on the same grid, measured on sing
 
 The **Interactive Editor** object holds the editor and a voxelizer for each algorithm. In its inspector:
 
-- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation, solver, mesh simplification and wireframe, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
+- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation, solver, vertex normals, mesh simplification and wireframe, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
 - **Shapes** lists every shape below the object, in the order their operations apply. Each row has an enabled box, the shape's name, which selects it, its operation (Union, Intersection or Subtraction) and material, and a remove button. Drag rows to reorder them. The **Add** buttons, one for each kind of shape, add a new one at the centre of the grid. Everything can be undone.
 - **Contour** contours at once. The line below it says whether the mesh is up to date, and how long the last contour took.
 - **Warnings** point out likely mistakes: a first shape that is not a Union, a shape without a material or outside the grid, a material the renderer has no material for, a shape a group would shear, a round or square shape whose x and z sizes differ, a debug view that draws so much it slows the editor down.
@@ -199,8 +242,8 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 |---|---|
 | `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
-| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. |
-| `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share and the layout they upload density functions in. The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl`. |
+| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. So is the pass that creases the normals of the managed and Burst implementations' meshes, `BurstCreases.cs`. |
+| `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share and the layout they upload density functions in. The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl`. Both crease their normals with `GPUCreases.cs` and its shader, `CreaseNormals.compute`. |
 
 Code that only one implementation uses goes in that implementation's folder; code that several of them use stays in `Assets/Scripts`. `SurfaceExtractor`, `QEFSolver` and `DensityFunction` are partial interfaces for the same reason: their managed and GPU members sit in those folders, and their shared members sit in `Assets/Scripts`.
 

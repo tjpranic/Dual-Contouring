@@ -253,7 +253,9 @@ MonoBehaviour:
   _implementation: 2
   _qefSolver: 1
   _intersectionApproximation: 0
-  _vertexNormals: 1
+  _vertexNormals: 0
+  creaseAngle: 40
+  smoothNormals: 0
   meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001

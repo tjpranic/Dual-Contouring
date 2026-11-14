@@ -26,5 +26,10 @@ Based off *Surface Simplification Using Quadric Error Metrics*: edge collapses i
 
 It has no managed or GPU implementation, so its tests hold it to answers known in closed form and to what a simplification may not change about a mesh. Where it departs from the papers, `Documents/Plans/Mesh Simplification.md` says how and why.
 
+## Creased Normals
+Vertex normals are creased by angle on the finished mesh of any algorithm and implementation: around each vertex, triangles are grouped by their normals, and each group becomes a vertex. There is no paper. The rule and its choices are in `Documents/Plans/Creased Normals.md`. It has a Burst implementation (`BurstCreases`) and a GPU one (`GPUCreases`, `CreaseNormals.compute`), and no managed one.
+- **Tests:** they hold the Burst pass to answers known in closed form, and the GPU to Burst: the same groups, and normals within a tolerance, since Metal has no doubles.
+- **Test voxelizers:** they contour at a crease angle of 180° under Contour, which is the uncreased contour. Tests of creasing set the angle they test.
+
 # Unity
 You should be able to interact with the Unity editor via an MCP server backed by the Unity CLI. Prefer the MCP when you need to interact with the editor. Recompilation takes a while and the server will respond as busy while that happens, so if you do encounter that, try to wait it out. Sometimes the Unity editor may not respond for other reasons. Bringing the editor into focus can help unstick it.

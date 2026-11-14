@@ -12,6 +12,7 @@ using Combination        = DensityFunction.Combination;
 using MaterialIndex      = SurfaceExtractor.MaterialIndex;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using VertexNormals      = SurfaceExtractor.VertexNormals;
+using SmoothNormals      = SurfaceExtractor.SmoothNormals;
 using QEFSolverType      = QEFSolver.Type;
 using Approximation      = SurfaceExtractor.IntersectionApproximation;
 
@@ -189,6 +190,8 @@ public class InteractiveEditorTest {
         uniform.qefSolverType               = QEFSolverType.Simple;
         uniform.intersectionApproximation   = Approximation.LinearInterpolation;
         uniform.vertexNormals               = VertexNormals.Split;
+        uniform.creaseAngle                 = 25.0f;
+        uniform.smoothNormals               = SmoothNormals.Faces;
         uniform.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
         uniform.wireframe                   = Wireframe.Look.LinesOnly;
         uniform.wireframeLineWidth          = 2.5f;
@@ -212,6 +215,8 @@ public class InteractiveEditorTest {
         Assert.AreEqual( QEFSolverType.Simple,                           octree.qefSolverType );
         Assert.AreEqual( Approximation.LinearInterpolation,              octree.intersectionApproximation );
         Assert.AreEqual( VertexNormals.Split,                            octree.vertexNormals );
+        Assert.AreEqual( 25.0f,                                          octree.creaseAngle );
+        Assert.AreEqual( SmoothNormals.Faces,                            octree.smoothNormals );
         Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  octree.debugFlags );
         Assert.AreEqual( Wireframe.Look.LinesOnly,                       octree.wireframe );
         Assert.AreEqual( 2.5f,                                           octree.wireframeLineWidth );
@@ -256,6 +261,8 @@ public class InteractiveEditorTest {
         other.qefSolverType               = QEFSolverType.Simple;
         other.intersectionApproximation   = Approximation.LinearInterpolation;
         other.vertexNormals               = VertexNormals.Split;
+        other.creaseAngle                 = 25.0f;
+        other.smoothNormals               = SmoothNormals.Faces;
         other.debugFlags                  = Voxelizer.Debug.Cells | Voxelizer.Debug.Edges;
         other.wireframe                   = Wireframe.Look.OverSurface;
         other.wireframeLineWidth          = 2.5f;
@@ -276,6 +283,8 @@ public class InteractiveEditorTest {
         Assert.AreEqual( ImplementationType.Burst,                       occupancy.implementationType );
         Assert.AreEqual( QEFSolverType.Simple,                           occupancy.qefSolverType );
         Assert.AreEqual( VertexNormals.Split,                            occupancy.vertexNormals );
+        Assert.AreEqual( 25.0f,                                          occupancy.creaseAngle );
+        Assert.AreEqual( SmoothNormals.Faces,                            occupancy.smoothNormals );
         Assert.AreEqual( Voxelizer.Debug.Cells | Voxelizer.Debug.Edges,  occupancy.debugFlags );
         Assert.AreEqual( Wireframe.Look.OverSurface,                     occupancy.wireframe );
         Assert.AreEqual( 2.5f,                                           occupancy.wireframeLineWidth );
@@ -1018,6 +1027,8 @@ public class InteractiveEditorTest {
         ["solver"]                  = ( null, ( p ) => p.editor.voxelizer.qefSolverType               = QEFSolverType.Simple ),
         ["intersection"]            = ( null, ( p ) => p.editor.voxelizer.intersectionApproximation   = Approximation.LinearInterpolation ),
         ["vertex normals"]          = ( null, ( p ) => p.editor.voxelizer.vertexNormals               = VertexNormals.Split ),
+        ["crease angle"]            = ( null, ( p ) => p.editor.voxelizer.creaseAngle                 = 25.0f ),
+        ["smooth normals"]          = ( null, ( p ) => p.editor.voxelizer.smoothNormals               = SmoothNormals.Faces ),
         ["debug flags"]             = ( null, ( p ) => p.editor.voxelizer.debugFlags                  = Voxelizer.Debug.Corners ),
         ["mesh simplification"]     = ( null, ( p ) => p.editor.voxelizer.meshSimplification          = true ),
         ["mesh simplification off"] = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.meshSimplification = false ),
@@ -1034,7 +1045,8 @@ public class InteractiveEditorTest {
         ["occupancy resolution"]    = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.resolution    += 1 ),
         ["occupancy implementation"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.implementationType = ImplementationType.GPU ),
         ["occupancy solver"]        = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.qefSolverType = QEFSolverType.Simple ),
-        ["occupancy vertex normals"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split )
+        ["occupancy vertex normals"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split ),
+        ["occupancy crease angle"]  = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.creaseAngle   = 25.0f )
     };
 
     // and of what a contour does not depend on
@@ -1052,6 +1064,10 @@ public class InteractiveEditorTest {
         ["wireframe"]                    = ( null, ( p ) => p.editor.voxelizer.wireframe          = Wireframe.Look.LinesOnly ),
         ["wireframe line width"]         = ( null, ( p ) => p.editor.voxelizer.wireframeLineWidth = 3.0f ),
         ["wireframe colours"]            = ( null, ( p ) => { p.editor.voxelizer.wireframeLineColor = Color.red; p.editor.voxelizer.wireframeFillColor = Color.blue; } ),
+
+        // how creased normals break says nothing about split ones
+        ["crease angle, split normals"]   = ( ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split, ( p ) => p.editor.voxelizer.creaseAngle   = 25.0f ),
+        ["smooth normals, split normals"] = ( ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split, ( p ) => p.editor.voxelizer.smoothNormals = SmoothNormals.Faces ),
 
         // how a contour is simplified takes no contour to change
         ["simplification error"]         = ( ( p ) => p.editor.voxelizer.meshSimplification = true, ( p ) => p.editor.voxelizer.simplificationError  = 0.5f ),
