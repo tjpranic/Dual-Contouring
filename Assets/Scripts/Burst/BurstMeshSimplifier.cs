@@ -1044,6 +1044,17 @@ public static class BurstMeshSimplifier {
 
     }
 
+    // a collapse as the record of a simplification keeps it (Hoppe, section 3): the vertex that was kept, the vertex
+    // that went into it, and the position and the normal the kept vertex was given
+    public struct Collapse {
+
+        public int    kept;
+        public int    removed;
+        public float3 position;
+        public float3 normal;
+
+    }
+
     // what a simplification did
     public struct Statistics {
 
@@ -1084,12 +1095,18 @@ public static class BurstMeshSimplifier {
     // so that the same mesh is always simplified the same way. An edge is not in the heap while its cost is over the error
     // bound, or while check refuses it. A cost changes only with the quadric or the position of an end of the edge,
     // which is when that end is the vertex a collapse leaves. What check says can change with any collapse that leaves
-    // a vertex next to an end of the edge, so the refused edges of those vertices go back into the heap
+    // a vertex next to an end of the edge, so the refused edges of those vertices go back into the heap.
+    //
+    // Every collapse is written to the record, in the order they are made. The mesh after any number of them is the
+    // record's to give (LevelJob), the mesh the loop ends with among them
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct CollapseJob : IJob {
 
         // the largest mean squared distance that a collapse may leave a vertex at (evaluate)
         public double limit;
+
+        // the loop ends after this many collapses, if it has not run out of edges before
+        public int maximumCollapses;
 
         public Connectivity mesh;
 
@@ -1102,9 +1119,7 @@ public static class BurstMeshSimplifier {
         public NativeArray<int> heap;
         public NativeArray<int> places;
 
-        public NativeList<float3>             positions;
-        public NativeList<float3>             normals;
-        public NativeList<BurstMesh.Triangle> triangles;
+        public NativeList<Collapse> record;
 
         // one statistics, and how often check gave each refusal
         public NativeArray<Statistics> statistics;
@@ -1133,7 +1148,7 @@ public static class BurstMeshSimplifier {
 
             var statistics = default( Statistics );
 
-            while( this.count > 0 ) {
+            while( this.count > 0 && statistics.collapses < this.maximumCollapses ) {
                 var edge = this.heap[0];
 
                 this.removeAt( 0 );
@@ -1162,6 +1177,13 @@ public static class BurstMeshSimplifier {
                 this.takeOutEdgesOf( ends.y );
 
                 var kept = this.mesh.collapse( edge, this.targets[edge] );
+
+                this.record.Add( new Collapse {
+                    kept     = kept,
+                    removed  = ends.x == kept ? ends.y : ends.x,
+                    position = ( float3 )this.mesh.positions[kept],
+                    normal   = ( float3 )this.mesh.normals[kept]
+                } );
 
                 ++statistics.collapses;
 
@@ -1209,8 +1231,6 @@ public static class BurstMeshSimplifier {
             }
 
             this.statistics[0] = statistics;
-
-            this.mesh.write( this.positions, this.normals, this.triangles );
         }
 
         private void takeOutEdgesOf( int vertex ) {
@@ -1314,6 +1334,94 @@ public static class BurstMeshSimplifier {
 
     }
 
+    // the mesh of a contour after the first so many collapses of its record. Every vertex of the contour stands in the
+    // simplified mesh as its ancestor: the vertex it went into, the vertex that one went into, and so on (Hoppe,
+    // section 3.2). The mesh is the contour's triangles with every vertex replaced by its ancestor, at the position
+    // and with the normal the ancestor was last given, less the triangles that are left with the same vertex twice.
+    // That is the mesh the connectivity holds after those collapses, with its vertices and its triangles in the same
+    // order (Connectivity.write), and needs none of its lists
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct LevelJob : IJob {
+
+        [ReadOnly] public NativeArray<float3>             positions;
+        [ReadOnly] public NativeArray<float3>             normals;
+        [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
+        [ReadOnly] public NativeArray<Collapse>           collapses;
+
+        // how many of the collapses are made
+        public int level;
+
+        public NativeList<float3>             levelPositions;
+        public NativeList<float3>             levelNormals;
+        public NativeList<BurstMesh.Triangle> levelTriangles;
+
+        public void Execute( ) {
+            var count     = this.positions.Length;
+            var ancestors = new NativeArray<int>( count, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+            var places    = new NativeArray<int>( count, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+            var moved     = new NativeArray<float3>( count, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+            var turned    = new NativeArray<float3>( count, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+
+            moved.CopyFrom( this.positions );
+            turned.CopyFrom( this.normals );
+
+            for( var vertex = 0; vertex < count; ++vertex ) {
+                ancestors[vertex] = vertex;
+                places[vertex]    = -1;
+            }
+
+            // first to last, which leaves every kept vertex where its last collapse put it
+            for( var index = 0; index < this.level; ++index ) {
+                var collapse = this.collapses[index];
+
+                moved[collapse.kept]  = collapse.position;
+                turned[collapse.kept] = collapse.normal;
+            }
+
+            // last to first. The ancestor of a removed vertex is that of the vertex it went into, which the collapses
+            // after its own have settled by the time its own comes up
+            for( var index = this.level - 1; index >= 0; --index ) {
+                var collapse = this.collapses[index];
+
+                ancestors[collapse.removed] = ancestors[collapse.kept];
+            }
+
+            // the vertices that a triangle still uses, in their order
+            for( var triangle = 0; triangle < this.triangles.Length; ++triangle ) {
+                if( this.ancestorsOf( ancestors, triangle, out var corners ) ) {
+                    places[corners.x] = 0;
+                    places[corners.y] = 0;
+                    places[corners.z] = 0;
+                }
+            }
+
+            for( var vertex = 0; vertex < count; ++vertex ) {
+                if( places[vertex] == -1 ) {
+                    continue;
+                }
+
+                places[vertex] = this.levelPositions.Length;
+
+                this.levelPositions.Add( moved[vertex] );
+                this.levelNormals.Add( turned[vertex] );
+            }
+
+            for( var triangle = 0; triangle < this.triangles.Length; ++triangle ) {
+                if( this.ancestorsOf( ancestors, triangle, out var corners ) ) {
+                    this.levelTriangles.Add( new BurstMesh.Triangle( places[corners.x], places[corners.y], places[corners.z], this.triangles[triangle].subMeshIndex ) );
+                }
+            }
+        }
+
+        // the ancestors of the three vertices of a triangle, and whether they are three different ones
+        private readonly bool ancestorsOf( NativeArray<int> ancestors, int triangle, out int3 corners ) {
+            corners = new int3( ancestors[this.triangles[triangle].a], ancestors[this.triangles[triangle].b], ancestors[this.triangles[triangle].c] );
+
+            return corners.x != corners.y && corners.y != corners.z && corners.x != corners.z;
+        }
+
+    }
+
     // reads a mesh into arrays: its vertices, their normals, and its triangles with the sub-mesh of each
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct ReadMeshJob : IJob {
@@ -1352,6 +1460,7 @@ public static class BurstMeshSimplifier {
     private static readonly ProfilerMarker quadricsMarker  = new( "MeshSimplifier.Burst.Quadrics" );
     private static readonly ProfilerMarker costsMarker     = new( "MeshSimplifier.Burst.Costs" );
     private static readonly ProfilerMarker collapseMarker  = new( "MeshSimplifier.Burst.Collapse" );
+    private static readonly ProfilerMarker levelMarker     = new( "MeshSimplifier.Burst.Level" );
     private static readonly ProfilerMarker buildMeshMarker = new( "MeshSimplifier.Burst.BuildMesh" );
 
     // how many vertices and edges a worker takes at a time
@@ -1363,15 +1472,38 @@ public static class BurstMeshSimplifier {
     // for, as a root mean square distance in the units of the mesh. The line weight is that of the lines of the
     // vertices against the planes of their triangles (QuadricsJob), which has no unit
     public static Mesh simplify( Mesh mesh, double error, double lineWeight, out Statistics statistics ) {
+        read( mesh, Allocator.TempJob, out var positions, out var normals, out var triangles );
+
+        try {
+            return simplify( positions, normals, triangles, error, lineWeight, out statistics );
+        }
+        finally {
+            positions.Dispose( );
+            normals.Dispose( );
+            triangles.Dispose( );
+        }
+    }
+
+    public static Mesh simplify( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, double error, double lineWeight, out Statistics statistics ) {
+        using var collapses = new NativeList<Collapse>( positions.Length, Allocator.TempJob );
+
+        record( positions, normals, triangles, error, lineWeight, collapses, out statistics );
+
+        return meshAt( positions, normals, triangles, collapses.AsArray( ), collapses.Length );
+    }
+
+    // a mesh as arrays: its vertices, their normals, and its triangles with the sub-mesh of each. The arrays are the
+    // caller's to dispose of
+    public static void read( Mesh mesh, Allocator allocator, out NativeArray<float3> positions, out NativeArray<float3> normals, out NativeArray<BurstMesh.Triangle> triangles ) {
         var triangleCount = 0;
 
         for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
             triangleCount += ( int )mesh.GetIndexCount( subMesh ) / 3;
         }
 
-        using var positions = new NativeArray<float3>( mesh.vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var normals   = new NativeArray<float3>( mesh.vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var triangles = new NativeArray<BurstMesh.Triangle>( triangleCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        positions = new NativeArray<float3>( mesh.vertexCount, allocator, NativeArrayOptions.UninitializedMemory );
+        normals   = new NativeArray<float3>( mesh.vertexCount, allocator, NativeArrayOptions.UninitializedMemory );
+        triangles = new NativeArray<BurstMesh.Triangle>( triangleCount, allocator, NativeArrayOptions.UninitializedMemory );
 
         using( readMeshMarker.Auto( ) ) {
             using var meshes = Mesh.AcquireReadOnlyMeshData( mesh );
@@ -1383,11 +1515,19 @@ public static class BurstMeshSimplifier {
                 triangles = triangles
             }.Run( );
         }
-
-        return simplify( positions, normals, triangles, error, lineWeight, out statistics );
     }
 
-    public static Mesh simplify( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, double error, double lineWeight, out Statistics statistics ) {
+    // simplifies the mesh of a contour and gives the collapses that do it, in the order they are made. The mesh
+    // itself is left as it is: meshAt gives it after any number of the collapses
+    public static void record(
+        NativeArray<float3>             positions,
+        NativeArray<float3>             normals,
+        NativeArray<BurstMesh.Triangle> triangles,
+        double                          error,
+        double                          lineWeight,
+        NativeList<Collapse>            collapses,
+        out Statistics                  statistics
+    ) {
         using var connectivity = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
 
         using( buildMarker.Auto( ) ) {
@@ -1403,16 +1543,13 @@ public static class BurstMeshSimplifier {
             connectivity.quadricsJob( lineWeight ).Schedule( connectivity.vertexCount, vertexBatch ).Complete( );
         }
 
-        using var targets            = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var costs              = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var within             = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var heap               = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var places             = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var simplifiedPosition = new NativeList<float3>( Allocator.TempJob );
-        using var simplifiedNormals  = new NativeList<float3>( Allocator.TempJob );
-        using var simplifiedTriangle = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
-        using var statisticsOut      = new NativeArray<Statistics>( 1, Allocator.TempJob );
-        using var refusals           = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
+        using var targets       = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var costs         = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var within        = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var heap          = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var places        = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var statisticsOut = new NativeArray<Statistics>( 1, Allocator.TempJob );
+        using var refusals      = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
 
         using( costsMarker.Auto( ) ) {
             new CostsJob {
@@ -1432,25 +1569,45 @@ public static class BurstMeshSimplifier {
 
         using( collapseMarker.Auto( ) ) {
             new CollapseJob {
-                limit       = error * error,
-                mesh        = connectivity,
-                targets     = targets,
-                costs       = costs,
-                within      = within,
-                heap        = heap,
-                places     = places,
-                positions  = simplifiedPosition,
-                normals    = simplifiedNormals,
-                triangles  = simplifiedTriangle,
-                statistics = statisticsOut,
-                refusals   = refusals
+                limit            = error * error,
+                maximumCollapses = int.MaxValue,
+                mesh             = connectivity,
+                targets          = targets,
+                costs            = costs,
+                within           = within,
+                heap             = heap,
+                places           = places,
+                record           = collapses,
+                statistics       = statisticsOut,
+                refusals         = refusals
             }.Run( );
         }
 
         statistics = statisticsOut[0];
+    }
+
+    // the mesh of a contour after the first so many of its collapses (LevelJob): the contour itself after none, and
+    // the simplest mesh the error of the collapses allowed after all of them
+    public static Mesh meshAt( NativeArray<float3> positions, NativeArray<float3> normals, NativeArray<BurstMesh.Triangle> triangles, NativeArray<Collapse> collapses, int level ) {
+        using var levelPositions = new NativeList<float3>( Allocator.TempJob );
+        using var levelNormals   = new NativeList<float3>( Allocator.TempJob );
+        using var levelTriangles = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+
+        using( levelMarker.Auto( ) ) {
+            new LevelJob {
+                positions      = positions,
+                normals        = normals,
+                triangles      = triangles,
+                collapses      = collapses,
+                level          = math.clamp( level, 0, collapses.Length ),
+                levelPositions = levelPositions,
+                levelNormals   = levelNormals,
+                levelTriangles = levelTriangles
+            }.Run( );
+        }
 
         using( buildMeshMarker.Auto( ) ) {
-            return BurstMesh.createMesh( simplifiedPosition.AsArray( ), simplifiedNormals.AsArray( ), simplifiedTriangle.AsArray( ) );
+            return BurstMesh.createMesh( levelPositions.AsArray( ), levelNormals.AsArray( ), levelTriangles.AsArray( ) );
         }
     }
 

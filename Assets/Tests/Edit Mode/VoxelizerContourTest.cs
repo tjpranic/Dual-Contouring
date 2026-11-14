@@ -380,6 +380,233 @@ public class VoxelizerContourTest : TopologyTest {
         }
     }
 
+    // ---- the record of a simplification ----
+
+    private static readonly Variant[] cpuVariants = variants.Where( ( variant ) => variant.implementation != ImplementationType.GPU ).ToArray( );
+
+    // takes the volumes of a voxelizer away, so that contouring it again would show nothing
+    private static void removeVolumes( Voxelizer voxelizer ) {
+        foreach( var volume in voxelizer.GetComponentsInChildren<Volume>( ) ) {
+            volume.gameObject.SetActive( false );
+        }
+    }
+
+    // a voxelizer keeps its last contour as it was before it was simplified, with the collapses that simplify it.
+    // simplify shows that contour again under the simplification settings as they are now: at another detail, or
+    // under another error or line weight. It shows what contouring afresh under those settings shows, and it does not
+    // contour: the volumes are gone by the time it is called
+    [Test]
+    public void simplifyShowsTheLastContourUnderTheSettingsAsTheyAreNow( [ValueSource( nameof( cpuVariants ) )] Variant variant, [Values] VertexNormals normals ) {
+        var voxelizer = this.createSimplifying( variant, shapesOf( Model.ThreeBalls ), normals );
+        var first     = voxelizer.contour( drawFromGPU: false );
+        var simplest  = MeshComparison.trianglesOf( shown( voxelizer ) );
+
+        removeVolumes( voxelizer );
+
+        int assertShowsWhatAFreshContourShows( string what ) {
+            var statistics = voxelizer.simplify( );
+
+            Assert.IsTrue( statistics.HasValue, $"{what}: there is a contour to simplify" );
+
+            var fresh = this.createSimplifying( variant, shapesOf( Model.ThreeBalls ), normals );
+
+            fresh.simplificationError  = voxelizer.simplificationError;
+            fresh.lineQuadricWeight    = voxelizer.lineQuadricWeight;
+            fresh.simplificationDetail = voxelizer.simplificationDetail;
+
+            var expected = fresh.contour( drawFromGPU: false );
+            var mesh     = shown( voxelizer );
+
+            assertSameTriangles( shown( fresh ), mesh );
+
+            Assert.AreEqual( mesh.vertexCount,        statistics.Value.vertexCount,   $"{what}: vertices reported" );
+            Assert.AreEqual( triangleCountOf( mesh ), statistics.Value.triangleCount, $"{what}: triangles reported" );
+            Assert.AreEqual( expected.triangleCount,  statistics.Value.triangleCount, $"{what}: triangles, against those of a fresh contour" );
+
+            Assert.AreEqual( first.unsimplifiedVertexCount,   statistics.Value.unsimplifiedVertexCount,   $"{what}: vertices before simplification" );
+            Assert.AreEqual( first.unsimplifiedTriangleCount, statistics.Value.unsimplifiedTriangleCount, $"{what}: triangles before simplification" );
+
+            Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, mesh.hideFlags, $"{what}: the mesh is not saved with the scene" );
+
+            if( normals == VertexNormals.Split ) {
+                assertFlatShaded( mesh );
+            }
+
+            return triangleCountOf( mesh );
+        }
+
+        voxelizer.simplificationDetail = 0.5f;
+
+        var half = assertShowsWhatAFreshContourShows( "at a detail of 0.5" );
+
+        Assert.Greater( half, first.triangleCount.Value, "triangles at a detail of 0.5, against the simplest" );
+
+        voxelizer.simplificationError = 0.05f;
+
+        var finer = assertShowsWhatAFreshContourShows( "at an error of 0.05" );
+
+        Assert.Greater( finer, half, "triangles at a fifth of the error" );
+
+        voxelizer.simplificationDetail = 0.0f;
+        voxelizer.lineQuadricWeight    = 0.05f;
+
+        var heavy = assertShowsWhatAFreshContourShows( "at a line weight of 0.05" );
+
+        Assert.Less( heavy, finer, "triangles at a detail of 0" );
+
+        // and back where it began
+        voxelizer.simplificationError = simplificationError;
+        voxelizer.lineQuadricWeight   = 1e-5f;
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "there is a contour to simplify" );
+
+        CollectionAssert.AreEqual( simplest, MeshComparison.trianglesOf( shown( voxelizer ) ), "triangles under the first settings again" );
+    }
+
+    // a contour that was read back from the GPU is kept like any other
+    [Test]
+    public void simplifyShowsAContourOfTheGPUAgain( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] VertexNormals normals ) {
+        var voxelizer = this.createSimplifying( new( algorithm, ImplementationType.GPU ), shapesOf( Model.ThreeBalls ), normals );
+        var first     = voxelizer.contour( drawFromGPU: true );
+        var simplest  = MeshComparison.trianglesOf( shown( voxelizer ) );
+
+        removeVolumes( voxelizer );
+
+        voxelizer.simplificationDetail = 1.0f;
+
+        var whole = voxelizer.simplify( );
+
+        Assert.IsTrue( whole.HasValue, "there is a contour to simplify" );
+
+        Assert.AreEqual( first.unsimplifiedTriangleCount, whole.Value.triangleCount,             "triangles at a detail of 1, against the contour's" );
+        Assert.AreEqual( first.unsimplifiedTriangleCount, triangleCountOf( shown( voxelizer ) ), "triangles shown at a detail of 1" );
+
+        Assert.Greater( first.unsimplifiedTriangleCount.Value, first.triangleCount.Value * 2, "triangles of the contour, against the simplest" );
+
+        if( normals == VertexNormals.Split ) {
+            assertFlatShaded( shown( voxelizer ) );
+        }
+
+        voxelizer.simplificationDetail = 0.0f;
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "there is a contour to simplify" );
+
+        CollectionAssert.AreEqual( simplest, MeshComparison.trianglesOf( shown( voxelizer ) ), "triangles at a detail of 0 again" );
+    }
+
+    // contour shows the mesh at the detail the voxelizer is set to, and reports the size the contour came with
+    [Test]
+    public void contourShowsTheMeshAtTheDetail( [ValueSource( nameof( cpuVariants ) )] Variant variant ) {
+        var voxelizer = this.createSimplifying( variant, shapesOf( Model.CubesAndSphere ) );
+
+        voxelizer.simplificationDetail = 0.5f;
+
+        var statistics = voxelizer.contour( drawFromGPU: false );
+        var contour    = this.voxelize( voxelizer ).mesh;
+        var record     = MeshSimplification.of( contour, simplificationError * voxelizer.cellSize, voxelizer.lineQuadricWeight );
+        var expected   = record.meshAt( record.levelOf( 0.5f ) );
+
+        try {
+            assertSameTriangles( expected, shown( voxelizer ) );
+
+            Assert.AreEqual( contour.vertexCount,        statistics.unsimplifiedVertexCount,   "vertices before simplification" );
+            Assert.AreEqual( triangleCountOf( contour ), statistics.unsimplifiedTriangleCount, "triangles before simplification" );
+
+            Assert.Greater( statistics.triangleCount.Value,        triangleCountOf( contour ) / 4, "triangles at a detail of 0.5" );
+            Assert.Less( statistics.triangleCount.Value, triangleCountOf( contour ) * 3 / 4,       "triangles at a detail of 0.5" );
+        }
+        finally {
+            Object.DestroyImmediate( expected );
+        }
+
+        // at a detail of 1 it is the contour
+        voxelizer.simplificationDetail = 1.0f;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        assertSameTriangles( contour, shown( voxelizer ) );
+    }
+
+    // simplify has nothing to show, and leaves what is shown alone, without a contour that was simplified: before the
+    // first contour, with simplification off, after a contour made with it off, after clear, and after a contour of
+    // nothing
+    [Test]
+    public void simplifyGivesNothingWithoutASimplifiedContour( ) {
+        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.ThreeBalls ) );
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "before the first contour" );
+
+        var plain = voxelizer.contour( drawFromGPU: false );
+        var mesh  = shown( voxelizer );
+
+        Assert.IsNull( plain.unsimplifiedVertexCount,   "vertices before simplification, of a contour that was not simplified" );
+        Assert.IsNull( plain.unsimplifiedTriangleCount, "triangles before simplification, of a contour that was not simplified" );
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "with simplification off" );
+
+        voxelizer.meshSimplification = true;
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "after a contour that was not simplified" );
+        Assert.AreSame( mesh, shown( voxelizer ), "the mesh shown" );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "after a contour that was simplified" );
+
+        mesh = shown( voxelizer );
+
+        voxelizer.meshSimplification = false;
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "with simplification off again" );
+        Assert.AreSame( mesh, shown( voxelizer ), "the mesh shown" );
+
+        voxelizer.meshSimplification = true;
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "with simplification on again" );
+
+        voxelizer.clear( );
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "after clear" );
+        Assert.IsNull( shown( voxelizer ), "the mesh shown after clear" );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "after another contour" );
+
+        removeVolumes( voxelizer );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        Assert.IsFalse( voxelizer.simplify( ).HasValue, "after a contour of nothing" );
+        Assert.AreEqual( 0, shown( voxelizer ).vertexCount, "vertices shown after a contour of nothing" );
+    }
+
+    // the error is in the cells of the contour that is kept. A resolution that was changed since has not been
+    // contoured yet, and says nothing about that contour
+    [Test]
+    public void simplifyKeepsToTheCellsOfTheContour( ) {
+        var voxelizer = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.Sphere ) );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var simplest = MeshComparison.trianglesOf( shown( voxelizer ) );
+
+        voxelizer.resolution += 1;
+
+        // under another line weight and back, which simplifies the contour again both times
+        voxelizer.lineQuadricWeight = 0.05f;
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "there is a contour to simplify" );
+
+        CollectionAssert.AreNotEqual( simplest, MeshComparison.trianglesOf( shown( voxelizer ) ), "triangles under another line weight" );
+
+        voxelizer.lineQuadricWeight = 1e-5f;
+
+        Assert.IsTrue( voxelizer.simplify( ).HasValue, "there is a contour to simplify" );
+
+        CollectionAssert.AreEqual( simplest, MeshComparison.trianglesOf( shown( voxelizer ) ), "triangles under the first line weight again" );
+    }
+
     // the weight of the line quadrics is the voxelizer's: with one far above what it starts out with, the mesh is the
     // one the simplifier gives at that weight and not the one it gives otherwise
     [Test]

@@ -109,6 +109,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     [Tooltip( "How much every vertex is held to the line through it along the normal of its triangles, against the planes of those triangles. A little settles where the vertices of flat regions go and in which order. More evens out the triangles and leaves more of them" ), Min( 0.0f )]
     public float lineQuadricWeight = 1e-5f;
 
+    [Tooltip( "Which of the meshes between the simplest the error allows and the contour itself is shown: 0 is the simplest, 1 is the contour" ), Range( 0.0f, 1.0f )]
+    public float simplificationDetail = 0.0f;
+
     // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
     [Header( "Wireframe" )]
 
@@ -202,17 +205,21 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
 
     // how a contour went: how long it took in all, and the size of its mesh. A mesh drawn straight from the GPU is
-    // never read back, so its size is not known
+    // never read back, so its size is not known. A mesh that was simplified also has the size it came with
     public readonly struct ContourStatistics {
 
         public readonly double milliseconds;
         public readonly int?   vertexCount;
         public readonly int?   triangleCount;
+        public readonly int?   unsimplifiedVertexCount;
+        public readonly int?   unsimplifiedTriangleCount;
 
-        public ContourStatistics( double milliseconds, int? vertexCount, int? triangleCount ) {
-            this.milliseconds  = milliseconds;
-            this.vertexCount   = vertexCount;
-            this.triangleCount = triangleCount;
+        public ContourStatistics( double milliseconds, int? vertexCount, int? triangleCount, int? unsimplifiedVertexCount = null, int? unsimplifiedTriangleCount = null ) {
+            this.milliseconds              = milliseconds;
+            this.vertexCount               = vertexCount;
+            this.triangleCount             = triangleCount;
+            this.unsimplifiedVertexCount   = unsimplifiedVertexCount;
+            this.unsimplifiedTriangleCount = unsimplifiedTriangleCount;
         }
 
     }
@@ -224,6 +231,12 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     // the last mesh this voxelizer made, so it can be destroyed even when the mesh filter has gone first
     private Mesh contourMesh;
+
+    // the last contour as it was before it was simplified, with the collapses that simplify it, and the size its
+    // cells had. From these simplify shows the contour again under other simplification settings, without contouring.
+    // There is none when the last contour was not simplified
+    private MeshSimplification simplification;
+    private float              simplificationCellSize;
 
     public virtual void Start( ) {
         this.contour( );
@@ -251,6 +264,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         voxelizeMarker.End( );
 
         this.stopDrawingFromGPU( );
+
+        this.simplification = null;
 
         if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU && !this.meshSimplification ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
@@ -314,17 +329,61 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         if( this.meshSimplification && mesh.vertexCount > 0 ) {
             simplifyMarker.Begin( );
 
-            var simplified = BurstMeshSimplifier.simplify( mesh, this.simplificationError * this.cellSize, this.lineQuadricWeight, out _ );
+            this.simplification         = MeshSimplification.of( mesh, this.simplificationError * this.cellSize, this.lineQuadricWeight );
+            this.simplificationCellSize = this.cellSize;
 
             destroy( mesh );
 
-            mesh = simplified;
+            mesh = this.simplification.meshAt( this.simplification.levelOf( this.simplificationDetail ) );
 
             simplifyMarker.End( );
         }
 
-        // convert to flat shading by splitting vertices
-        if( this.vertexNormals == VertexNormals.Split && !splitByGPU ) {
+        this.finish( mesh, this.vertexNormals == VertexNormals.Split && !splitByGPU, reorderVertices );
+
+        captureDebugMarker.Begin( );
+
+        this.captureDebugInformation( corners, edges, voxels );
+
+        captureDebugMarker.End( );
+
+        return this.statisticsOf( stopwatch, mesh );
+    }
+
+    // shows the last contour again under the simplification settings as they are now, without contouring: the mesh at
+    // another detail is had from the collapses that are kept, and under another error or line weight the contour that
+    // is kept is simplified again. Gives nothing, and changes nothing, when there is no simplified contour to go back
+    // to: simplification is off, or was off for the last contour, the last contour was empty, or the scripts were
+    // loaded again since
+    public ContourStatistics? simplify( bool reorderVertices = true ) {
+        if( !this.meshSimplification || this.simplification == null ) {
+            return null;
+        }
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew( );
+
+        simplifyMarker.Begin( );
+
+        // in the cells of the contour that is kept, whatever the resolution has been set to since
+        var error = this.simplificationError * this.simplificationCellSize;
+
+        if( this.simplification.error != error || this.simplification.lineWeight != this.lineQuadricWeight ) {
+            this.simplification = this.simplification.under( error, this.lineQuadricWeight );
+        }
+
+        var mesh = this.simplification.meshAt( this.simplification.levelOf( this.simplificationDetail ) );
+
+        simplifyMarker.End( );
+
+        this.finish( mesh, this.vertexNormals == VertexNormals.Split, reorderVertices );
+
+        return this.statisticsOf( stopwatch, mesh );
+    }
+
+    // makes a mesh the contour that is shown: split for flat shading where asked, with its bounds, and its vertices
+    // in an order that draws well
+    private void finish( Mesh mesh, bool split, bool reorderVertices ) {
+        if( split ) {
             splitVerticesMarker.Begin( );
 
             splitVertices( mesh );
@@ -346,23 +405,19 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         mesh.hideFlags = contourMeshFlags;
 
         this.show( mesh );
+    }
 
-        captureDebugMarker.Begin( );
-
-        this.captureDebugInformation( corners, edges, voxels );
-
-        captureDebugMarker.End( );
-
+    private ContourStatistics statisticsOf( System.Diagnostics.Stopwatch stopwatch, Mesh mesh ) {
         var triangleCount = 0;
         for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
             triangleCount += ( int )mesh.GetIndexCount( subMeshIndex ) / 3;
         }
 
-        return new( stopwatch.Elapsed.TotalMilliseconds, mesh.vertexCount, triangleCount );
+        return new( stopwatch.Elapsed.TotalMilliseconds, mesh.vertexCount, triangleCount, this.simplification?.positions.Length, this.simplification?.triangles.Length );
     }
 
     // takes away what contour shows: the mesh in the mesh filter, whichever voxelizer made it, the mesh this voxelizer
-    // made last, the drawing straight from the GPU and the debug data
+    // made last, what is kept of it for simplify, the drawing straight from the GPU and the debug data
     public void clear( ) {
         this.stopDrawingFromGPU( );
         this.show( null );
@@ -370,7 +425,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         if( this.contourMesh != null ) {
             destroy( this.contourMesh );
         }
-        this.contourMesh = null;
+        this.contourMesh    = null;
+        this.simplification = null;
 
         this.captureDebugInformation( Enumerable.Empty<SurfaceExtractor.Corner>( ), Enumerable.Empty<SurfaceExtractor.Edge>( ), Enumerable.Empty<SurfaceExtractor.Voxel>( ) );
     }

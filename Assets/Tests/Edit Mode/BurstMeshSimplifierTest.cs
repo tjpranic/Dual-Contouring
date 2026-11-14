@@ -1553,62 +1553,201 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
     }
 
-    // runs the jobs of the simplifier one after the other, as BurstMeshSimplifier.simplify does, and counts what the
-    // loop left that it could have collapsed
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct WriteJob : IJob {
+
+        public Connectivity mesh;
+
+        public NativeList<float3>             positions;
+        public NativeList<float3>             normals;
+        public NativeList<BurstMesh.Triangle> triangles;
+
+        public void Execute( ) {
+            this.mesh.write( this.positions, this.normals, this.triangles );
+        }
+
+    }
+
+    // the jobs of the simplifier run one after the other, as BurstMeshSimplifier.record runs them, with the loop
+    // stopped after a number of collapses. The connectivity is left as the loop left it
+    private sealed class Loop : IDisposable {
+
+        public NativeArray<float3>             positions;
+        public NativeArray<float3>             normals;
+        public NativeArray<BurstMesh.Triangle> triangles;
+
+        public Connectivity connectivity;
+
+        public NativeList<BurstMeshSimplifier.Collapse> record;
+
+        public readonly BurstMeshSimplifier.Statistics statistics;
+
+        public Loop( Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double error, double lineWeight, int maximumCollapses = int.MaxValue ) {
+            this.positions    = new NativeArray<float3>( positions.Select( ( position ) => ( float3 )position ).ToArray( ), Allocator.TempJob );
+            this.normals      = new NativeArray<float3>( normals.Select( ( normal ) => ( float3 )normal ).ToArray( ), Allocator.TempJob );
+            this.triangles    = new NativeArray<BurstMesh.Triangle>( triangles, Allocator.TempJob );
+            this.connectivity = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
+            this.record       = new NativeList<BurstMeshSimplifier.Collapse>( Allocator.TempJob );
+
+            new BurstMeshSimplifier.BuildJob { positions = this.positions, normals = this.normals, triangles = this.triangles, mesh = this.connectivity }.Run( );
+
+            this.connectivity.quadricsJob( lineWeight ).Schedule( this.connectivity.vertexCount, 16 ).Complete( );
+
+            using var targets    = new NativeArray<double3>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var costs      = new NativeArray<double>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var within     = new NativeArray<bool>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var heap       = new NativeArray<int>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var places     = new NativeArray<int>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var statistics = new NativeArray<BurstMeshSimplifier.Statistics>( 1, Allocator.TempJob );
+            using var refusals   = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
+
+            new BurstMeshSimplifier.CostsJob {
+                limit       = error * error,
+                positions   = this.connectivity.positions,
+                planes      = this.connectivity.planes,
+                areas       = this.connectivity.areas,
+                sharpPlanes = this.connectivity.sharpPlanes,
+                sharpAreas  = this.connectivity.sharpAreas,
+                lines       = this.connectivity.lines,
+                edges       = this.connectivity.edges.AsArray( ),
+                targets     = targets,
+                costs       = costs,
+                within      = within
+            }.Schedule( this.connectivity.edgeCount, 16 ).Complete( );
+
+            new BurstMeshSimplifier.CollapseJob {
+                limit            = error * error,
+                maximumCollapses = maximumCollapses,
+                mesh             = this.connectivity,
+                targets          = targets,
+                costs            = costs,
+                within           = within,
+                heap             = heap,
+                places           = places,
+                record           = this.record,
+                statistics       = statistics,
+                refusals         = refusals
+            }.Run( );
+
+            this.statistics = statistics[0];
+        }
+
+        public void Dispose( ) {
+            this.positions.Dispose( );
+            this.normals.Dispose( );
+            this.triangles.Dispose( );
+            this.connectivity.Dispose( );
+            this.record.Dispose( );
+        }
+
+        // how many edges the loop left that it could have collapsed
+        public int left( double error ) {
+            using var left = new NativeArray<int>( 1, Allocator.TempJob );
+
+            new LeftToCollapseJob { limit = error * error, mesh = this.connectivity, left = left }.Run( );
+
+            return left[0];
+        }
+
+        // the mesh the connectivity holds
+        public ( float3[] positions, float3[] normals, BurstMesh.Triangle[] triangles ) written( ) {
+            using var positions = new NativeList<float3>( Allocator.TempJob );
+            using var normals   = new NativeList<float3>( Allocator.TempJob );
+            using var triangles = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+
+            new WriteJob { mesh = this.connectivity, positions = positions, normals = normals, triangles = triangles }.Run( );
+
+            return ( positions.AsArray( ).ToArray( ), normals.AsArray( ).ToArray( ), triangles.AsArray( ).ToArray( ) );
+        }
+
+        // the mesh the record gives after its first so many collapses, from the mesh as it came
+        public ( float3[] positions, float3[] normals, BurstMesh.Triangle[] triangles ) level( int level ) {
+            using var positions = new NativeList<float3>( Allocator.TempJob );
+            using var normals   = new NativeList<float3>( Allocator.TempJob );
+            using var triangles = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+
+            new BurstMeshSimplifier.LevelJob {
+                positions      = this.positions,
+                normals        = this.normals,
+                triangles      = this.triangles,
+                collapses      = this.record.AsArray( ),
+                level          = level,
+                levelPositions = positions,
+                levelNormals   = normals,
+                levelTriangles = triangles
+            }.Run( );
+
+            return ( positions.AsArray( ).ToArray( ), normals.AsArray( ).ToArray( ), triangles.AsArray( ).ToArray( ) );
+        }
+
+    }
+
+    // runs the simplifier and counts what the loop left that it could have collapsed
     private static ( int collapses, int left ) simplifyAndCountWhatIsLeft( Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double error, double lineWeight ) {
-        using var nativePositions = new NativeArray<float3>( positions.Select( ( position ) => ( float3 )position ).ToArray( ), Allocator.TempJob );
-        using var nativeNormals   = new NativeArray<float3>( normals.Select( ( normal ) => ( float3 )normal ).ToArray( ), Allocator.TempJob );
-        using var nativeTriangles = new NativeArray<BurstMesh.Triangle>( triangles, Allocator.TempJob );
-        using var connectivity    = new Connectivity( positions.Length, triangles.Length, Allocator.TempJob );
+        using var loop = new Loop( positions, normals, triangles, error, lineWeight );
 
-        new BurstMeshSimplifier.BuildJob { positions = nativePositions, normals = nativeNormals, triangles = nativeTriangles, mesh = connectivity }.Run( );
+        return ( loop.statistics.collapses, loop.left( error ) );
+    }
 
-        connectivity.quadricsJob( lineWeight ).Schedule( connectivity.vertexCount, 16 ).Complete( );
+    private static ( int, int, int, int )[] cornersOf( BurstMesh.Triangle[] triangles ) {
+        return triangles.Select( ( triangle ) => ( triangle.a, triangle.b, triangle.c, triangle.subMeshIndex ) ).ToArray( );
+    }
 
-        using var targets    = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob );
-        using var costs      = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob );
-        using var within     = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob );
-        using var heap       = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob );
-        using var places     = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob );
-        using var written    = new NativeList<float3>( Allocator.TempJob );
-        using var normalsOut = new NativeList<float3>( Allocator.TempJob );
-        using var faces      = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
-        using var statistics = new NativeArray<BurstMeshSimplifier.Statistics>( 1, Allocator.TempJob );
-        using var refusals   = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
-        using var left       = new NativeArray<int>( 1, Allocator.TempJob );
+    // Hoppe, section 3: the record of the collapses stands for every mesh between the one that came and the one the
+    // loop ends with. The mesh it gives after its first k collapses, from the mesh that came and the ancestor of
+    // every vertex (section 3.2), is the mesh the connectivity holds when the loop is stopped after k: the same
+    // vertices in the same order, at the same positions with the same normals, and the same triangles. And the loop
+    // that is stopped after k has made the first k collapses of the loop that ran to its end
+    [Test]
+    public void recordGivesTheMeshTheLoopHoldsAfterAnyNumberOfCollapses( [Values( 0.0, 1e-5 )] double lineWeight ) {
+        void assertLevels( string what, Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double error ) {
+            using var whole = new Loop( positions, normals, triangles, error, lineWeight );
 
-        new BurstMeshSimplifier.CostsJob {
-            limit       = error * error,
-            positions   = connectivity.positions,
-            planes      = connectivity.planes,
-            areas       = connectivity.areas,
-            sharpPlanes = connectivity.sharpPlanes,
-            sharpAreas  = connectivity.sharpAreas,
-            lines       = connectivity.lines,
-            edges       = connectivity.edges.AsArray( ),
-            targets     = targets,
-            costs       = costs,
-            within      = within
-        }.Schedule( connectivity.edgeCount, 16 ).Complete( );
+            var count = whole.record.Length;
 
-        new BurstMeshSimplifier.CollapseJob {
-            limit       = error * error,
-            mesh        = connectivity,
-            targets     = targets,
-            costs       = costs,
-            within      = within,
-            heap        = heap,
-            places     = places,
-            positions  = written,
-            normals    = normalsOut,
-            triangles  = faces,
-            statistics = statistics,
-            refusals   = refusals
-        }.Run( );
+            Assert.Greater( count, 4, $"{what}: collapses" );
 
-        new LeftToCollapseJob { limit = error * error, mesh = connectivity, left = left }.Run( );
+            foreach( var level in new[] { 0, 1, 2, count / 3, count / 2, count - 1, count }.Distinct( ) ) {
+                using var stopped = new Loop( positions, normals, triangles, error, lineWeight, level );
 
-        return ( statistics[0].collapses, left[0] );
+                Assert.AreEqual( level, stopped.record.Length, $"{what}: collapses of the loop stopped after {level}" );
+
+                for( var index = 0; index < level; ++index ) {
+                    var expected = whole.record[index];
+                    var actual   = stopped.record[index];
+
+                    Assert.AreEqual( ( expected.kept, expected.removed, expected.position, expected.normal ), ( actual.kept, actual.removed, actual.position, actual.normal ), $"{what}: collapse {index} of the loop stopped after {level}" );
+                }
+
+                var held  = stopped.written( );
+                var given = whole.level( level );
+
+                CollectionAssert.AreEqual( held.positions,              given.positions,              $"{what}: positions after {level} of {count} collapses" );
+                CollectionAssert.AreEqual( held.normals,                given.normals,                $"{what}: normals after {level} of {count} collapses" );
+                CollectionAssert.AreEqual( cornersOf( held.triangles ), cornersOf( given.triangles ), $"{what}: triangles after {level} of {count} collapses" );
+            }
+        }
+
+        // boxes of two materials, alone and sharing an edge of four triangles, and a box with two triangles back to
+        // back on a corner, a triangle that uses a vertex twice and a vertex that no triangle uses
+        var box = new Builder( ).box( cells( 0, 0, 0 ), cells( 6, 5, 4 ), ( center, axis, side ) => center.z < 2 ? 1 : 0 );
+        var two = new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 6 ), ( center, axis, side ) => center.z < 3 ? 1 : 0 ).box( cells( 3, 3, 0 ), cells( 3, 3, 6 ) );
+        var odd = new Builder( ).box( cells( 0, 0, 0 ), cells( 4, 4, 4 ) );
+
+        odd.triangle( new Vector3( 4, 4, 4 ), new Vector3( 5, 4, 5 ), new Vector3( 4, 5, 5 ) );
+        odd.triangle( new Vector3( 4, 5, 5 ), new Vector3( 5, 4, 5 ), new Vector3( 4, 4, 4 ) );
+        odd.triangles.Add( new BurstMesh.Triangle( 0, 0, 1, 0 ) );
+        odd.vertex( new Vector3( 9, 9, 9 ) );
+
+        assertLevels( "a box of two materials",                box.positions.ToArray( ), box.normals( ), box.triangles.ToArray( ), 0.1 );
+        assertLevels( "two boxes that share an edge",          two.positions.ToArray( ), two.normals( ), two.triangles.ToArray( ), 0.1 );
+        assertLevels( "a box with triangles that are not its", odd.positions.ToArray( ), odd.normals( ), odd.triangles.ToArray( ), 0.1 );
+
+        foreach( var ( contour, surface ) in new[] { ( Contour.Uniform, Surface.TurnedShapes ), ( Contour.Occupancy, Surface.NewShapes ), ( Contour.ManifoldClustered, Surface.TurnedShapes ), ( Contour.Manifold, Surface.PlateAcrossBounds ) } ) {
+            var mesh = this.contourOf( contour, surface, 5 );
+
+            assertLevels( $"{contour} {surface}", mesh.vertices, mesh.normals, trianglesOf( mesh ), 0.1 / 32.0 );
+        }
     }
 
     // the costs the loop starts from are those of every edge under the three quadrics of its two ends: the job that

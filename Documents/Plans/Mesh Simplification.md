@@ -2,7 +2,7 @@
 
 Plan written 2026-11-13 for a mesh simplifier that runs on the finished mesh of any algorithm: quadric error edge collapse, with line quadrics and a progressive record of the collapses.
 
-**Status:** steps 0 to 4 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). All seven decisions were answered as recommended on 2026-11-14. Step 5 is next.
+**Status:** steps 0 to 5 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). Step 5 (2026-11-14) added the record of collapses, **Simplification Detail** and `Voxelizer.simplify`. All seven decisions were answered as recommended on 2026-11-14. Step 6 is next.
 
 **Papers,** all in `Documents/Papers/`:
 - *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): the algorithm.
@@ -82,6 +82,8 @@ It applies to all four algorithms and all three implementations, since it works 
     - **What it means for the editor:** with simplification on, a drag is followed live up to 32³, where it takes 11 ms. At 64³ the contour and the simplification together are just over the 50 ms limit, and the editor waits for changes to settle. The scheduler does that by itself.
 
 11. **A changed simplification setting needs no new contour.** If the voxelizer keeps the unsimplified mesh, a new error bound is a new run of the simplifier, and a new detail is a walk through the record.
+    - **Step 5 built and measured it** (Measurements). At 128³ a new detail takes 3 to 6 ms where a simplified contour takes 286. A new error takes 259, which saves the contour and nothing else.
+    - **Turning simplification on is not such a change:** nothing is kept of a contour that was not simplified, and a GPU contour drawn straight from its buffers never reached the CPU. `simplify` then gives nothing and the caller contours.
 
 12. **The order must not depend on chance.** Equal costs are common on flat regions when the line weight is zero. Ties go to the lower edge index, so the same mesh always simplifies the same way and hashes can be compared between runs.
     - **Step 3 puts the area before the index:** of edges that cost the same, the one whose two ends stand for less area goes first. Every edge of a flat face along the grid costs exactly nothing, and going by the index alone one vertex takes its neighbours one after another, with every edge of it worked out again at each collapse. A cube at 128³ took 2.9 seconds that way and takes 0.17 with the area first. On a cube at 64³ a collapse works out 7 edges again, not 59.
@@ -153,6 +155,12 @@ It applies to all four algorithms and all three implementations, since it works 
 25. **On a mesh simplified until nothing is left within the error, the lines hardly change the triangles.** The even triangles of the paper's figures are of meshes stopped at a count, with vertices left inside the flat regions. Here a flat face keeps none at any small weight, since no collapse on it costs any distance.
     - **Measured** (Measurements): the mean smallest angle and the share of thin triangles are the same from 0 to 1e-4 to within what one run differs from another. From 1e-2 the triangles get more even and more numerous: the slab with a disc goes from a mean smallest angle of 8° to 17° and from 136 triangles to 202.
     - **Where the order will show** is in the meshes between the contour and the simplest one, which step 5's Detail setting picks: there the flat regions are part-way down.
+    - **Step 5 measured that, and there the lines do what the paper shows** (Measurements). A cube at 64³ with 2% of its collapses left to make has a mean smallest angle of 18° and 38% thin triangles without lines, and 43° and none at the default weight. The slab with a disc has 5° and 89% against 35° and 8%. Round models are the same either way. The default weight is enough for it; 1e-3 gives the same.
+
+26. **What a voxelizer keeps is all in managed arrays, and the mesh is always made from the record.** Two things step 5 built otherwise than this plan had them.
+    - **No `Mesh` is kept.** The plan had the unsimplified contour as a `Mesh`. A script reload forgets the voxelizer's hold on it, and nothing else holds a mesh that is not shown, so it would have been left behind. The contour is kept as arrays of positions, normals and triangles beside the collapses: 4.3 MB at 128³ and 17 MB at 256³.
+    - **One way to the mesh.** The loop no longer writes its mesh out. The mesh after all collapses is made from the record like any other level, and a test holds the record to the connectivity: after k collapses, for several k, both give the same vertices in the same order and the same triangles.
+    - **Not parallel.** The plan had the mesh at a level as parallel passes. It is one job on one core, 3 to 4 ms at 128³ with the mesh built, and I left it at that.
 
 ## Design
 
@@ -165,7 +173,7 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
 | Mesh Simplification | Off | Simplifies the mesh of every contour. |
 | Simplification Error | 0.05 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. Set in step 3: it takes the three balls at 128³ from 104,500 triangles to 4,644, with every vertex within about 0.15 cells of the shape. |
 | Line Quadric Weight | 1e-5 | The weight of the line quadrics. Zero gives Garland and Heckbert's algorithm as written. Set in step 4: the paper's 1e-3 leaves vertices on large flat faces that are not needed (finding 24). |
-| Detail | 0 | Which mesh of the record is shown: 0 is the simplest the error allows, 1 is the contour itself. |
+| Simplification Detail | 0 | Which mesh of the record is shown: 0 is the simplest the error allows, 1 is the contour itself. In between it is a share of the collapses, and so of the vertices taken away. Built in step 5. |
 
 ### Code
 
@@ -194,12 +202,17 @@ On `Voxelizer`, so every algorithm has them, carried over by the editor's `selec
   - **`BurstQuadric.point`:** the squared distance to a point.
   - **`simplify( mesh, error, lineWeight )`.**
   - **`Statistics`** also counts the edges worked out again that had no best point. `targetOf` says whether it found one.
-- **`Assets/Scripts/MeshSimplification.cs`:** the settings, the record as managed arrays, and the mesh at a level of detail.
+- **`Assets/Scripts/MeshSimplification.cs`:** the record as managed arrays, and the mesh at a level of detail. Built in step 5, as a class that holds one simplified contour:
+  - **`of( mesh, error, lineWeight )`** simplifies a contour and keeps it with its collapses. **`under( error, lineWeight )`** simplifies the kept contour again.
+  - **`levelOf( detail )`** is how many collapses a detail stands for, and **`meshAt( level )`** the mesh after that many.
+  - **In `BurstMeshSimplifier`:** `Collapse`, which `CollapseJob` writes for every collapse it makes; `LevelJob`, the mesh after a number of collapses; `record` and `meshAt`, which `simplify` is now made of. `CollapseJob` can be told to stop after a number of collapses, which the tests use.
+  - **The settings** are fields of `Voxelizer`, as step 3 put them.
 - **`Voxelizer.contour`:** the hook, between the mesh arriving and vertices being split. Built in step 3:
   - **`lineQuadricWeight`** is the third setting, built in step 4.
   - **`cellSize`:** the size of a cell, which the error is given in. An octree has half as many leaves across as a grid of its resolution has cells.
   - **`contourNormals`:** what an implementation is asked for, shared normals when the mesh is going to be simplified. The GPU is the only one it changes anything for.
-  - **The unsimplified mesh is destroyed** once it is simplified. Step 5 keeps it.
+  - **The unsimplified mesh is destroyed** once it is simplified. Step 5 keeps it, as arrays (finding 26).
+  - **`simplify( )`,** built in step 5 (What the voxelizer keeps).
 
 ### The algorithm
 
@@ -224,16 +237,21 @@ A level is a number of collapses. The mesh at that level is the unsimplified mes
 - **Detail 0** is every collapse, and the mesh the loop ended with.
 - **Detail 1** is none, and the contour itself.
 
+As step 5 built it, in `LevelJob`: the record is gone through first to last for the positions and normals, and last to first for the ancestors, since the ancestor of a removed vertex is that of the vertex it went into, which the later collapses have settled by then. The vertices and triangles come out in the order `Connectivity.write` gives them. At detail 1 the mesh is the contour less the vertices it does not use and the triangles that use a vertex twice.
+
 ### What the voxelizer keeps
 
-The unsimplified mesh and the record of its last contour, as a `Mesh` and managed arrays, so a script reload leaks nothing. They are dropped by `clear` and replaced by the next contour.
+The unsimplified mesh and the record of its last contour, as a `Mesh` and managed arrays, so a script reload leaks nothing. They are dropped by `clear` and replaced by the next contour. As built, all of it is managed arrays (finding 26), and a contour that is not simplified or is empty leaves nothing kept.
 
 - **`Voxelizer.simplify( )`** shows the last contour again under the settings as they are now: a new walk through the record when only the detail changed, a new run of the simplifier when the error or the weight did.
-- **`ContourStatistics`** gains the sizes before simplification.
+  - **It gives nothing** when there is no simplified contour to go back to: simplification is off or was off for the last contour, the last contour was empty, `clear` was called, or the scripts were loaded again. What is shown then stays as it is, and the caller contours.
+  - **The error is in the cells of the contour that is kept,** whatever the resolution was set to since.
+  - **It splits vertices for flat shading** as `contour` does, and leaves the debug view's data alone.
+- **`ContourStatistics`** gains the sizes before simplification: `unsimplifiedVertexCount` and `unsimplifiedTriangleCount`, which a contour that was not simplified does not have.
 
 ### Interactive editor
 
-- The signature is split in two: what a contour depends on, and the four simplification settings. A change to the second alone calls `simplify`, not `contour`.
+- The signature is split in two: what a contour depends on, and the four simplification settings. A change to the second alone calls `simplify`, not `contour`. Where `simplify` gives nothing, as when simplification was just turned on, the editor contours (finding 11).
 - The line under **Contour** shows the sizes before and after.
 - Nothing changes in `Interactive Editor.unity`: the voxelizers in it take the defaults, which are off.
 
@@ -276,6 +294,7 @@ There is no second implementation to compare with, so the tests hold the simplif
   - No degenerate triangles, no winding conflicts, and no triangle turned over. As built: no triangle without area, and every vertex used. A turned triangle is what `check` refuses, tested in step 2.
   - Every vertex within the bound of the shape, by the exact distances. As built: within four times the bound (finding 22).
   - A lower bound never gives fewer triangles. It holds in all 121 contours of the test and in every row of the measurements.
+    - **It is no law, and step 5 met an exception:** in one run of the suite, the GPU's plate that leaves the grid had 48 triangles at an error of 0.02 and 50 at 0.1, at a line weight of 1e-2. A larger error allows other collapses, which can stand in the way of more. The same test passed in twelve runs after and in the four full runs before. The GPU's contours are now allowed a tenth more, or four triangles; the others come out the same every time and are held to it strictly.
   - The torus keeps its handle.
   - Since step 4 the invariants are held at line weights of zero, the default and 1e-2, and the distances at zero and the default.
 - **Line quadrics** (step 4):
@@ -288,11 +307,19 @@ There is no second implementation to compare with, so the tests hold the simplif
   - Detail 0 is the mesh the loop ended with.
   - The mesh at level k is the mesh of a run stopped after k collapses.
   - Every level passes the invariants.
+  - **As step 5 built them:**
+    - The mesh the record gives after k collapses is the mesh the connectivity holds when the loop is stopped after k, bit for bit, for seven values of k on three meshes built by hand and four contours, with and without lines. The loop stopped after k has made the first k collapses of the whole one.
+    - On 55 contours, at details of 0, 0.25, 0.5, 0.75 and 1: the shape of the contour, no triangle without area, every vertex used, and one vertex fewer than the contour uses for every collapse. Detail 0 is the mesh `simplify` gives, and detail 1 the contour's used vertices and its triangles.
+    - A detail is a share of the collapses, and levels past either end of the record are its ends.
+    - The kept contour simplified under another error and weight has the collapses of a fresh simplification under those.
 - **The frame:**
   - With the setting off, the `Start` hashes are those of step 0.
   - Flat shading after simplification, and past 65,535 split vertices.
   - A GPU contour is read back and simplified.
-  - `simplify` after a change of detail or error gives the mesh of a fresh contour under those settings, without calling `voxelize`.
+  - `simplify` after a change of detail or error gives the mesh of a fresh contour under those settings, without calling `voxelize`. As built: the volumes are taken away before `simplify` is called, so a contour would show nothing; for every CPU implementation, shared and flat shaded, through a change of detail, of error and of line weight, and back to the first mesh. The GPU's contours are shown again at detail 1 and 0.
+  - `simplify` gives nothing in the six cases it has no simplified contour in, and leaves the mesh that is shown.
+  - `contour` shows the mesh at the detail, and reports the sizes before.
+  - The error stays in the cells of the kept contour after the resolution is changed.
 - **Editor:** the settings carry over in `select`; a change of detail does not contour; undo.
 - **Performance:** `ContouringPerformanceTest` gains the simplifier, by stage.
 
@@ -348,7 +375,18 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **One expectation of my own was wrong:** that the vertices of a box stand for four different areas. They stand for two.
    - **Not done here:** as in step 3, the interactive editor does not know the setting. That is step 6.
    - **Baselines after step 4:** edit mode 2614, play mode 21, 480 `Start` hashes unchanged.
-5. **The record (medium).** The record, the mesh at a level, the Detail setting, what the voxelizer keeps, `simplify`, their tests. **Measured here:** a change of detail and a change of error at 128³, against a whole contour.
+5. **The record (medium).** The record, the mesh at a level, the Detail setting, what the voxelizer keeps, `simplify`, their tests. **Measured here:** a change of detail and a change of error at 128³, against a whole contour. **Done 2026-11-14:**
+   - **Built:** `Collapse`, `LevelJob`, `record` and `meshAt` in `BurstMeshSimplifier.cs`; `Assets/Scripts/MeshSimplification.cs`; on `Voxelizer` the **Simplification Detail** setting, `simplify( )`, and the sizes before simplification in `ContourStatistics` (Design).
+   - **Two things built otherwise than planned** (finding 26): what is kept is arrays and no `Mesh`, and the mesh is always made from the record.
+   - **The meshes are step 4's:** seven models at seven weights give the same counts, angles and crossing pairs as before the change.
+   - **A change of detail takes 3 to 6 ms at 128³,** against 286 for a simplified contour. A change of error takes 259 (Measurements).
+   - **The lines show in the meshes in between** (finding 25), which step 4 could not see.
+   - **Tests:** 88 more. The edit mode suite takes 3½ minutes.
+   - **A test that failed once:** that a larger error leaves no more triangles is no law, and a GPU contour broke it in one run of the suite (Tests). It came in with step 4, which runs that test at three weights, and is not from this step's code.
+   - **One expectation of my own was wrong:** that every contour has a collapse to make. An octree can leave none.
+   - **Deliberate mistakes:** 31 were tried and every one failed a test.
+   - **Not done here:** the interactive editor does not call `simplify` or know the setting. That is step 6.
+   - **Baselines after step 5:** edit mode 2702, play mode 21, 480 `Start` hashes unchanged.
 6. **Interactive editor and scenes (small).** The split signature, the statistics line, `select`, the editor tests, the scenes.
 7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. From step 4: whether the vertex should be placed by the planes alone (finding 24), if large flat faces at small errors turn out to matter. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. From step 3's times: the loop is 88% of the time at 4.4 microseconds a collapse, and building the lists is 11% and serial, 26 ms at 128³, as long as the contour itself. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
 
@@ -483,6 +521,56 @@ With it:
 - **Exact** means as near the true line as the contour's own vertices, 0.014 cells.
 - **At a weight of zero** the bound alone still holds the lines, with more edges: 89 on the round flat line at 0.05.
 - **Occupancy's round line on the flat face keeps 120 of its 204 edges** at either error. Its line is up to 0.67 cells from the circle in the contour and jumps from side to side of it, which no collapse within these errors can take out.
+
+### The record (step 5, 2026-11-14)
+
+The three balls at the default error and line weight, with Unity in front, in ms.
+
+**A change of a setting against a whole contour,** through `Voxelizer.contour` and `Voxelizer.simplify`, median of 5 runs (3 at 256³):
+
+| Contour | Triangles | Contour, not simplified | Contour, simplified | New detail, 0.25 or 0.5 | Detail 1 | Detail 0 | New error |
+|---|---|---|---|---|---|---|---|
+| Uniform Burst 64³ | 26,036 | 5.6 | 54.5 | 1.1 | 1.5 | 0.8 | 50.3 |
+| Uniform Burst 128³ | 104,500 | 29.2 | 286.0 | 4.2 | 6.0 | 2.8 | 259.0 |
+| Uniform Burst 128³, flat shaded | 104,500 | 37.4 | 290.1 | 6.6 | 13.9 | 3.1 | 261.6 |
+| Occupancy Burst 128³ | 104,500 | 54.5 | 287.9 | 4.3 | 6.1 | 2.7 | 235.8 |
+| Occupancy GPU 128³ | 104,500 | 21.6 | 288.4 | 4.3 | 6.3 | 2.7 | 257.8 |
+| Uniform Burst 256³ | 417,876 | 181.6 | 1,717.1 | 16.3 | 24.0 | 10.9 | 1,537.8 |
+
+- **A new detail** is 50 to 100 times quicker than contouring and simplifying again, and quicker than the contour alone. It grows with the triangles it shows.
+- **A new error** saves the contour and nothing else, which is a tenth at 128³.
+
+**The parts,** median of 7 runs:
+
+| Cells | Kept | Simplifying and keeping | Simplifying alone | Mesh after all collapses | After half | After none |
+|---|---|---|---|---|---|---|
+| 32³ | 0.2 MB | 10.5 | 10.6 | 0.25 | 0.32 | 0.33 |
+| 64³ | 1.1 MB | 47.6 | 47.8 | 0.77 | 1.10 | 1.14 |
+| 128³ | 4.3 MB | 261.4 | 259.1 | 2.73 | 4.35 | 4.47 |
+| 256³ | 17.4 MB | 1,526.9 | 1,556.2 | 10.58 | 17.40 | 18.11 |
+
+- **Keeping the contour and the record costs no time that shows:** the two columns differ by less than one run does from the next.
+- **The mesh at a level** includes copying the kept arrays to where a job can read them and building the `Mesh`.
+
+**The meshes in between, by line weight,** Uniform at 64³. Detail, triangles, the mean smallest angle, and the share of triangles where it is under 10°:
+
+| Model | Weight | Detail 0 | 0.02 | 0.1 | 0.25 | 0.5 |
+|---|---|---|---|---|---|---|
+| Cube | 0 | 12, 45°, 0% | 376, 18°, 38% | 1,836, 32°, 19% | 4,572, 39°, 8% | 9,132, 42°, 4% |
+| Cube | 1e-5 | 12, 45°, 0% | 376, 43°, 0% | 1,836, 42°, 0% | 4,572, 43°, 0% | 9,132, 38°, 0% |
+| Cube | 1e-3 | 12, 45°, 0% | 376, 42°, 0% | 1,836, 42°, 0% | 4,572, 43°, 0% | 9,132, 36°, 0% |
+| Slab with disc | 0 | 136, 8°, 79% | 448, 5°, 89% | 1,694, 19°, 42% | 4,028, 24°, 35% | 7,922, 33°, 16% |
+| Slab with disc | 1e-5 | 144, 8°, 75% | 456, 35°, 8% | 1,700, 40°, 1% | 4,036, 41°, 1% | 7,926, 39°, 0% |
+| Slab with disc | 1e-3 | 152, 11°, 53% | 464, 37°, 2% | 1,708, 42°, 0% | 4,040, 43°, 0% | 7,930, 38°, 0% |
+| Turned cube | 0 | 226, 20°, 27% | 614, 33°, 6% | 2,164, 36°, 1% | 5,070, 36°, 1% | 9,912, 36°, 1% |
+| Turned cube | 1e-5 | 230, 21°, 27% | 618, 34°, 5% | 2,168, 39°, 1% | 5,072, 41°, 0% | 9,916, 39°, 0% |
+| Three balls | 0 | 2,518, 42°, 2% | 2,988, 42°, 2% | 4,870, 43°, 1% | 8,398, 41°, 1% | 14,276, 43°, 1% |
+| Three balls | 1e-5 | 2,510, 42°, 2% | 2,980, 42°, 2% | 4,862, 43°, 1% | 8,392, 41°, 1% | 14,272, 43°, 1% |
+| New shapes | 0 | 3,224, 30°, 6% | 3,606, 30°, 5% | 5,136, 33°, 4% | 8,002, 36°, 3% | 12,780, 37°, 2% |
+| New shapes | 1e-3 | 3,284, 32°, 3% | 3,666, 33°, 2% | 5,190, 36°, 1% | 8,048, 39°, 1% | 12,810, 40°, 1% |
+
+- **Flat models part-way down** are where the lines show (finding 25): without them a cube with 2% of its collapses left is two fifths thin triangles, even with ties going by area (finding 12).
+- **At detail 0** the weight makes no such difference, as step 4 found.
 
 ### Line quadrics (step 4, 2026-11-14)
 

@@ -229,7 +229,7 @@ public class ContouringPerformanceTest : TopologyTest {
 
 
     // the stages of the mesh simplifier, as its profiler markers are named
-    private static readonly string[] simplifierStages = { "ReadMesh", "Build", "Quadrics", "Costs", "Collapse", "BuildMesh" };
+    private static readonly string[] simplifierStages = { "ReadMesh", "Build", "Quadrics", "Costs", "Collapse", "Level", "BuildMesh" };
 
     // how long simplifying the Burst contour of each algorithm takes, in all and stage by stage, at the error a
     // voxelizer starts out with. The octrees simplify first, as in the "Simplification" scenes, and leave the simplifier
