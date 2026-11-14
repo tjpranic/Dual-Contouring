@@ -72,34 +72,24 @@ public class OccupancyDualContouringEditor : VoxelizerEditor {
 
     // the settings of a voxelizer that place points by distance, which occupancy-based dual contouring never looks at:
     // it has searches of its own
-    private static readonly string[] unused = {
-        "m_Script",
+    private static readonly string[] distanceSettings = {
         "_binarySearchIterations",
         "_surfaceCorrectionIterations",
         "_intersectionApproximation"
     };
 
+    protected override string[] unused {
+        get { return distanceSettings; }
+    }
+
     public override void OnInspectorGUI( ) {
-        this.serializedObject.Update( );
-
-        using( new EditorGUI.DisabledScope( true ) ) {
-            EditorGUILayout.PropertyField( this.serializedObject.FindProperty( "m_Script" ) );
-        }
-
-        DrawPropertiesExcluding( this.serializedObject, unused );
-
-        this.serializedObject.ApplyModifiedProperties( );
+        base.OnInspectorGUI( );
 
         var occupancyDualContouring = this.target as OccupancyDualContouring;
 
         // there is no managed implementation of occupancy-based dual contouring
         if( occupancyDualContouring.implementationType == ImplementationType.Managed ) {
             occupancyDualContouring.implementationType = ImplementationType.Burst;
-        }
-
-        // only SVD solver is available for GPU implementation
-        if( occupancyDualContouring.implementationType == ImplementationType.GPU ) {
-            occupancyDualContouring.qefSolverType = QEFSolver.Type.SVD;
         }
     }
 

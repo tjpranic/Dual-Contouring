@@ -127,7 +127,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     [Tooltip( "Colour under the lines with Lines Only, where the lines of each material take its colour" )]
     public Color wireframeFillColor = Color.black;
 
-    [Space]
+    // what is drawn of the grid and the last contour to see how it was made (DrawShapes). The inspector draws these last,
+    // with their names less the "debug" that tells them apart in code
+    [Header( "Debug" )]
 
     public Debug debugFlags = Debug.Off;
 
@@ -764,11 +766,98 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
 }
 
+// draws the settings in this order: those of the algorithm, the voxelizer's then the subclass's, then the sections of the
+// voxelizer under their headers, and the debug view last
 [CustomEditor( typeof( Voxelizer ) )]
 public class VoxelizerEditor : Editor {
 
+    // the setting of ImmediateModeShapeDrawer, from the Shapes library, to draw only in cameras that see the voxelizer's
+    // layer. It comes with the base class the debug view is drawn by and is not a setting of the voxelizer, so it is left
+    // out, and stays off
+    private const string useCullingMasks = "useCullingMasks";
+
+    // the first of the voxelizer's settings under a header. The voxelizer's settings before it are those of the algorithm
+    private const string firstSectionSetting = "meshSimplification";
+
+    // what the names of the settings of the debug view start with
+    private const string debugPrefix = "debug";
+
+    // what the names of the voxelizer's settings under a header start with, which their labels leave out, as the header
+    // already says it
+    private static readonly string[] sectionPrefixes = { "simplification", "wireframe", debugPrefix };
+
+    // the labels of the settings named after their section, which would have nothing left
+    private static readonly Dictionary<string, string> sectionLabels = new( ) {
+        { "meshSimplification", "Enabled" },
+        { "wireframe",          "Look"    }
+    };
+
+    // the names of the settings Voxelizer declares, which tell them apart from those of the subclass. Only the fields that
+    // are saved count: a field that is not can share its name with a setting of a subclass, as the voxelizer's
+    // simplification does with that of adaptive dual contouring
+    private static readonly HashSet<string> voxelizerSettings = serializedFieldsOf( typeof( Voxelizer ) );
+
+    // settings of the voxelizer that a subclass never looks at, which its inspector leaves out
+    protected virtual string[] unused {
+        get { return Array.Empty<string>( ); }
+    }
+
     public override void OnInspectorGUI( ) {
-        base.OnInspectorGUI( );
+        this.serializedObject.Update( );
+
+        var algorithm = new List<SerializedProperty>( );
+        var sections  = new List<SerializedProperty>( );
+        var debug     = new List<SerializedProperty>( );
+        var unused    = new HashSet<string>( this.unused ) { useCullingMasks };
+
+        // the properties come in the order their fields are declared, the voxelizer's before the subclass's
+        var inSections = false;
+        var property   = this.serializedObject.GetIterator( );
+
+        for( var enterChildren = true; property.NextVisible( enterChildren ); enterChildren = false ) {
+            var name = property.name;
+
+            if( unused.Contains( name ) ) {
+                continue;
+            }
+
+            if( name == "m_Script" ) {
+                using( new EditorGUI.DisabledScope( true ) ) {
+                    EditorGUILayout.PropertyField( property );
+                }
+
+                continue;
+            }
+
+            var ofVoxelizer = voxelizerSettings.Contains( name );
+
+            inSections |= ofVoxelizer && name == firstSectionSetting;
+
+            if( ofVoxelizer && name.StartsWith( debugPrefix, StringComparison.Ordinal ) ) {
+                debug.Add( property.Copy( ) );
+            }
+            else if( ofVoxelizer && inSections ) {
+                sections.Add( property.Copy( ) );
+            }
+            else {
+                algorithm.Add( property.Copy( ) );
+            }
+        }
+
+        foreach( var setting in algorithm ) {
+            EditorGUILayout.PropertyField( setting, true );
+        }
+
+        // the header of each section comes with its first setting
+        foreach( var setting in sections ) {
+            EditorGUILayout.PropertyField( setting, sectionLabelOf( setting ), true );
+        }
+
+        foreach( var setting in debug ) {
+            EditorGUILayout.PropertyField( setting, sectionLabelOf( setting ), true );
+        }
+
+        this.serializedObject.ApplyModifiedProperties( );
 
         var voxelizer = this.target as Voxelizer;
 
@@ -776,6 +865,39 @@ public class VoxelizerEditor : Editor {
         if( voxelizer.implementationType == ImplementationType.GPU ) {
             voxelizer.qefSolverType = QEFSolverType.SVD;
         }
+    }
+
+    // the label of a setting under a header, without the name of its section, and with its tooltip
+    private static GUIContent sectionLabelOf( SerializedProperty setting ) {
+        if( !sectionLabels.TryGetValue( setting.name, out var name ) ) {
+            name = setting.name;
+
+            foreach( var prefix in sectionPrefixes ) {
+                if( name.StartsWith( prefix, StringComparison.Ordinal ) ) {
+                    name = name.Substring( prefix.Length );
+                    break;
+                }
+            }
+        }
+
+        return new GUIContent( ObjectNames.NicifyVariableName( name ), setting.tooltip );
+    }
+
+    // the names of the fields a type declares, not those of its base types, that Unity saves: the public ones and those
+    // marked SerializeField, less those marked NonSerialized
+    private static HashSet<string> serializedFieldsOf( Type type ) {
+        const System.Reflection.BindingFlags declared =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.DeclaredOnly;
+
+        var fields = new HashSet<string>( );
+
+        foreach( var field in type.GetFields( declared ) ) {
+            if( !field.IsNotSerialized && ( field.IsPublic || field.IsDefined( typeof( SerializeField ), false ) ) ) {
+                fields.Add( field.Name );
+            }
+        }
+
+        return fields;
     }
 
 }

@@ -59,12 +59,12 @@ Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed
 ## Wireframe
 Every voxelizer can draw the edges of its contour's triangles over the contour. Its inspector has a **Wireframe** section:
 
-- **Wireframe** is Off, **Over Surface** or **Lines Only**.
+- **Look** is Off, **Over Surface** or **Lines Only**.
   - **Over Surface** draws the lines over the shaded surface.
   - **Lines Only** draws them over a flat fill, which hides the surface and the lines behind it. Each material's lines are in that material's colour.
-- **Wireframe Line Width** is in pixels, and stays the same at any distance.
-- **Wireframe Line Color** is the colour of the lines over the surface. Its alpha blends them.
-- **Wireframe Fill Color** is the fill under Lines Only.
+- **Line Width** is in pixels, and stays the same at any distance.
+- **Line Color** is the colour of the lines over the surface. Its alpha blends them.
+- **Fill Color** is the fill under Lines Only.
 
 **How the lines are drawn:**
 - **Edges:** the lines are the edges of the triangles, so every quad shows its diagonal.
@@ -83,10 +83,10 @@ Its settings are in the **Mesh Simplification** section of the inspector:
 
 | Setting | Default | What it does |
 |---|---|---|
-| Mesh Simplification | Off | Simplifies the mesh of every contour. Off, every mesh is what it was without this feature. |
-| Simplification Error | 0.05 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. Edges are collapsed for as long as they stay within it. |
+| Enabled | Off | Simplifies the mesh of every contour. Off, every mesh is what it was without this feature. |
+| Error | 0.05 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. Edges are collapsed for as long as they stay within it. |
 | Line Quadric Weight | 1e-5 | How much every vertex is held to the line through it along its normal, after *Controlling Quadric Error Simplification with Line Quadrics* (Liu, Rahimzadeh and Zordan, 2025). A little settles where the vertices of flat regions go and in which order. More evens out the triangles and leaves more of them. Zero is Garland and Heckbert's algorithm as written. |
-| Simplification Detail | 0 | Which mesh between the simplest and the contour is shown: 0 is the simplest the error allows, 1 is the contour itself. |
+| Detail | 0 | Which mesh between the simplest and the contour is shown: 0 is the simplest the error allows, 1 is the contour itself. |
 
 **What it takes away,** from Burst contours at 128³ cells at the defaults:
 
