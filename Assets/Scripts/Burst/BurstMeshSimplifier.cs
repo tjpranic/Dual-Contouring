@@ -315,7 +315,8 @@ public static class BurstMeshSimplifier {
                 }
             }
 
-            var sharp = 0;
+            var sharp    = 0;
+            var boundary = false;
 
             for( var end = this.firstEdges[vertex]; end != -1; end = this.nextEdges[end] ) {
                 var count = this.edgeTriangles[end >> 1];
@@ -329,10 +330,63 @@ public static class BurstMeshSimplifier {
                 if( this.edgeSharp[end >> 1] != Sharp.None ) {
                     ++sharp;
                 }
+
+                boundary |= count != 2;
             }
 
             this.sharpCounts[vertex] = sharp;
-            this.orders[vertex]      = this.orderOf( vertex );
+            this.orders[vertex]      = boundary ? this.orderOf( vertex ) : this.orderAmongEdgesOfTwoTriangles( vertex );
+        }
+
+        // the order of a vertex whose edges all have exactly two triangles, which is nearly every vertex of a
+        // contour: 0 when its triangles are one fan around it, and 2 when they are more, as where two surfaces touch
+        // in the vertex. Every triangle then has one other on each of its two edges at the vertex, so the triangles
+        // lie in rings, and going from one to the next comes back to the first after all of them exactly when there
+        // is one ring. The step is found without a list: each edge keeps its two triangles as one number, the one
+        // exclusive-or the other, which gives either from the other
+        private byte orderAmongEdgesOfTwoTriangles( int vertex ) {
+            var stamp = this.nextStamp( );
+            var count = 0;
+
+            for( var corner = this.firstCorners[vertex]; corner != -1; corner = this.nextCorners[corner], ++count ) {
+                var corners = this.triangles[corner / 3];
+
+                for( var other = 0; other < 3; ++other ) {
+                    var neighbour = corners[other];
+
+                    if( neighbour == vertex ) {
+                        continue;
+                    }
+                    if( this.stamps[neighbour] != stamp ) {
+                        this.stamps[neighbour] = stamp;
+                        this.notes[neighbour]  = corner / 3;
+                    }
+                    else {
+                        this.notes[neighbour] ^= corner / 3;
+                    }
+                }
+            }
+
+            if( count == 0 ) {
+                return 0;
+            }
+
+            var first    = this.firstCorners[vertex] / 3;
+            var triangle = first;
+            var from     = this.triangles[first].x != vertex ? this.triangles[first].x : this.triangles[first].y;
+            var steps    = 0;
+
+            do {
+                var to = this.third( triangle, vertex, from );
+
+                triangle = this.notes[to] ^ triangle;
+                from     = to;
+
+                ++steps;
+            }
+            while( triangle != first && steps < count );
+
+            return ( byte )( triangle == first && steps == count ? 0 : 2 );
         }
 
         // the order of a vertex (Dey et al., section 3), from the triangles around it. Going from triangle to triangle
@@ -1088,6 +1142,16 @@ public static class BurstMeshSimplifier {
 
     }
 
+    // an edge in the heap, with what it is ordered by: what collapsing it costs, and the area its two ends stand for.
+    // They are kept here and not looked up, so that going down the heap reads the heap and nothing else
+    public struct Waiter {
+
+        public double cost;
+        public double area;
+        public int    edge;
+
+    }
+
     // Garland and Heckbert's loop (section 4.1): the edge that costs least is collapsed, and the costs of the edges of
     // the vertex it leaves are worked out again, until no edge is left to collapse.
     //
@@ -1115,9 +1179,9 @@ public static class BurstMeshSimplifier {
         public NativeArray<double>  costs;
         public NativeArray<bool>    within;
 
-        // the heap, as the edges in it, and for every edge its place in the heap or why it is not in it
-        public NativeArray<int> heap;
-        public NativeArray<int> places;
+        // the heap, and for every edge its place in the heap or why it is not in it
+        public NativeArray<Waiter> heap;
+        public NativeArray<int>    places;
 
         public NativeList<Collapse> record;
 
@@ -1135,7 +1199,7 @@ public static class BurstMeshSimplifier {
 
             for( var edge = 0; edge < this.mesh.edgeCount; ++edge ) {
                 if( this.mesh.edges[edge].x != -1 && this.within[edge] ) {
-                    this.heap[this.count] = edge;
+                    this.heap[this.count] = this.waiterOf( edge );
                     this.places[edge]     = this.count++;
                 }
                 else {
@@ -1149,7 +1213,7 @@ public static class BurstMeshSimplifier {
             var statistics = default( Statistics );
 
             while( this.count > 0 && statistics.collapses < this.maximumCollapses ) {
-                var edge = this.heap[0];
+                var edge = this.heap[0].edge;
 
                 this.removeAt( 0 );
                 this.places[edge] = Out;
@@ -1171,11 +1235,6 @@ public static class BurstMeshSimplifier {
                     continue;
                 }
 
-                // the edges of both ends leave the heap before the collapse changes what they are ordered by, or
-                // removes them
-                this.takeOutEdgesOf( ends.x );
-                this.takeOutEdgesOf( ends.y );
-
                 var kept = this.mesh.collapse( edge, this.targets[edge] );
 
                 this.record.Add( new Collapse {
@@ -1191,7 +1250,13 @@ public static class BurstMeshSimplifier {
                     ++statistics.farCollapses;
                 }
 
-                // the edges of the kept vertex cost what its new quadric and position make them cost
+                // the edges that went with the collapse leave the heap
+                for( var index = 0; index < this.mesh.removedEdges.Length; ++index ) {
+                    this.takeOut( this.mesh.removedEdges[index] );
+                }
+
+                // the edges of the kept vertex cost what its new quadric and position make them cost, and stand for
+                // the area it has now. One that is in the heap moves to where that puts it
                 for( var end = this.mesh.firstEdges[kept]; end != -1; end = this.mesh.nextEdges[end], ++statistics.evaluations ) {
                     var changed = end >> 1;
                     var a       = this.mesh.edges[changed].x;
@@ -1210,11 +1275,14 @@ public static class BurstMeshSimplifier {
                     this.costs[changed]   = cost;
                     this.within[changed]  = within;
 
-                    if( within ) {
-                        this.add( changed );
+                    if( !within ) {
+                        this.takeOut( changed );
+                    }
+                    else if( this.places[changed] >= 0 ) {
+                        this.move( changed );
                     }
                     else {
-                        this.places[changed] = Out;
+                        this.add( changed );
                     }
                 }
 
@@ -1233,48 +1301,54 @@ public static class BurstMeshSimplifier {
             this.statistics[0] = statistics;
         }
 
-        private void takeOutEdgesOf( int vertex ) {
-            for( var end = this.mesh.firstEdges[vertex]; end != -1; end = this.mesh.nextEdges[end] ) {
-                if( this.places[end >> 1] >= 0 ) {
-                    this.removeAt( this.places[end >> 1] );
-                }
-                this.places[end >> 1] = Out;
-            }
+        // an edge as it waits: at the cost it has now, for the area its two ends stand for now
+        private readonly Waiter waiterOf( int edge ) {
+            var ends = this.mesh.edges[edge];
+
+            return new Waiter { cost = this.costs[edge], area = this.mesh.areas[ends.x] + this.mesh.areas[ends.y], edge = edge };
         }
 
         // whether an edge goes before another: the cheaper of the two. Of two that cost the same, the one whose ends
         // stand for less area, and of two that are the same in that too, the lower.
         //
-        // On a flat face that lies along the grid every edge costs exactly nothing. Going by the index alone, the
-        // vertex of the first edge then takes one neighbour after another, and ends up with every triangle of the
-        // face around it: thousands of edges, each of them to be worked out again at every collapse. Going by area
-        // first, a vertex that has taken a neighbour waits until the vertices around it have done the same
-        private readonly bool before( int edge, int other ) {
-            if( this.costs[edge] != this.costs[other] ) {
-                return this.costs[edge] < this.costs[other];
+        // On a flat face that lies along the grid every edge costs exactly nothing at a line weight of zero. Going by
+        // the index alone, the vertex of the first edge then takes one neighbour after another, and ends up with
+        // every triangle of the face around it: thousands of edges, each of them to be worked out again at every
+        // collapse. Going by area first, a vertex that has taken a neighbour waits until the vertices around it have
+        // done the same
+        private static bool before( in Waiter waiter, in Waiter other ) {
+            if( waiter.cost != other.cost ) {
+                return waiter.cost < other.cost;
             }
 
-            var area      = this.areaOf( edge );
-            var otherArea = this.areaOf( other );
-
-            return area < otherArea || ( area == otherArea && edge < other );
+            return waiter.area < other.area || ( waiter.area == other.area && waiter.edge < other.edge );
         }
 
-        // the area the two ends of an edge stand for
-        private readonly double areaOf( int edge ) {
-            var ends = this.mesh.edges[edge];
-
-            return this.mesh.areas[ends.x] + this.mesh.areas[ends.y];
-        }
-
-        private void put( int place, int edge ) {
-            this.heap[place]  = edge;
-            this.places[edge] = place;
+        private void put( int place, in Waiter waiter ) {
+            this.heap[place]         = waiter;
+            this.places[waiter.edge] = place;
         }
 
         private void add( int edge ) {
-            this.put( this.count++, edge );
+            this.put( this.count++, this.waiterOf( edge ) );
             this.riseFrom( this.count - 1 );
+        }
+
+        // an edge that is in the heap, to where its cost and area as they are now put it
+        private void move( int edge ) {
+            var place = this.places[edge];
+
+            this.put( place, this.waiterOf( edge ) );
+            this.riseFrom( place );
+            this.sinkFrom( this.places[edge] );
+        }
+
+        // an edge that may be in the heap, out of it
+        private void takeOut( int edge ) {
+            if( this.places[edge] >= 0 ) {
+                this.removeAt( this.places[edge] );
+            }
+            this.places[edge] = Out;
         }
 
         // takes the edge at a place out of the heap. Its own place is the caller's to set
@@ -1287,16 +1361,16 @@ public static class BurstMeshSimplifier {
 
             this.put( place, last );
             this.riseFrom( place );
-            this.sinkFrom( this.places[last] );
+            this.sinkFrom( this.places[last.edge] );
         }
 
         private void riseFrom( int place ) {
-            var edge = this.heap[place];
+            var waiter = this.heap[place];
 
             while( place > 0 ) {
                 var parent = ( place - 1 ) / 2;
 
-                if( !this.before( edge, this.heap[parent] ) ) {
+                if( !before( waiter, this.heap[parent] ) ) {
                     break;
                 }
 
@@ -1305,11 +1379,11 @@ public static class BurstMeshSimplifier {
                 place = parent;
             }
 
-            this.put( place, edge );
+            this.put( place, waiter );
         }
 
         private void sinkFrom( int place ) {
-            var edge = this.heap[place];
+            var waiter = this.heap[place];
 
             while( true ) {
                 var child = ( place * 2 ) + 1;
@@ -1317,10 +1391,10 @@ public static class BurstMeshSimplifier {
                 if( child >= this.count ) {
                     break;
                 }
-                if( child + 1 < this.count && this.before( this.heap[child + 1], this.heap[child] ) ) {
+                if( child + 1 < this.count && before( this.heap[child + 1], this.heap[child] ) ) {
                     ++child;
                 }
-                if( !this.before( this.heap[child], edge ) ) {
+                if( !before( this.heap[child], waiter ) ) {
                     break;
                 }
 
@@ -1329,7 +1403,7 @@ public static class BurstMeshSimplifier {
                 place = child;
             }
 
-            this.put( place, edge );
+            this.put( place, waiter );
         }
 
     }
@@ -1546,7 +1620,7 @@ public static class BurstMeshSimplifier {
         using var targets       = new NativeArray<double3>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var costs         = new NativeArray<double>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var within        = new NativeArray<bool>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
-        using var heap          = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var heap          = new NativeArray<Waiter>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var places        = new NativeArray<int>( connectivity.edgeCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var statisticsOut = new NativeArray<Statistics>( 1, Allocator.TempJob );
         using var refusals      = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );

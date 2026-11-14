@@ -621,9 +621,9 @@ public class InteractiveEditor : MonoBehaviour {
 
         this.scheduler.contoured( this.now, signature, statistics.milliseconds / 1000.0, this.active );
 
-        // the contour is simplified as the settings are now. Simplifying it again takes no longer than the contour it
-        // was part of, which is what the simplifier's scheduler has to go by until it has a time of its own
-        this.simplifierScheduler.contoured( this.now, this.simplifierSignature( ), statistics.milliseconds / 1000.0, this.active );
+        // the contour is simplified as the settings are now. Simplifying it again takes as long as simplifying it took
+        // of the contour, which for a managed implementation is a small part of it
+        this.simplifierScheduler.contoured( this.now, this.simplifierSignature( ), ( statistics.simplificationMilliseconds ?? 0.0 ) / 1000.0, this.active );
         this.detailScheduler.shown( this.detailSignature( ) );
 
         this.lastContour             = statistics;
@@ -649,7 +649,8 @@ public class InteractiveEditor : MonoBehaviour {
 
         // the time stays that of the contour, the sizes are those of what is shown now
         this.lastContour = new Voxelizer.ContourStatistics(
-            this.lastContour?.milliseconds ?? statistics.milliseconds, statistics.vertexCount, statistics.triangleCount, statistics.unsimplifiedVertexCount, statistics.unsimplifiedTriangleCount
+            this.lastContour?.milliseconds ?? statistics.milliseconds, statistics.vertexCount, statistics.triangleCount, statistics.unsimplifiedVertexCount, statistics.unsimplifiedTriangleCount,
+            statistics.simplificationMilliseconds
         );
 
 #if UNITY_EDITOR

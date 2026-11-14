@@ -1596,7 +1596,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
             using var targets    = new NativeArray<double3>( this.connectivity.edgeCount, Allocator.TempJob );
             using var costs      = new NativeArray<double>( this.connectivity.edgeCount, Allocator.TempJob );
             using var within     = new NativeArray<bool>( this.connectivity.edgeCount, Allocator.TempJob );
-            using var heap       = new NativeArray<int>( this.connectivity.edgeCount, Allocator.TempJob );
+            using var heap       = new NativeArray<BurstMeshSimplifier.Waiter>( this.connectivity.edgeCount, Allocator.TempJob );
             using var places     = new NativeArray<int>( this.connectivity.edgeCount, Allocator.TempJob );
             using var statistics = new NativeArray<BurstMeshSimplifier.Statistics>( 1, Allocator.TempJob );
             using var refusals   = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
@@ -1687,6 +1687,109 @@ public class BurstMeshSimplifierTest : TopologyTest {
         using var loop = new Loop( positions, normals, triangles, error, lineWeight );
 
         return ( loop.statistics.collapses, loop.left( error ) );
+    }
+
+    // the edge the loop has to collapse next, found the slow way: of all the edges that are within the error bound and
+    // that check allows, the one that costs least, with ties going to the one whose ends stand for less area and then
+    // to the lower. Gives its two vertices, or -1 when there is none
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct CheapestJob : IJob {
+
+        public double       limit;
+        public Connectivity mesh;
+
+        public NativeArray<int2> cheapest;
+
+        public void Execute( ) {
+            var best     = -1;
+            var bestCost = 0.0;
+            var bestArea = 0.0;
+
+            for( var edge = 0; edge < this.mesh.edgeCount; ++edge ) {
+                var ends = this.mesh.edges[edge];
+
+                if( ends.x == -1 ) {
+                    continue;
+                }
+
+                var area = this.mesh.areas[ends.x] + this.mesh.areas[ends.y];
+
+                BurstMeshSimplifier.evaluate(
+                    this.mesh.planes[ends.x] + this.mesh.planes[ends.y], area,
+                    this.mesh.sharpPlanes[ends.x] + this.mesh.sharpPlanes[ends.y], this.mesh.sharpAreas[ends.x] + this.mesh.sharpAreas[ends.y],
+                    this.mesh.lines[ends.x] + this.mesh.lines[ends.y], this.mesh.positions[ends.x], this.mesh.positions[ends.y], this.limit, out var target, out var cost, out var within
+                );
+
+                if( !within || this.mesh.check( edge, target ) != Refusal.None ) {
+                    continue;
+                }
+                if( best == -1 || cost < bestCost || ( cost == bestCost && area < bestArea ) ) {
+                    best     = edge;
+                    bestCost = cost;
+                    bestArea = area;
+                }
+            }
+
+            this.cheapest[0] = best == -1 ? new int2( -1, -1 ) : this.mesh.edges[best];
+        }
+
+    }
+
+    // Garland and Heckbert, section 4.1: the loop collapses the edge that costs least, every time. The heap is how
+    // it finds that edge without looking at all of them, and here every one of its choices is held to looking at all
+    // of them: the loop is stopped after k collapses, for every k, and the cheapest edge of the mesh it holds then,
+    // among those within the error that may collapse, is the one whose two vertices its next collapse joins
+    [Test]
+    public void everyCollapseIsOfTheCheapestEdgeThatMayCollapse( [Values( 0.0, 1e-5, 1e-2 )] double lineWeight ) {
+        void assertCheapestFirst( string what, Vector3[] positions, Vector3[] normals, BurstMesh.Triangle[] triangles, double error ) {
+            using var whole = new Loop( positions, normals, triangles, error, lineWeight );
+
+            var count = whole.record.Length;
+
+            Assert.Greater( count, 20, $"{what}: collapses" );
+
+            using var cheapest = new NativeArray<int2>( 1, Allocator.TempJob );
+
+            for( var made = 0; made <= count; ++made ) {
+                using var stopped = new Loop( positions, normals, triangles, error, lineWeight, made );
+
+                new CheapestJob { limit = error * error, mesh = stopped.connectivity, cheapest = cheapest }.Run( );
+
+                var ends = cheapest[0];
+
+                if( made == count ) {
+                    Assert.AreEqual( -1, ends.x, $"{what}: an edge is left to collapse after the last of {count} collapses" );
+                }
+                else {
+                    Assert.AreEqual(
+                        ( whole.record[made].kept, whole.record[made].removed ), ( math.min( ends.x, ends.y ), math.max( ends.x, ends.y ) ),
+                        $"{what}: the vertices of collapse {made} of {count}, against those of the cheapest edge"
+                    );
+                }
+            }
+        }
+
+        // a box of two materials, two boxes that share an edge of four triangles, and a contour with round and
+        // flat parts
+        var box = new Builder( ).box( cells( 0, 0, 0 ), cells( 6, 5, 4 ), ( center, axis, side ) => center.z < 2 ? 1 : 0 );
+        var two = new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 6 ), ( center, axis, side ) => center.z < 3 ? 1 : 0 ).box( cells( 3, 3, 0 ), cells( 3, 3, 6 ) );
+
+        assertCheapestFirst( "a box of two materials",       box.positions.ToArray( ), box.normals( ), box.triangles.ToArray( ), 0.1 );
+        assertCheapestFirst( "two boxes that share an edge", two.positions.ToArray( ), two.normals( ), two.triangles.ToArray( ), 0.1 );
+
+        var mesh = this.contourOf( Contour.Uniform, Surface.SphereCutaway, 4 );
+
+        assertCheapestFirst( "the cut-away sphere", mesh.vertices, mesh.normals, trianglesOf( mesh ), 0.25 / 16.0 );
+
+        // without lines an edge can get cheaper when a collapse moves one of its ends: its vertex goes to a point of
+        // the edge where the planes have no best point, and the edge is another one afterwards. Such an edge has to
+        // move up the heap, which happens on flat faces and creases from 32^3 cells up, and never with lines, where a
+        // collapse only ever adds to what an edge costs
+        if( lineWeight == 0.0 ) {
+            var plate = this.contourOf( Contour.Occupancy, Surface.PlateAcrossBounds, 5 );
+
+            assertCheapestFirst( "the plate", plate.vertices, plate.normals, trianglesOf( plate ), 0.1 / 32.0 );
+        }
     }
 
     private static ( int, int, int, int )[] cornersOf( BurstMesh.Triangle[] triangles ) {

@@ -76,6 +76,60 @@ Every voxelizer can draw the edges of its contour's triangles over the contour. 
 
 **Dense meshes:** seen whole, they fill up with lines. With the grid 600 pixels across, a cell at 256³ is two or three pixels wide.
 
+## Mesh Simplification
+Every voxelizer can simplify the mesh of its contour before it is shown. It follows *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): edges are collapsed one at a time, the cheapest first, where what an edge costs is how far its new vertex would be from the planes of the triangles it stands for. It works on the finished mesh, so it serves every algorithm and implementation alike. The simplifier itself is Burst code.
+
+Its settings are in the **Mesh Simplification** section of the inspector:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Mesh Simplification | Off | Simplifies the mesh of every contour. Off, every mesh is what it was without this feature. |
+| Simplification Error | 0.05 | How far a collapse may leave a vertex from the planes of the surface it stands for, as a root mean square distance in cells. Edges are collapsed for as long as they stay within it. |
+| Line Quadric Weight | 1e-5 | How much every vertex is held to the line through it along its normal, after *Controlling Quadric Error Simplification with Line Quadrics* (Liu, Rahimzadeh and Zordan, 2025). A little settles where the vertices of flat regions go and in which order. More evens out the triangles and leaves more of them. Zero is Garland and Heckbert's algorithm as written. |
+| Simplification Detail | 0 | Which mesh between the simplest and the contour is shown: 0 is the simplest the error allows, 1 is the contour itself. |
+
+**What it takes away,** from Burst contours at 128³ cells at the defaults:
+
+| Model | Triangles | Simplified |
+|---|---|---|
+| Three balls | 104,500 | 4,588 |
+| Cubes and a sphere | 68,812 | 1,576 |
+| A slab with a band of a second material | 63,036 | 28 |
+
+- **Flat shapes** come down to their corners: an upright cuboid to 8 vertices and 12 triangles, with any algorithm.
+- **After an octree has simplified,** in Adaptive and Manifold Dual Contouring, it takes about another quarter at the default error.
+
+**What it keeps:**
+- **Topology:** no collapse joins, splits, opens or closes anything, after *Topology Preserving Edge Contraction* (Dey, Edelsbrunner, Guha and Nekhayev, 1999). That holds for meshes that are not manifolds too, as Uniform and Adaptive Dual Contouring give them. A small ball never goes below a tetrahedron.
+- **Materials:** every sub-mesh, and the lines between them, by the rules of *Progressive Meshes* (Hoppe, 1996). A line between two materials is held to the error by itself, so a round one stays round on a flat face.
+- **Open edges:** where the surface leaves the grid, the rim stays a rim.
+- **Sharp edges and corners:** as far as the error allows. A corner can slide along its edge by about three times the error.
+- **Distance:** vertices and the middles of triangles end up within about three times the error of the shape.
+
+**What it does not:**
+- **Triangles that pass through each other** are not prevented. What Occupancy-Based Dual Contouring promises holds with simplification off: on a model of turned shapes at 64³ cells, simplifying its contour leaves 9 such pairs where it had none.
+- **GPU contours** are read back to be simplified, and are not drawn straight from the GPU. Their vertices come in a different order every time, so two contours of the same model simplify alike and not the same.
+- **A higher line weight is no free lunch here.** The paper stops at a number of triangles, and this stops at an error. Its default weight of 1e-3 moves vertices off the planes far enough to leave vertices on large flat faces that are not needed, which is why the default here is a hundredth of it.
+
+**Detail:** the collapses are kept in the order they were made, with the contour as it came, which makes a progressive mesh (Hoppe, 1996). The mesh after any number of them is had without simplifying again, so the detail can be changed at once. In between is where the line quadrics show: a flat face part-way down has its vertices spread evenly with them, and two fifths thin triangles without.
+
+**Changing a setting without contouring:** `Voxelizer.simplify( )` shows the last contour again under the simplification settings as they are now. Another detail is a walk through the collapses; another error or line weight simplifies the kept contour again. The interactive editor does this by itself.
+
+**Cost,** on the three balls with Burst, in the editor:
+
+| Cells | Triangles | Simplified | Simplifying | Another detail |
+|---|---|---|---|---|
+| 32³ | 6,428 | 1,330 | 9 ms | under 1 ms |
+| 64³ | 26,036 | 2,510 | 39 ms | 1 ms |
+| 128³ | 104,500 | 4,588 | 206 ms | 3 to 6 ms |
+| 256³ | 417,876 | 8,848 | 1.2 s | 11 to 24 ms |
+
+- **Against the contour:** simplifying takes about seven times as long as the Burst contour it follows. Most of it is the loop that collapses one edge after another, which runs on one core.
+- **After an octree** there is little left to do: 3 to 4 ms at 128 leaves across.
+- **Memory:** the contour and its collapses are kept until the next contour, 4 MB at 128³ and 17 MB at 256³.
+
+Example scenes are in `Assets/Scenes/Mesh Simplification`, each a copy of a Burst scene on 64³ cells with simplification on and the wireframe drawn, so the triangles show.
+
 ## Occupancy-Based Dual Contouring
 `OccupancyDualContouring` follows *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024). It is Manifold Dual Contouring on a uniform grid, without simplification, and it only ever asks the volumes whether a point is inside or outside, never how far away the surface is. A point is inside where the volumes give it a material.
 
@@ -113,7 +167,7 @@ How it compares with Manifold Dual Contouring on the same grid, measured on sing
 
 The **Interactive Editor** object holds the editor and a voxelizer for each algorithm. In its inspector:
 
-- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation, solver and wireframe, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
+- **Algorithm** picks Uniform, Adaptive, Manifold or Occupancy. The settings all voxelizers share, such as resolution, implementation, solver, mesh simplification and wireframe, carry over, so the same model is compared like for like. Resolution carries over as the number of cells across. An implementation the new algorithm does not have becomes Burst. The selected voxelizer's own settings, such as the Implementation, appear below the editor.
 - **Shapes** lists every shape below the object, in the order their operations apply. Each row has an enabled box, the shape's name, which selects it, its operation (Union, Intersection or Subtraction) and material, and a remove button. Drag rows to reorder them. The **Add** buttons, one for each kind of shape, add a new one at the centre of the grid. Everything can be undone.
 - **Contour** contours at once. The line below it says whether the mesh is up to date, and how long the last contour took.
 - **Warnings** point out likely mistakes: a first shape that is not a Union, a shape without a material or outside the grid, a material the renderer has no material for, a shape a group would shear, a round or square shape whose x and z sizes differ, a debug view that draws so much it slows the editor down.
@@ -134,6 +188,8 @@ How the mesh follows changes depends on the implementation:
 | Burst, GPU | After every change, from the inspector, a handle (moving, turning or scaling), the hierarchy or an undo. Contours that take up to 50 ms follow a drag live; slower ones wait until the changes settle for the **Debounce** interval. After a contour over a second, it waits for **Contour** to be pressed until a contour is fast again. |
 | Managed | Never. Managed contours take from a tenth of a second at 16³ cells to most of a minute at 128³, so it contours when **Contour** is pressed. |
 
+With **Mesh Simplification** on, the mesh follows its settings without contouring, with any implementation: another detail shows at once, and another error or line weight simplifies the last contour again. Turning simplification on or off is a contour, and waits for **Contour** with a managed implementation. The line under **Contour** then also has the size of the mesh before it was simplified.
+
 Nothing contours by itself while Unity is not the active application, where everything runs many times slower. The mesh is not saved with the scene, so a Burst or GPU variant contours when the scene opens, and a Managed one waits for **Contour**.
 
 ## Code layout
@@ -141,9 +197,9 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 
 | Folder | Contents |
 |---|---|
-| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. |
+| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
-| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. |
+| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. |
 | `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share and the layout they upload density functions in. The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl`. |
 
 Code that only one implementation uses goes in that implementation's folder; code that several of them use stays in `Assets/Scripts`. `SurfaceExtractor`, `QEFSolver` and `DensityFunction` are partial interfaces for the same reason: their managed and GPU members sit in those folders, and their shared members sit in `Assets/Scripts`.
@@ -174,4 +230,8 @@ This project implements academic algorithms for dual contouring. Refer to the or
 - *Dual Contouring of Hermite Data* by Ju et al.
 - *Dual Contouring: The Secret Sauce* by Schaefer and Warren.
 - *Manifold Dual Contouring* by Schaefer et al.
+- *Surface Simplification Using Quadric Error Metrics* by Garland and Heckbert.
+- *Controlling Quadric Error Simplification with Line Quadrics* by Liu, Rahimzadeh and Zordan.
+- *Progressive Meshes* by Hoppe.
+- *Topology Preserving Edge Contraction* by Dey, Edelsbrunner, Guha and Nekhayev.
 - *Occupancy-Based Dual Contouring* by Hwang and Sung.

@@ -1429,6 +1429,36 @@ public class InteractiveEditorTest {
         CollectionAssert.AreEqual( MeshComparison.trianglesOf( shown( editor ) ), simplified, "triangles, against those of a contour" );
     }
 
+    // a managed contour of 64^3 cells takes seconds, most of it contouring: far over what pauses contouring by
+    // itself. Simplifying it again takes a few milliseconds, and goes by how long simplifying took, not by how long
+    // the contour around it did
+    [Test]
+    public void aSlowContourDoesNotHoldItsSimplificationBack( ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Managed ) );
+
+        editor.voxelizer.resolution += 1;
+
+        this.time = 0.0;
+
+        var contour = editor.contour( );
+
+        Assert.Greater( contour.milliseconds, RemeshScheduler.pauseLimit * 1000.0, "time of the contour, in ms, against what pauses contouring" );
+        Assert.Less( contour.simplificationMilliseconds.Value, RemeshScheduler.pauseLimit * 1000.0, "time simplifying, in ms" );
+
+        var count = triangleCountOf( shown( editor ) );
+
+        using var work = new Work( );
+
+        editor.voxelizer.simplificationError = 0.02f;
+
+        this.tickAt( editor, 1.0, 1.0 + editor.debounce );
+
+        Assert.IsFalse( work.contoured, "contoured" );
+        Assert.IsTrue( work.simplified, "simplified" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+        Assert.Greater( triangleCountOf( shown( editor ) ), count, "triangles under a smaller error" );
+    }
+
     // nothing is kept of a contour that was not simplified, so turning simplification on takes a contour, and so does
     // turning it off. A managed implementation waits to be asked for it, as for any contour
     [Test]

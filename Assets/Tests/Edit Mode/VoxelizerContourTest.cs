@@ -423,6 +423,8 @@ public class VoxelizerContourTest : TopologyTest {
             Assert.AreEqual( triangleCountOf( mesh ), statistics.Value.triangleCount, $"{what}: triangles reported" );
             Assert.AreEqual( expected.triangleCount,  statistics.Value.triangleCount, $"{what}: triangles, against those of a fresh contour" );
 
+            Assert.AreEqual( statistics.Value.milliseconds, statistics.Value.simplificationMilliseconds, $"{what}: time simplifying, which is all of it" );
+
             Assert.AreEqual( first.unsimplifiedVertexCount,   statistics.Value.unsimplifiedVertexCount,   $"{what}: vertices before simplification" );
             Assert.AreEqual( first.unsimplifiedTriangleCount, statistics.Value.unsimplifiedTriangleCount, $"{what}: triangles before simplification" );
 
@@ -512,6 +514,10 @@ public class VoxelizerContourTest : TopologyTest {
             Assert.AreEqual( contour.vertexCount,        statistics.unsimplifiedVertexCount,   "vertices before simplification" );
             Assert.AreEqual( triangleCountOf( contour ), statistics.unsimplifiedTriangleCount, "triangles before simplification" );
 
+            // simplifying is part of the contour, and is timed by itself
+            Assert.Greater( statistics.simplificationMilliseconds.Value, 0.0,                  "time simplifying" );
+            Assert.Less( statistics.simplificationMilliseconds.Value, statistics.milliseconds, "time simplifying, against the whole contour" );
+
             Assert.Greater( statistics.triangleCount.Value,        triangleCountOf( contour ) / 4, "triangles at a detail of 0.5" );
             Assert.Less( statistics.triangleCount.Value, triangleCountOf( contour ) * 3 / 4,       "triangles at a detail of 0.5" );
         }
@@ -539,8 +545,9 @@ public class VoxelizerContourTest : TopologyTest {
         var plain = voxelizer.contour( drawFromGPU: false );
         var mesh  = shown( voxelizer );
 
-        Assert.IsNull( plain.unsimplifiedVertexCount,   "vertices before simplification, of a contour that was not simplified" );
-        Assert.IsNull( plain.unsimplifiedTriangleCount, "triangles before simplification, of a contour that was not simplified" );
+        Assert.IsNull( plain.unsimplifiedVertexCount,    "vertices before simplification, of a contour that was not simplified" );
+        Assert.IsNull( plain.unsimplifiedTriangleCount,  "triangles before simplification, of a contour that was not simplified" );
+        Assert.IsNull( plain.simplificationMilliseconds, "time simplifying, of a contour that was not simplified" );
 
         Assert.IsFalse( voxelizer.simplify( ).HasValue, "with simplification off" );
 

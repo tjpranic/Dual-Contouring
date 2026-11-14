@@ -2,7 +2,7 @@
 
 Plan written 2026-11-13 for a mesh simplifier that runs on the finished mesh of any algorithm: quadric error edge collapse, with line quadrics and a progressive record of the collapses.
 
-**Status:** steps 0 to 6 are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). Step 5 (2026-11-14) added the record of collapses, **Simplification Detail** and `Voxelizer.simplify`. Step 6 (2026-11-14) taught the interactive editor the settings and added four example scenes. All seven decisions were answered as recommended on 2026-11-14. Step 7 is next.
+**Status:** complete. All eight steps are done. Step 0 (2026-11-13) took the baseline and counted what the contours are like. Step 1 (2026-11-14) built `BurstQuadric` and measured floats against doubles. Step 2 (2026-11-14) built the mesh's lists, the tests of which collapses are allowed, and the collapse itself. Step 3 (2026-11-14) built the loop and the hook: every voxelizer has **Mesh Simplification** and **Simplification Error**, at a line weight of zero. Step 4 (2026-11-14) added the line quadrics and **Line Quadric Weight**, which starts at 1e-5 and not at the paper's 1e-3 (finding 24). Step 5 (2026-11-14) added the record of collapses, **Simplification Detail** and `Voxelizer.simplify`. Step 6 (2026-11-14) taught the interactive editor the settings and added four example scenes. Step 7 (2026-11-14) tuned the loop, took a fifth to a quarter off its time, and wrote the README section. All seven decisions were answered as recommended on 2026-11-14.
 
 **Papers,** all in `Documents/Papers/`:
 - *Surface Simplification Using Quadric Error Metrics* (Garland and Heckbert, 1997): the algorithm.
@@ -162,6 +162,18 @@ It applies to all four algorithms and all three implementations, since it works 
     - **One way to the mesh.** The loop no longer writes its mesh out. The mesh after all collapses is made from the record like any other level, and a test holds the record to the connectivity: after k collapses, for several k, both give the same vertices in the same order and the same triangles.
     - **Not parallel.** The plan had the mesh at a level as parallel passes. It is one job on one core, 3 to 4 ms at 128³ with the mesh built, and I left it at that.
 
+27. **Where the time went, and what tuning took off it.** Step 7 put profiler markers into the loop for one run. Of the 240 ms it took on the three balls at 128³: taking the edges of both ends out of the heap 47, the collapse itself 58, checking that it is allowed 39, working the edges out again and putting them back 41, taking the cheapest 23, looking for refused edges 13. Of the 26 ms that building the lists took, 19 were the order of each vertex.
+    - **The heap keeps what it orders by.** An edge in it has its cost and the area of its ends beside it, where the loop used to look both up for every comparison, in three arrays. An edge of the kept vertex that is in the heap moves to its new place and is no longer taken out and put back. The loop went from 230 ms to 191.
+    - **The order of a vertex among edges of two triangles** is found by going round its triangles once, each edge keeping its two triangles as one number. The general way, which sorts them into sheets, is left for vertices of a boundary. Building the lists went from 26 ms to 19.5, and the loop to 180.
+    - **Every mesh is the same.** 236 simplifications were hashed collapse by collapse before and after: four algorithms on nine models at two errors and three weights at 32³, and ten at 128³.
+    - **A test for what the heap is for** came with it: at every collapse of five meshes, the edge collapsed is the cheapest one that is within the error and allowed, found by looking at all of them.
+    - **What is left** is the collapse, the check and the evaluation, about 50 ms each, which follow lists through memory. I see no change there that is as contained as these two.
+    - **Not done:** placing the vertex by the planes alone (finding 24), which is a change to the meshes and not to the time, and which was not asked for.
+
+28. **The editor paused simplifying after a slow managed contour.** Step 6 gave the simplifier's scheduler the time of the whole contour to start from, on the argument that simplifying cannot take longer. For a managed contour that is seconds of contouring around milliseconds of simplifying, and over a second it paused simplifying by itself. A test of step 6 failed on it once, in step 7's last run, when a managed contour at 32³ took just over a second.
+    - **What is done:** a contour times its simplification by itself (`ContourStatistics.simplificationMilliseconds`), and the scheduler starts from that.
+    - **A test that does not depend on chance:** a managed contour at 64³, which takes seconds, is simplified again by itself.
+
 ## Design
 
 ### Settings
@@ -260,7 +272,7 @@ As step 6 built it:
 - **Three signatures, not two.** Whether the mesh is simplified is part of what a contour depends on, since turning it on or off takes a contour (finding 11). The error and the line weight are what the collapses depend on, and the detail is what the mesh shown depends on beside those. With simplification off the last two are empty, and the settings do nothing.
 - **A scheduler for each,** of the same kind as the one that decides when to contour, because each kind of work takes its own time: at 128³ a simplified contour takes 290 ms, simplifying it again 260 and another detail 4. With one time for all three, a drag of the detail would wait as a drag of a shape does, or be paused after a slow contour.
   - **The contour comes first.** While a contour is owed nothing else is looked at, and the contour brings the simplification settings with it.
-  - **Simplifying again starts from the contour's time,** which it cannot take longer than, until it has a time of its own.
+  - **Simplifying again starts from the time simplifying took within the contour,** until it has a time of its own. Step 6 had it start from the time of the whole contour, which step 7 found wrong (finding 28).
   - **The detail waits for its first change to settle,** and follows a drag after that.
 - **The managed implementations too.** They contour only when asked, because that takes seconds. Simplifying is Burst code whatever made the contour, so a new error or detail shows by itself for them as well. Turning simplification on is a contour, and waits for the button.
 - **A mesh whose contour is forgotten** is contoured again when a simplification setting changes: after a script recompile the mesh is still shown and `simplify` has nothing to make another from. A contour of nothing has nothing to simplify and counts as up to date.
@@ -426,7 +438,15 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **Deliberate mistakes:** 23 were tried and 21 failed a test. The two that passed were lines of the editor that did what the same update does a few lines on, and both are gone.
    - **Not looked at:** the inspector, and the scenes on screen. Each scene was opened beside what was open, contoured, and closed again, which is where the triangle counts above are from. `Interactive Editor.unity` was open throughout and is unchanged.
    - **Baselines after step 6:** edit mode 2737, play mode 21, 480 `Start` hashes unchanged.
-7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. From step 4: whether the vertex should be placed by the planes alone (finding 24), if large flat faces at small errors turn out to matter. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. From step 3's times: the loop is 88% of the time at 4.4 microseconds a collapse, and building the lists is 11% and serial, 26 ms at 128³, as long as the contour itself. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete.
+7. **Tuning and documentation (medium).** Whatever steps 3 to 5 show to cost most. From step 4: whether the vertex should be placed by the planes alone (finding 24), if large flat faces at small errors turn out to matter. Candidates: Burst implementations handing their arrays to the simplifier without building a mesh first; the heap; stopping at the detail asked for when the record is not wanted. From step 3's times: the loop is 88% of the time at 4.4 microseconds a collapse, and building the lists is 11% and serial, 26 ms at 128³, as long as the contour itself. README (a section, the settings, the code layout), `AGENTS.md` (the papers) and this plan marked complete. **Done 2026-11-14:**
+   - **Tuned:** the heap and the order of a vertex (finding 27). The three balls at 128³ take 206 ms to simplify where they took 263, a cube 108 where it took 149, and the three balls at 64³ 39 where they took 48, which puts a simplified contour at 64³ under the 50 ms the editor follows a drag in.
+   - **Left as it is:** building a mesh before simplifying, which is half a millisecond; stopping at the detail asked for, since the record is always kept now; and where a vertex is placed (finding 24).
+   - **A flaw of step 6 found and mended** (finding 28).
+   - **Documented:** a section in `README.md` with the settings, what is kept and what is not, the cost and the scenes; the code layout and the interactive editor there; the papers in `AGENTS.md`.
+   - **Tests:** 4 more, among them the cheapest edge at every collapse and the slow managed contour. The edit mode suite takes about 4½ minutes.
+   - **Deliberate mistakes:** 14 were tried and every one failed a test, after the cheapest-edge test was given a model on which edges get cheaper. One run of the hashes afterwards did not match, and that was the last mistake still loaded in the editor.
+   - **The editor stopped compiling once,** for twenty minutes, and results in that time were of the code before the change. Taking another application to the front and Unity again let it go on.
+   - **Baselines at the end:** edit mode 2741, play mode 21, 480 `Start` hashes unchanged.
 
 ## Measurements
 
@@ -559,6 +579,26 @@ With it:
 - **Exact** means as near the true line as the contour's own vertices, 0.014 cells.
 - **At a weight of zero** the bound alone still holds the lines, with more edges: 89 on the round flat line at 0.05.
 - **Occupancy's round line on the flat face keeps 120 of its 204 edges** at either error. Its line is up to 0.67 cells from the circle in the contour and jumps from side to side of it, which no collapse within these errors can take out.
+
+### Tuning (step 7, 2026-11-14)
+
+Simplifying alone, at the defaults, median of 5 runs in ms with Unity in front. Before is step 6's code, measured the same day.
+
+| Contour | Vertices | Before | After | Build | Quadrics | Costs | Loop | Level |
+|---|---|---|---|---|---|---|---|---|
+| Uniform, three balls 32³ | 3,216 | 10.6 | 8.7 | 1.3 | 0.3 | 0.1 | 6.8 | 0.2 |
+| Uniform, three balls 64³ | 13,000 | 47.8 | 39.3 | 5.0 | 0.7 | 0.3 | 32.4 | 0.7 |
+| Uniform, three balls 128³ | 52,224 | 262.8 | 205.8 | 19.6 | 2.3 | 1.0 | 179.5 | 2.5 |
+| Uniform, three balls 256³ | 208,900 | 1,527 | 1,214 | 77.0 | 8.9 | 4.0 | 1,111 | 9.8 |
+| Uniform, cube 128³ | 35,576 | 148.5 | 108.0 | 11.4 | 1.5 | 0.7 | 92.1 | 1.6 |
+| Uniform, cube 128³, weight 0 | 35,576 | 180.4 | 103.1 | 11.5 | 1.5 | 0.6 | 87.3 | 1.6 |
+| Occupancy, three balls 128³ | 52,252 | 233 | 186.8 | 20.9 | 2.4 | 1.1 | 159.4 | 2.5 |
+| Adaptive, three balls 128³ | 2,586 | 4.1 | 3.7 | 1.4 | 0.2 | 0.1 | 1.6 | 0.2 |
+| Manifold, three balls 128³ | 2,359 | 3.6 | 3.2 | 1.2 | 0.2 | 0.1 | 1.3 | 0.2 |
+
+- **The loop** takes 3.6 microseconds a collapse at 128³, where it took 4.4.
+- **Through the voxelizer** a simplified contour of the three balls takes 44 ms at 64³, 240 at 128³ and 1,400 at 256³, and simplifying again under another error 41, 210 and 1,280. Another detail takes what it took before.
+- **A cube without lines** gained most: every edge of a flat face costs the same there, and every comparison went on to the areas.
 
 ### The record (step 5, 2026-11-14)
 

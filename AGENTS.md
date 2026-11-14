@@ -18,5 +18,13 @@ Based off the *Occupancy-Based Dual Contouring* paper; manifold dual contouring 
 
 The authors' reference code (github.com/KAIST-Visual-AI-Group/ODC) is licensed CC BY-NC-SA 4.0 and this project is MIT. Do not port its code or its tables. Write from the paper, and generate tables from the project's own `DualMarchingCubes`.
 
+## Mesh Simplification
+Based off *Surface Simplification Using Quadric Error Metrics*: edge collapses in order of quadric error, as a Burst pass over the finished mesh of any algorithm and implementation (`BurstMeshSimplifier`). Three more papers go into it:
+- *Controlling Quadric Error Simplification with Line Quadrics*: a second error term that settles flat regions.
+- *Progressive Meshes*: the record of collapses behind the detail setting, and the rules that keep the lines between materials.
+- *Topology Preserving Edge Contraction*: which collapses keep the topology, for meshes that are not manifolds too.
+
+It has no managed or GPU implementation, so its tests hold it to answers known in closed form and to what a simplification may not change about a mesh. Where it departs from the papers, `Documents/Plans/Mesh Simplification.md` says how and why.
+
 # Unity
 You should be able to interact with the Unity editor via an MCP server backed by the Unity CLI. Prefer the MCP when you need to interact with the editor. Recompilation takes a while and the server will respond as busy while that happens, so if you do encounter that, try to wait it out. Sometimes the Unity editor may not respond for other reasons. Bringing the editor into focus can help unstick it.

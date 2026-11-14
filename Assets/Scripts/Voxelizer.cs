@@ -205,21 +205,26 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private static readonly ProfilerMarker captureDebugMarker  = new( "Voxelizer.CaptureDebugInformation" );
 
     // how a contour went: how long it took in all, and the size of its mesh. A mesh drawn straight from the GPU is
-    // never read back, so its size is not known. A mesh that was simplified also has the size it came with
+    // never read back, so its size is not known. A mesh that was simplified also has the size it came with, and how
+    // long simplifying it took of the whole
     public readonly struct ContourStatistics {
 
-        public readonly double milliseconds;
-        public readonly int?   vertexCount;
-        public readonly int?   triangleCount;
-        public readonly int?   unsimplifiedVertexCount;
-        public readonly int?   unsimplifiedTriangleCount;
+        public readonly double  milliseconds;
+        public readonly int?    vertexCount;
+        public readonly int?    triangleCount;
+        public readonly int?    unsimplifiedVertexCount;
+        public readonly int?    unsimplifiedTriangleCount;
+        public readonly double? simplificationMilliseconds;
 
-        public ContourStatistics( double milliseconds, int? vertexCount, int? triangleCount, int? unsimplifiedVertexCount = null, int? unsimplifiedTriangleCount = null ) {
-            this.milliseconds              = milliseconds;
-            this.vertexCount               = vertexCount;
-            this.triangleCount             = triangleCount;
-            this.unsimplifiedVertexCount   = unsimplifiedVertexCount;
-            this.unsimplifiedTriangleCount = unsimplifiedTriangleCount;
+        public ContourStatistics(
+            double milliseconds, int? vertexCount, int? triangleCount, int? unsimplifiedVertexCount = null, int? unsimplifiedTriangleCount = null, double? simplificationMilliseconds = null
+        ) {
+            this.milliseconds               = milliseconds;
+            this.vertexCount                = vertexCount;
+            this.triangleCount              = triangleCount;
+            this.unsimplifiedVertexCount    = unsimplifiedVertexCount;
+            this.unsimplifiedTriangleCount  = unsimplifiedTriangleCount;
+            this.simplificationMilliseconds = simplificationMilliseconds;
         }
 
     }
@@ -325,8 +330,11 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             }
         );
 
+        var simplifying = new System.Diagnostics.Stopwatch( );
+
         // a mesh without triangles has nothing to simplify, and no buffers to read
         if( this.meshSimplification && mesh.vertexCount > 0 ) {
+            simplifying.Start( );
             simplifyMarker.Begin( );
 
             this.simplification         = MeshSimplification.of( mesh, this.simplificationError * this.cellSize, this.lineQuadricWeight );
@@ -337,6 +345,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             mesh = this.simplification.meshAt( this.simplification.levelOf( this.simplificationDetail ) );
 
             simplifyMarker.End( );
+            simplifying.Stop( );
         }
 
         this.finish( mesh, this.vertexNormals == VertexNormals.Split && !splitByGPU, reorderVertices );
@@ -347,7 +356,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         captureDebugMarker.End( );
 
-        return this.statisticsOf( stopwatch, mesh );
+        return this.statisticsOf( stopwatch.Elapsed.TotalMilliseconds, this.simplification != null ? simplifying.Elapsed.TotalMilliseconds : null, mesh );
     }
 
     // shows the last contour again under the simplification settings as they are now, without contouring: the mesh at
@@ -377,7 +386,10 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         this.finish( mesh, this.vertexNormals == VertexNormals.Split, reorderVertices );
 
-        return this.statisticsOf( stopwatch, mesh );
+        // all of it is simplifying
+        var milliseconds = stopwatch.Elapsed.TotalMilliseconds;
+
+        return this.statisticsOf( milliseconds, milliseconds, mesh );
     }
 
     // makes a mesh the contour that is shown: split for flat shading where asked, with its bounds, and its vertices
@@ -407,13 +419,13 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         this.show( mesh );
     }
 
-    private ContourStatistics statisticsOf( System.Diagnostics.Stopwatch stopwatch, Mesh mesh ) {
+    private ContourStatistics statisticsOf( double milliseconds, double? simplificationMilliseconds, Mesh mesh ) {
         var triangleCount = 0;
         for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
             triangleCount += ( int )mesh.GetIndexCount( subMeshIndex ) / 3;
         }
 
-        return new( stopwatch.Elapsed.TotalMilliseconds, mesh.vertexCount, triangleCount, this.simplification?.positions.Length, this.simplification?.triangles.Length );
+        return new( milliseconds, mesh.vertexCount, triangleCount, this.simplification?.positions.Length, this.simplification?.triangles.Length, simplificationMilliseconds );
     }
 
     // takes away what contour shows: the mesh in the mesh filter, whichever voxelizer made it, the mesh this voxelizer
