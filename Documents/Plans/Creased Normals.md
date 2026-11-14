@@ -2,7 +2,7 @@
 
 Plan written 2026-11-14 for the TODO item "Edges on shared vertex meshes look horrendous": vertex normals that are smooth across curved surfaces and break at sharp edges, for every algorithm and implementation, on contoured and simplified meshes alike.
 
-**Status:** steps 0 to 2 done on 2026-11-14. Step 3 waits for review. The investigation behind the plan was done on 2026-11-14 with a probe outside the repo. It is summarized under Findings, and its pictures are described there.
+**Status:** steps 0 to 3 done on 2026-11-14. Step 4 waits for review. The investigation behind the plan was done on 2026-11-14 with a probe outside the repo. It is summarized under Findings, and its pictures are described there.
 
 The user decided three things on 2026-11-14, in their words:
 1. "Yes, replace the Shared setting". The new mode takes the place of Shared Vertex Normals.
@@ -107,6 +107,20 @@ From the investigation of 2026-11-14. The probe is `ShadingProbe.cs` in the prob
       - **Occupancy** already reads its totals back in mid-contour and sizes its buffers from them.
       - **So both read their counts on the CPU and size and dispatch exactly.** Occupancy sizes from the totals it already reads. Uniform reads its two counts back once after its contour kernel. That read waits for the GPU contour: 100 to 350 ms at 128³ with Uniform's one-thread groups, against 2 to 20 ms for Occupancy.
       - **Why not an indirect dispatch:** it avoids the wait but not the capacity-sized buffers.
+14. **Occupancy makes triangles too flat to have a normal** (step 3).
+    - **Where they come from:** Occupancy splits a polygon into four triangles around the point on one of its edges. That point lies on the line between the edge's two vertices as nearly as the positions are rounded, so the triangle along that line has a corner a hair under 180°. On TurnedShapes at 32³ the third point is 1e-6 off a line 0.04 long.
+    - **Why they matter:** such a corner weighs π, more than any other at its vertex, and its normal is whatever the rounding makes it. On the GPU the normals of 6 to 26 corners per model came out up to 0.225° from Burst's. The groups were the same, but Burst's normal there is no truer, only rounded differently.
+    - **The rule, in both passes:** a triangle whose largest sine of an angle is under 1e-3 is too flat to have a normal. It is treated as a triangle without area: no say in any group. That sine is twice the area over the product of the two shorter sides, so all the triangle's angles are then within 0.06° of 0° or 180°. A thin needle keeps its normal, since it still has corners near 90°.
+    - **Where the normal is taken:** at the corner opposite the longest side, where the cross product is least rounded.
+    - **Statistics:** `zeroAreaTriangleCount` became `flatTriangleCount`.
+    - **After it:** the GPU's normals are within 0.001° of Burst's on both GPU algorithms, the 11 surfaces and both options, at 32³ and at 128³, with the same groups and the same vertex counts.
+15. **Ties and the order of triangles** (step 3). The grouping depends on the order corners are taken in.
+    - **Ties by corner index** made the GPU's crease depend on the order its threads append quads, which changes from one contour to the next.
+    - **Ties now go by the triangle's normal,** x, then y, then z, before the corner index, in both passes. Corners still tied then have the same normal and weight, and add the same to a group in either order. Two GPU contours of the same volumes now give the same mesh, and the GPU's groups are Burst's.
+    - **What this does not settle:** corners equal only in exact arithmetic. The 24 corners of the cone's tip are an example: floats and doubles round them differently, so the GPU takes them in another order than Burst and makes 5 groups where Burst makes 4. Both keep every corner within the angle. No contour tried has such ties.
+    - **Changed outputs:** the new tie-break changed the normals of 8 CPU hash configurations in their last bits, all ThreeBalls under the Simple solver at 16³, a model with mirror symmetry. No vertex count changed.
+16. **A kernel may write to at most eight buffers** (step 3). `groupCorners` wrote to 11, and Unity logged an error at each dispatch, although Metal ran it correctly. It now reads the four buffers it only reads (faces, weights, corner counts and run starts) through read-only views bound to the same buffers.
+17. **At exactly 0° the GPU can split a plane** (step 3). Metal's square root is not exact, so two triangles in one plane can get normals a hair apart. At 0° that splits them where Burst's doubles keep them together, as on the flat patch with corners off whole numbers: 115 vertices against 81. At 0° the GPU and Burst agree only where the normals come out exact, on faces in the planes of the axes with whole-number corners.
 
 ## Design
 
@@ -132,10 +146,10 @@ On `Voxelizer`, next to Vertex Normals, in the voxelizer's inspector:
 
 `BurstCreases`, a static class of Burst jobs in `Assets/Scripts/Burst`, beside `BurstMeshSimplifier`. It runs on the finished mesh of any implementation. It has no managed or GPU twin of its own; the GPU kernels are a separate implementation of the same rule (Tests).
 
-1. **Faces:** each triangle's unit normal and its three corner angles, with the pass's own normalize and angle (finding 7). A triangle of zero area has a zero normal and weight. Its corners join their vertex's first group without changing its normal.
+1. **Faces:** each triangle's unit normal and its three corner angles, with the pass's own normalize and angle (finding 7). The normal is taken at the corner opposite the longest side. A triangle too flat to have a normal (finding 14) has a zero normal and weight, and its corners join their vertex's first group without changing its normal.
 2. **Corner lists:** a count of corners per vertex, a prefix sum, and a scatter into one array, so that each vertex's corners are in one run.
 3. **Grouping,** in parallel over vertices:
-   - the vertex's corners are sorted by corner angle, largest first, ties by corner index;
+   - the vertex's corners are sorted by corner angle, largest first, then by their triangle's normal, x, y and z, then by corner index (finding 15);
    - they are grouped as in finding 6, with the guard of finding 11;
    - each group's normal is the sum of its faces' normals times their corner angles, normalized.
 4. **Output:**
@@ -147,16 +161,19 @@ On `Voxelizer`, next to Vertex Normals, in the voxelizer's inspector:
 
 ### The GPU kernels
 
-`CreaseNormals.compute` in `Assets/Resources/Shaders`, used by `UniformDualContouring.GPU.cs` and `OccupancyDualContouring.GPU.cs` after their contour kernel, when they are asked for Creased:
+`CreaseNormals.compute` in `Assets/Resources/Shaders`, driven by `GPUCreases` in `Assets/Scripts/GPU`. `UniformDualContouring.GPU.cs` and `OccupancyDualContouring.GPU.cs` run it after their contour kernel when they are asked for Creased. The request `ContourVertices` gained Creased in step 3, and every implementation's `voxelize` takes the crease angle and Smooth Normals with it. The kernels, as built in step 3:
 
-1. **Count:** one thread per triangle corner adds one to its vertex's count. Threads beyond `counts[1]` stop at once.
-2. **Place:** one thread per vertex takes a run of the corner array with an atomic add, so the runs come in any order.
-3. **Scatter:** one thread per corner writes its corner into its vertex's run.
-4. **Group:** one thread per vertex sorts and groups its run as the CPU pass does, takes its output vertices with an atomic add, and writes their positions and normals into a second pair of vertex and normal buffers.
-5. **Rewrite:** one thread per quad writes its six new indices.
+1. **Clear:** one thread per vertex zeroes its counts.
+2. **Faces:** one thread per triangle finds its normal and corner angles, as the CPU pass does (finding 14).
+3. **Count:** one thread per triangle corner adds one to its vertex's count. Threads beyond `counts[1]` stop at once.
+4. **Place:** one thread per vertex takes a run of the corner array with an atomic add, so the runs come in any order.
+5. **Scatter:** one thread per corner writes its corner into its vertex's run.
+6. **Group:** one thread per vertex sorts and groups its run as the CPU pass does, takes its output vertices with an atomic add, and writes their positions and normals into a second pair of vertex and normal buffers. It reads four buffers through read-only views (finding 16). Its guard stops after as many passes as there are corners, plus one, so it cannot run on for ever.
+7. **Rewrite:** one thread per quad writes its six new indices, in place.
+8. **Finish:** one thread writes the creased counts.
 
 - **What comes out:** the voxelization then hands out the new buffers. `RenderContourDiffuse`, the wireframe's quads variant and `readMesh` read them unchanged.
-- **Buffer sizes:** the new buffers are as large as Split needs, six vertices per quad.
+- **Buffer sizes:** the creased vertex buffers have room for every vertex once for each of its corners, plus each vertex no triangle uses.
 - **Dispatch:** decided by step 0 (finding 13).
   - The counts are known on the CPU: Occupancy already reads its totals, and Uniform reads its two counts back once after its contour kernel.
   - The crease buffers are sized from those counts, half as much again, as Occupancy's `reserve` does.
@@ -330,6 +347,74 @@ Each step compiles, passes every test, and is reviewed before the next one start
        - the open scene unmodified;
        - the console clean after the mutation run's errors were cleared and the real source recompiled.
 3. **The GPU kernels (medium to large).** `CreaseNormals.compute`, used by Uniform and Occupancy GPU for direct draw and read-back. The GPU against Burst tests, and a look at both GPU Sphere scenes in play mode.
+   - **Done 2026-11-14:**
+     - **Built:**
+       - `Assets/Resources/Shaders/CreaseNormals.compute` (eight kernels) and `Assets/Scripts/GPU/GPUCreases.cs`, which sizes and keeps the buffers and dispatches (The GPU kernels).
+       - **`ContourVertices` gained Creased.** `SurfaceExtractor.Implementation.voxelize`, and Occupancy's GPU `voxelize`, take the crease angle and Smooth Normals.
+       - **Uniform's GPU** generates shared vertices for Creased, reads its two counts back, and creases.
+       - **Occupancy's GPU** creases within the room its totals already made.
+       - **`Voxelizer`** asks for Creased unless simplifying, and creases on the CPU only what an implementation did not crease. The step 2 note on the direct draw is gone.
+       - **Uniform's GPU `convert`** reads its mesh with `readMesh`, which reads only as many vertices and quads as the counts say. A creased contour's buffers are not the size of the grid, and the arrays it read before were.
+     - **Changed in Burst too, for the GPU to agree with it:**
+       - triangles too flat to have a normal, with the normal taken at the corner opposite the longest side (finding 14);
+       - ties by the triangle's normal before the corner index (finding 15).
+
+       `BurstCreasesTest` follows: its tie test runs both orders of the triangles, and its flat triangle is a millionth off the edge, so it is too flat and not without area.
+     - **Found while building:**
+       - the limit of eight writable buffers to a kernel (finding 16);
+       - `vector` and `triangle` are words of HLSL's own;
+       - Metal's inexact square root at 0° (finding 17).
+     - **Tests:**
+       - **`GPUCreasesTest`,** 185 tests in 19 s:
+         - every hand-built shape of `BurstCreasesTest` but the cone's tip, through the kernels from buffers of the test's own, at 40°, 50°, 91° and 180° under both options, against Burst: the same vertices, groups and positions, normals within 0.01°;
+         - the axis-aligned shapes at 0°;
+         - the cone's tip held to the rules instead (finding 15);
+         - dispatches forced along y (`GPUCreases.groupsAcross`, settable for tests);
+         - both GPU implementations' contours of the 11 surfaces under both options, against Burst on the same contours given with shared vertices.
+       - **`CreaseShapes`** holds the hand-built meshes both suites run.
+       - **What the probe saw** (`GPUCreaseProbe.cs`, 32³ and 128³): normals within 0.001° and the same vertex counts everywhere; two GPU contours alike to the bit.
+       - **`ContouringTest.createVoxelizer`** now contours at 180° under Contour, the contour as it is made, as every test voxelizer had it under Shared. The tests of creasing set 40°: `VoxelizerContourTest`, the contour test of `GPUCreasesTest`, and the GPU drawing of `WireframeTest`, so its quads variant draws creased buffers.
+       - **Two tests that make their own voxelizers** contour at 180° too: the play mode Uniform test and `InteractiveEditorTest`'s debug count.
+       - **The 30 failures before that change** were topology and contour tests of the GPU, and the cuboid simplification of GPU contours, all reading creased meshes as if their vertices were shared.
+       - **The quadratic assertion:** `CollectionAssert.AreEquivalent` on 25,000 corner keys took 2.5 s a test; sets made the suite 19 s instead of 169.
+     - **The tests catch a mistake.** All 19 mistakes were caught:
+       - **14 in the shader** (`mutations_creases_step3.py`, with `mutate_shader.py`, which reimports the shader):
+         - ties by corner;
+         - no guard;
+         - the contour's normal always kept;
+         - no flatness;
+         - the normal always at the first corner;
+         - a corner given the next corner's group;
+         - a loose vertex without a position;
+         - a group without a normal left at zero;
+         - no special cosine at 180°;
+         - the contour's count for the creased one;
+         - dispatches only along x;
+         - smallest corners first;
+         - no angle weights;
+         - weights in the wrong corner.
+       - **5 in C#** (`mutations_creases_step3_cs.py`):
+         - Burst's ties by corner;
+         - Burst without flatness;
+         - the voxelizer creasing again what the GPU creased;
+         - each GPU implementation not creasing.
+
+       No mutation could make a kernel loop for ever. The buffer releases were not mutated.
+     - **`Start` hashes:**
+       - **At 180° under Contour:** all 480 identical to step 0's.
+       - **At the defaults (the new baseline):** 32 changed from step 2's, none in vertex count.
+         - 24 are the GPU configurations, creased now in floats on the GPU.
+         - 8 are ThreeBalls under the Simple solver at 16³, where exact ties now go by normal (finding 15).
+     - **Play mode,** in the interactive editor's scene:
+       - **Three voxelizers made in play mode,** with a turned box and a cylinder of a second material at 32³, creased at 40°: Uniform and Occupancy on the GPU, drawn straight from the creased buffers, and Uniform on Burst.
+       - **All three** showed crisp box edges and smooth cylinder sides with sharp rims, alike but for the GPU draw's shading without smoothness, which it had before.
+       - **The console stayed empty.** Leaving play mode took them away, and the scene stayed unmodified.
+       - **Why not the GPU Sphere scenes the plan named:** a sphere has nothing to crease, so they would show nothing of this step.
+       - **Existing behaviour noticed:** a contour drawn straight from the GPU keeps the transform it had when contoured, until the next contour.
+     - **Verification:**
+       - edit mode 3321 of 3321 (3134 before, plus 185 for the GPU and 2 more cases of the tie test), and play mode 21 of 21;
+       - the open scene unmodified;
+       - the console clean once the mutants' errors were cleared and the real sources recompiled and reimported.
 4. **Interactive editor (small).** Carry-over, signature, and a live look in the editor scene with the user's scene left unmodified.
 5. **Measurements and documentation (small).**
    - CPU and GPU times and vertex counts at 64³ to 256³.

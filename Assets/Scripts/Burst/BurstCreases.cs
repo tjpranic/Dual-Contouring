@@ -41,8 +41,9 @@ public static class BurstCreases {
         public int keptNormalCount;
         public int replacedNormalCount;
 
-        // triangles without area, whose corners join their vertex's first group and have no say in its normal
-        public int zeroAreaTriangleCount;
+        // triangles too flat to have a normal (FacesJob), whose corners join their vertex's first group and have no
+        // say in its normal
+        public int flatTriangleCount;
 
     }
 
@@ -59,8 +60,43 @@ public static class BurstCreases {
         return angle >= 180.0 ? -2.0 : math.cos( math.radians( math.max( angle, 0.0 ) ) );
     }
 
+    // the largest sine of an angle of a triangle under which it is too flat to have a normal: all its angles are then
+    // within 0.06 degrees of 0 or 180. Occupancy splits polygons around a point on an edge between two vertices, which
+    // lies on the line between them as nearly as the positions are rounded, and the triangle along that line takes its
+    // normal from the rounding (Documents/Plans/Creased Normals.md, finding 14)
+    public const double flatness = 1e-3;
+
+    // the unit normal of a triangle, or zero when it is too flat to have one. Its largest sine of an angle is that of
+    // the angle opposite its longest side, twice its area over the product of its two other sides, and the normal is
+    // taken there, where the cross product is the least rounded
+    public static double3 faceOf( double3 a, double3 b, double3 c ) {
+        var ab = math.lengthsq( b - a );
+        var bc = math.lengthsq( c - b );
+        var ca = math.lengthsq( a - c );
+
+        double3 cross;
+        double  sides;
+
+        if( bc >= ab && bc >= ca ) {
+            cross = math.cross( b - a, c - a );
+            sides = math.sqrt( ab * ca );
+        }
+        else if( ca >= ab ) {
+            cross = math.cross( c - b, a - b );
+            sides = math.sqrt( ab * bc );
+        }
+        else {
+            cross = math.cross( a - c, b - c );
+            sides = math.sqrt( bc * ca );
+        }
+
+        var length = math.length( cross );
+
+        return length > flatness * sides ? cross / length : double3.zero;
+    }
+
     // the unit normal of every triangle, and the angle at each of its corners, which weighs its normal at that corner
-    // (Thürmer and Wüthrich). A triangle without area has a zero normal and corners that weigh nothing
+    // (Thürmer and Wüthrich). A triangle too flat to have a normal has a zero normal and corners that weigh nothing
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct FacesJob : IJobParallelFor {
 
@@ -86,7 +122,7 @@ public static class BurstCreases {
             var b = ( double3 )this.positions[t.b];
             var c = ( double3 )this.positions[t.c];
 
-            var face = unit( math.cross( b - a, c - a ) );
+            var face = faceOf( a, b, c );
 
             this.faces[triangle] = face;
 
@@ -170,12 +206,30 @@ public static class BurstCreases {
         // 1 when the vertex kept the contour's normal, 2 when that normal gave way to its triangles'
         [WriteOnly] public NativeArray<byte> outcomes;
 
-        // larger corners first, and the earlier corner first between corners of the same size
+        // larger corners first, then by their triangle's normal, x, y and z, and between corners alike in both by their
+        // order. Corners alike in size and normal add the same to a group in either order, so the crease does not
+        // depend on the order of the triangles, which the GPU's change from one contour to the next
         private readonly bool before( int corner, int other ) {
             var weight      = this.weights[corner];
             var otherWeight = this.weights[other];
 
-            return weight > otherWeight || ( weight == otherWeight && corner < other );
+            if( weight != otherWeight ) {
+                return weight > otherWeight;
+            }
+
+            var face      = this.faces[corner / 3];
+            var otherFace = this.faces[other / 3];
+
+            if( face.x != otherFace.x ) {
+                return face.x < otherFace.x;
+            }
+            if( face.y != otherFace.y ) {
+                return face.y < otherFace.y;
+            }
+            if( face.z != otherFace.z ) {
+                return face.z < otherFace.z;
+            }
+            return corner < other;
         }
 
         private readonly double3 faceOf( int corner ) {
@@ -385,7 +439,7 @@ public static class BurstCreases {
 
             for( var triangle = 0; triangle < this.faces.Length; ++triangle ) {
                 if( math.all( this.faces[triangle] == double3.zero ) ) {
-                    ++result.zeroAreaTriangleCount;
+                    ++result.flatTriangleCount;
                 }
             }
 

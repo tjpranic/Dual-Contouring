@@ -43,6 +43,9 @@ public class UniformDualContouringTest {
         uniformDualContouring.implementationType          = ImplementationType.Managed;
         uniformDualContouring.testing                     = true;
 
+        // the contours as they are made: at 180 degrees the GPU's crease changes only the order of the vertices
+        uniformDualContouring.creaseAngle = 180.0f;
+
         var sphere = new GameObject( "Sphere" );
 
         sphere.transform.parent     = voxelizer.transform;

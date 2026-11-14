@@ -181,6 +181,9 @@ public class WireframeTest : ContouringTest {
         voxelizer.implementationType = ImplementationType.GPU;
         voxelizer.vertexNormals      = normals;
 
+        // creased on the GPU, when creased, as a voxelizer starts out
+        voxelizer.creaseAngle = 40.0f;
+
         voxelizer.gameObject.layer = OffscreenRender.layer;
         voxelizer.GetComponent<MeshRenderer>( ).sharedMaterials = this.unlitMaterials( colors );
 

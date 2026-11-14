@@ -67,6 +67,9 @@ public class VoxelizerContourTest : TopologyTest {
         voxelizer.implementationType = variant.implementation;
         voxelizer.vertexNormals      = normals;
 
+        // creased as a voxelizer starts out
+        voxelizer.creaseAngle = 40.0f;
+
         // contour only looks for debug data when the debug view wants it
         voxelizer.keepDebugInformation = false;
 
@@ -88,9 +91,14 @@ public class VoxelizerContourTest : TopologyTest {
         this.finished.Clear( );
     }
 
-    // a mesh of shared vertices as contour shows it under the voxelizer's vertex normals: creased (BurstCreases), or
-    // split. The mesh given is left as it is
+    // a mesh that voxelize gave, or a simplification of it, as contour shows it under the voxelizer's vertex normals:
+    // creased (BurstCreases), or split. The GPU splits and creases by itself when it is not asked for shared vertices,
+    // and what it gives is shown as it is. The mesh given is left as it is
     private Mesh asShown( Voxelizer voxelizer, Mesh mesh ) {
+        if( voxelizer.implementationType == ImplementationType.GPU && voxelizer.contourVertices != ContourVertices.Shared ) {
+            return mesh;
+        }
+
         Mesh result;
 
         if( voxelizer.vertexNormals == VertexNormals.Split ) {
@@ -726,12 +734,10 @@ public class VoxelizerContourTest : TopologyTest {
 
         voxelizer.contour( drawFromGPU: false );
 
-        Assert.AreEqual( normals == VertexNormals.Split ? ContourVertices.Split : ContourVertices.Shared, voxelizer.contourVertices, "the vertices asked of the implementation" );
+        Assert.AreEqual( normals == VertexNormals.Split ? ContourVertices.Split : ContourVertices.Creased, voxelizer.contourVertices, "the vertices asked of the implementation" );
 
-        // the GPU splits vertices itself. The meshes of the others are split by contour, and every mesh of shared
-        // vertices is creased by contour
-        var contour  = this.voxelize( voxelizer ).mesh;
-        var expected = normals == VertexNormals.Split && variant.implementation == ImplementationType.GPU ? contour : this.asShown( voxelizer, contour );
+        // the GPU splits and creases vertices itself, and the meshes of the others are split or creased by contour
+        var expected = this.asShown( voxelizer, this.voxelize( voxelizer ).mesh );
 
         assertSameTriangles( expected, shown( voxelizer ) );
     }

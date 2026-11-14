@@ -102,6 +102,11 @@ public abstract class ContouringTest {
         // vertices stay where the solver puts them, as in the papers
         voxelizer.surfaceCorrectionIterations = 0;
 
+        // and the contour is shown as it is made: at 180 degrees under Contour nothing is creased, which is what every
+        // voxelizer showed before creased normals. The tests of creasing set the angle they test
+        voxelizer.creaseAngle   = 180.0f;
+        voxelizer.smoothNormals = SurfaceExtractor.SmoothNormals.Contour;
+
         foreach( var shape in shapes ) {
             var child = new GameObject( shape.type.ToString( ) ) { hideFlags = HideFlags.HideAndDontSave };
 

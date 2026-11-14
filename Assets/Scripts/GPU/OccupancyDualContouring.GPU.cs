@@ -10,6 +10,7 @@ using VoxelType       = SurfaceExtractor.Voxel.Type;
 using CPUVoxelization = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization = SurfaceExtractor.Implementation.GPU.Voxelization;
 using ContourVertices = SurfaceExtractor.ContourVertices;
+using SmoothNormals   = SurfaceExtractor.SmoothNormals;
 
 public partial class OccupancyDualContouring {
 
@@ -61,6 +62,9 @@ public partial class OccupancyDualContouring {
         private ComputeBuffer splitVerticesBuffer;
         private ComputeBuffer splitNormalsBuffer;
         private ComputeBuffer quadsBuffer;
+
+        // made the first time a contour is creased
+        private GPUCreases creases;
 
         // the grid the buffers of the corners and cells were made for, -1 for none
         private int bufferResolution = -1;
@@ -168,7 +172,9 @@ public partial class OccupancyDualContouring {
             int                          faceSearchIterations,
             bool                         splitQuads,
             bool                         keepVerticesInCells,
-            ContourVertices              contourVertices
+            ContourVertices              contourVertices,
+            float                        creaseAngle,
+            SmoothNormals                smoothNormals
         ) {
             var densityFunctionData = densityFunctions.Select( ( densityFunction ) => new DensityFunction.Data( densityFunction ) ).ToArray( );
 
@@ -298,14 +304,24 @@ public partial class OccupancyDualContouring {
 
             this.shader.Dispatch( contourKernel, cellGroups, cellGroups, cellGroups );
 
+            var vertices = split ? this.splitVerticesBuffer : this.verticesBuffer;
+            var normals  = split ? this.splitNormalsBuffer  : this.normalsBuffer;
+            var counts   = this.countsBuffer;
+
+            // creased from the shared vertices, with room for as many vertices and quads as were made room for above
+            if( contourVertices == ContourVertices.Creased ) {
+                this.creases ??= new GPUCreases( );
+                this.creases.crease( this.verticesBuffer, this.normalsBuffer, this.quadsBuffer, this.countsBuffer, this.cellVertexCount + polygons, polygons * 2, creaseAngle, smoothNormals, out vertices, out normals, out counts );
+            }
+
             return new Either<CPUVoxelization, GPUVoxelization>.Type1( new( ) {
-                vertices  = split ? this.splitVerticesBuffer : this.verticesBuffer,
-                normals   = split ? this.splitNormalsBuffer  : this.normalsBuffer,
+                vertices  = vertices,
+                normals   = normals,
                 quads     = this.quadsBuffer,
                 corners   = this.materialsBuffer,
                 edges     = this.edgePointsBuffer,
                 voxels    = this.cellsBuffer,
-                counts    = this.countsBuffer,
+                counts    = counts,
                 arguments = this.argumentsBuffer
             } );
         }
@@ -327,6 +343,8 @@ public partial class OccupancyDualContouring {
         // the next contour makes them all anew
         public void releaseBuffers( ) {
             this.releaseGridBuffers( );
+
+            this.creases?.release( );
 
             this.configurationBuffer?.Release( );
             this.tablesBuffer?.Release( );
@@ -370,7 +388,9 @@ public partial class OccupancyDualContouring {
             this.faceSearchIterations,
             this.splitQuads,
             this.keepVerticesInCells,
-            this.contourVertices
+            this.contourVertices,
+            this.creaseAngle,
+            this.smoothNormals
         );
     }
 

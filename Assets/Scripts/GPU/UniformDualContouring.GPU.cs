@@ -8,6 +8,7 @@ using CPUVoxelization           = SurfaceExtractor.Implementation.CPU.Voxelizati
 using GPUVoxelization           = SurfaceExtractor.Implementation.GPU.Voxelization;
 using IntersectionApproximation = SurfaceExtractor.IntersectionApproximation;
 using ContourVertices           = SurfaceExtractor.ContourVertices;
+using SmoothNormals             = SurfaceExtractor.SmoothNormals;
 using QEFSolverType             = QEFSolver.Type;
 
 public partial class UniformDualContouring {
@@ -40,7 +41,8 @@ public partial class UniformDualContouring {
                 this.binarySearchIterations      = binarySearchIterations;
                 this.surfaceCorrectionIterations = surfaceCorrectionIterations;
                 this.intersectionApproximation   = ( int )intersectionApproximation;
-                this.vertexNormals               = ( int )contourVertices;
+                // creased vertices are made from shared ones
+                this.vertexNormals               = ( int )( contourVertices == ContourVertices.Split ? ContourVertices.Split : ContourVertices.Shared );
                 this.densityFunctionCount        = densityFunctionCount;
             }
         }
@@ -58,6 +60,9 @@ public partial class UniformDualContouring {
         private ComputeBuffer quadsBuffer;
         private ComputeBuffer countsBuffer;
         private ComputeBuffer argumentsBuffer;
+
+        // made the first time a contour is creased
+        private GPUCreases creases;
 
         // the grid the voxel, edge, corner, vertex, normal and quad buffers were made for, -1 for none
         private int bufferResolution = -1;
@@ -86,7 +91,9 @@ public partial class UniformDualContouring {
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
             IntersectionApproximation    intersectionApproximation,
-            ContourVertices              contourVertices
+            ContourVertices              contourVertices,
+            float                        creaseAngle,
+            SmoothNormals                smoothNormals
         ) {
             this.prepareBuffers(
                 densityFunctions,
@@ -102,20 +109,35 @@ public partial class UniformDualContouring {
             this.sampleCornerDensities       ( resolution );
             this.calculateMinimizingVertices ( resolution );
 
-            if( contourVertices == ContourVertices.Shared ) {
+            if( contourVertices != ContourVertices.Split ) {
                 this.generateVertices( resolution );
             }
 
             this.generateIndices( resolution );
 
+            var vertices = this.verticesBuffer;
+            var normals  = this.normalsBuffer;
+            var counts   = this.countsBuffer;
+
+            if( contourVertices == ContourVertices.Creased ) {
+                // the buffers have room for six vertices and one quad for every cell, far more than a contour has, so
+                // the crease is sized by the counts, which reading waits for the kernels above
+                var countsData = new int[2];
+
+                this.countsBuffer.GetData( countsData );
+
+                this.creases ??= new GPUCreases( );
+                this.creases.crease( this.verticesBuffer, this.normalsBuffer, this.quadsBuffer, this.countsBuffer, countsData[0], countsData[1], creaseAngle, smoothNormals, out vertices, out normals, out counts );
+            }
+
             return new Either<CPUVoxelization, GPUVoxelization>.Type1( new( ) {
-                vertices  = this.verticesBuffer,
-                normals   = this.normalsBuffer,
+                vertices  = vertices,
+                normals   = normals,
                 quads     = this.quadsBuffer,
                 corners   = this.cornersBuffer,
                 edges     = this.edgesBuffer,
                 voxels    = this.voxelsBuffer,
-                counts    = this.countsBuffer,
+                counts    = counts,
                 arguments = this.argumentsBuffer
             } );
         }
@@ -260,6 +282,8 @@ public partial class UniformDualContouring {
         public void releaseBuffers( ) {
             this.releaseGridBuffers( );
 
+            this.creases?.release( );
+
             this.configurationBuffer?.Release( );
             this.densityFunctionsBuffer?.Release( );
             this.vertexCountsBuffer?.Release( );
@@ -286,30 +310,17 @@ public partial class UniformDualContouring {
         var edgeCount   = voxelCount * SurfaceExtractor.Voxel.EdgeCount;
         var cornerCount = voxelCount * SurfaceExtractor.Voxel.CornerCount;
 
-        var voxelData    = new Voxel.Data[voxelCount];
-        var edgeData     = new Edge.Data[edgeCount];
-        var cornerData   = new Corner.Data[cornerCount];
-        var verticesData = new Vector3[voxelCount * 6];
-        var normalsData  = new Vector3[voxelCount * 6];
-        var quadsData    = new Quad.Data[voxelCount];
-        var countsData   = new int[2];
+        var voxelData  = new Voxel.Data[voxelCount];
+        var edgeData   = new Edge.Data[edgeCount];
+        var cornerData = new Corner.Data[cornerCount];
 
-        voxelization.voxels.GetData   ( voxelData );
-        voxelization.edges.GetData    ( edgeData );
-        voxelization.corners.GetData  ( cornerData );
-        voxelization.vertices.GetData ( verticesData );
-        voxelization.normals.GetData  ( normalsData );
-        voxelization.quads.GetData    ( quadsData );
-        voxelization.counts.GetData   ( countsData );
+        voxelization.voxels.GetData  ( voxelData );
+        voxelization.edges.GetData   ( edgeData );
+        voxelization.corners.GetData ( cornerData );
 
-        // build mesh
-        var quads = quadsData.Take( countsData[1] ).Select( ( quadData ) => new Quad( quadData ) );
-
-        var mesh = SurfaceExtractor.createMesh(
-            verticesData.Take ( countsData[0] ).ToArray( ),
-            normalsData.Take  ( countsData[0] ).ToArray( ),
-            quads.Select( ( quad ) => ( quad.subMeshIndex, quad.indices ) )
-        );
+        // the mesh as readMesh gives it, from as many vertices and quads as the counts say. A creased contour's buffers
+        // are not the size of the grid
+        var mesh = SurfaceExtractor.readMesh( voxelization );
 
         // build debug information
         var voxels = voxelData.Aggregate(

@@ -90,10 +90,16 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         get { return 1.0f / ( 1 << this.resolution ); }
     }
 
-    // what an implementation is asked for. A mesh that is going to be creased or simplified needs vertices that its
-    // triangles share, so it is asked for with shared vertices, and creased or split afterwards
+    // what an implementation is asked for. A mesh that is going to be simplified needs vertices that its triangles
+    // share, so it is asked for with shared vertices, and creased or split afterwards. The GPU implementations split
+    // and crease by themselves, and the others give shared vertices whatever they are asked for
     public ContourVertices contourVertices {
-        get { return this.meshSimplification || this.vertexNormals == VertexNormals.Creased ? ContourVertices.Shared : ContourVertices.Split; }
+        get {
+            if( this.meshSimplification ) {
+                return ContourVertices.Shared;
+            }
+            return this.vertexNormals == VertexNormals.Split ? ContourVertices.Split : ContourVertices.Creased;
+        }
     }
 
     [Flags]
@@ -268,9 +274,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     // called again and again.
     // - drawFromGPU: with the GPU implementation and the debug view off, draw the mesh straight from the compute
     //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode. A mesh that
-    //   is simplified is read back whatever this says, since it is simplified on the CPU. Creased vertex normals are
-    //   not creased yet when drawn this way: the GPU's shared vertices are drawn with the contour's normals until the
-    //   GPU creases them itself (Documents/Plans/Creased Normals.md, step 3).
+    //   is simplified is read back whatever this says, since it is simplified on the CPU.
     // - reorderVertices: reorder the vertex buffer, which makes the mesh a little faster to draw and takes 5 to 10% of
     //   a Burst contour of 128^3 cells
     public ContourStatistics contour( IEnumerable<DensityFunction> densityFunctions, bool drawFromGPU = true, bool reorderVertices = true ) {
@@ -323,12 +327,12 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             return new( stopwatch.Elapsed.TotalMilliseconds, null, null );
         }
 
-        // the GPU splits vertices for flat shading itself, in the contour kernel, when it is asked for split ones
-        var splitByGPU = this.contourVertices == ContourVertices.Split;
+        // the GPU splits or creases vertices itself when it is asked for split or creased ones
+        var doneByGPU = this.contourVertices != ContourVertices.Shared;
 
         var ( mesh, corners, edges, voxels ) = voxelization.visit(
             ( voxelization ) => {
-                splitByGPU = false;
+                doneByGPU = false;
 
                 return ( voxelization.mesh, voxelization.corners, voxelization.edges, voxelization.voxels );
             },
@@ -362,7 +366,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             simplifying.Stop( );
         }
 
-        mesh = this.finish( mesh, !splitByGPU, reorderVertices );
+        mesh = this.finish( mesh, !doneByGPU, reorderVertices );
 
         captureDebugMarker.Begin( );
 

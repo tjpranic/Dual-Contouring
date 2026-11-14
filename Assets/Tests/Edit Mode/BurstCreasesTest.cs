@@ -9,6 +9,7 @@ using UnityEngine.Rendering;
 
 using Object        = UnityEngine.Object;
 using SmoothNormals = SurfaceExtractor.SmoothNormals;
+using Builder       = CreaseShapes.Builder;
 
 // BurstCreases on meshes built by hand, whose answers are known in closed form, and on the contours of every algorithm
 // and implementation, simplified and not, which are held to what a crease may not change about a mesh. There is no
@@ -30,90 +31,6 @@ public class BurstCreasesTest : ContourVariantsTest {
             Object.DestroyImmediate( item );
         }
         this.made.Clear( );
-    }
-
-    // a mesh by hand: corners at the same position are one vertex, which keeps the normal it was first given
-    private class Builder {
-
-        public readonly List<float3>             positions = new( );
-        public readonly List<float3>             normals   = new( );
-        public readonly List<BurstMesh.Triangle> triangles = new( );
-
-        private readonly Dictionary<float3, int> indices = new( );
-
-        public int vertex( float3 position, float3 normal = default ) {
-            if( !this.indices.TryGetValue( position, out var index ) ) {
-                index = this.positions.Count;
-
-                this.positions.Add( position );
-                this.normals.Add( normal );
-                this.indices.Add( position, index );
-            }
-            return index;
-        }
-
-        // a vertex that no triangle uses, even if another is at its position
-        public int loose( float3 position, float3 normal ) {
-            this.positions.Add( position );
-            this.normals.Add( normal );
-
-            return this.positions.Count - 1;
-        }
-
-        public void triangle( float3 a, float3 b, float3 c, int subMesh = 0 ) {
-            this.triangles.Add( new BurstMesh.Triangle( this.vertex( a ), this.vertex( b ), this.vertex( c ), subMesh ) );
-        }
-
-        // the triangle turned to face away from a point inside the shape it is part of
-        public void triangleFacingAwayFrom( float3 inside, float3 a, float3 b, float3 c, int subMesh = 0 ) {
-            if( math.dot( math.cross( b - a, c - a ), ( ( a + b + c ) / 3.0f ) - inside ) < 0.0f ) {
-                this.triangle( a, c, b, subMesh );
-            }
-            else {
-                this.triangle( a, b, c, subMesh );
-            }
-        }
-
-        // two triangles, a b c and a c d
-        public void quad( float3 a, float3 b, float3 c, float3 d, int subMesh = 0 ) {
-            this.triangle( a, b, c, subMesh );
-            this.triangle( a, c, d, subMesh );
-        }
-
-        // the box from a corner by a size, one quad a face, facing out. Every vertex is given the normal along the
-        // diagonal from the box's middle, which no face has. The sub-mesh of each face is given its axis and side
-        public Builder box( float3 minimum, float3 size, Func<int, int, int> subMeshOf = null ) {
-            var middle = minimum + ( size / 2.0f );
-
-            for( var axis = 0; axis < 3; ++axis )
-            for( var side = 0; side < 2; ++side ) {
-                var u = ( axis + 1 ) % 3;
-                var v = ( axis + 2 ) % 3;
-
-                float3 corner( int i, int j ) {
-                    var position = minimum;
-
-                    position[axis] += side * size[axis];
-                    position[u]    += i * size[u];
-                    position[v]    += j * size[v];
-
-                    this.vertex( position, math.normalize( position - middle ) );
-
-                    return position;
-                }
-
-                var subMesh = subMeshOf?.Invoke( axis, side ) ?? 0;
-
-                if( side == 1 ) {
-                    this.quad( corner( 0, 0 ), corner( 1, 0 ), corner( 1, 1 ), corner( 0, 1 ), subMesh );
-                }
-                else {
-                    this.quad( corner( 0, 0 ), corner( 0, 1 ), corner( 1, 1 ), corner( 1, 0 ), subMesh );
-                }
-            }
-            return this;
-        }
-
     }
 
     // a crease as managed arrays
@@ -174,12 +91,9 @@ public class BurstCreasesTest : ContourVariantsTest {
         return corner switch { 0 => triangle.a, 1 => triangle.b, _ => triangle.c };
     }
 
+    // the normal of a triangle as the crease has it, zero for one too flat to have a normal
     private static double3 faceOf( float3[] positions, BurstMesh.Triangle triangle ) {
-        var a = ( double3 )positions[triangle.a];
-        var b = ( double3 )positions[triangle.b];
-        var c = ( double3 )positions[triangle.c];
-
-        return BurstCreases.unit( math.cross( b - a, c - a ) );
+        return BurstCreases.faceOf( positions[triangle.a], positions[triangle.b], positions[triangle.c] );
     }
 
     private static double degreesBetween( double3 a, double3 b ) {
@@ -275,28 +189,7 @@ public class BurstCreasesTest : ContourVariantsTest {
     // of a rectangle is 90 degrees however it is cut
     [Test]
     public void prismSidesSplitWhereTheyTurnPastTheAngle( [Values( 3, 4, 5, 6, 8, 10, 12, 24 )] int sides, [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
-        var bottom  = new float3( 0.0f, 0.0f, 0.0f );
-        var top     = new float3( 0.0f, 1.0f, 0.0f );
-
-        // the last side ends where the first begins: sin( 2 pi ) is not 0 in doubles
-        float3 rim( int side, float height ) {
-            var turn = 2.0 * math.PI_DBL * ( side % sides ) / sides;
-
-            return new float3( ( float )math.cos( turn ), height, ( float )math.sin( turn ) );
-        }
-
-        for( var side = 0; side < sides; ++side ) {
-            var b0 = rim( side, 0.0f );
-            var b1 = rim( side + 1, 0.0f );
-            var t0 = rim( side, 1.0f );
-            var t1 = rim( side + 1, 1.0f );
-
-            builder.triangle( top, t1, t0 );
-            builder.triangle( bottom, b0, b1 );
-            builder.quad( b0, t0, t1, b1 );
-        }
-
+        var builder = CreaseShapes.prism( sides );
         var creased = crease( builder, angle, smoothNormals );
         var split   = 360.0 / sides > angle;
 
@@ -329,22 +222,8 @@ public class BurstCreasesTest : ContourVariantsTest {
     // a flat patch of triangles of all shapes splits at no angle, and its normals are the patch's
     [Test]
     public void flatPatchSplitsNothing( [Values( 0.0, angle, 180.0 )] double degrees, [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
-        var random  = new Unity.Mathematics.Random( 7 );
+        var builder = CreaseShapes.flatPatch( );
         var up      = new float3( 0.0f, 1.0f, 0.0f );
-        var points  = new float3[9, 9];
-
-        for( var i = 0; i < 9; ++i )
-        for( var j = 0; j < 9; ++j ) {
-            points[i, j] = new float3( i + random.NextFloat( -0.3f, 0.3f ), 0.0f, j + random.NextFloat( -0.3f, 0.3f ) );
-
-            builder.vertex( points[i, j], up );
-        }
-
-        for( var i = 0; i < 8; ++i )
-        for( var j = 0; j < 8; ++j ) {
-            builder.quad( points[i, j], points[i, j + 1], points[i + 1, j + 1], points[i + 1, j] );
-        }
 
         var creased = crease( builder, degrees, smoothNormals );
 
@@ -359,47 +238,7 @@ public class BurstCreasesTest : ContourVariantsTest {
     // Contour its normals are the ones it came with, and under Faces they are within a few degrees of them
     [Test]
     public void sphereSplitsNothing( [Values] SmoothNormals smoothNormals ) {
-        const int sides = 48;
-        const int rings = 24;
-
-        var builder = new Builder( );
-
-        float3 at( int ring, int side ) {
-            if( ring == 0 ) {
-                return new float3( 0.0f, 1.0f, 0.0f );
-            }
-            if( ring == rings ) {
-                return new float3( 0.0f, -1.0f, 0.0f );
-            }
-
-            var down   = math.PI_DBL * ring / rings;
-            var around = 2.0 * math.PI_DBL * ( side % sides ) / sides;
-
-            var position = new float3( ( float )( math.sin( down ) * math.cos( around ) ), ( float )math.cos( down ), ( float )( math.sin( down ) * math.sin( around ) ) );
-
-            builder.vertex( position, math.normalize( position ) );
-
-            return position;
-        }
-
-        builder.vertex( at( 0, 0 ), new float3( 0.0f, 1.0f, 0.0f ) );
-        builder.vertex( at( rings, 0 ), new float3( 0.0f, -1.0f, 0.0f ) );
-
-        for( var ring = 0; ring < rings; ++ring )
-        for( var side = 0; side < sides; ++side ) {
-            var a = at( ring, side );
-            var b = at( ring, side + 1 );
-            var c = at( ring + 1, side + 1 );
-            var d = at( ring + 1, side );
-
-            if( ring != 0 ) {
-                builder.triangleFacingAwayFrom( float3.zero, a, b, c );
-            }
-            if( ring != rings - 1 ) {
-                builder.triangleFacingAwayFrom( float3.zero, a, c, d );
-            }
-        }
-
+        var builder = CreaseShapes.sphere( );
         var creased = crease( builder, angle, smoothNormals );
 
         Assert.AreEqual( builder.positions.Count, creased.positions.Length, "creased vertices" );
@@ -420,22 +259,7 @@ public class BurstCreasesTest : ContourVariantsTest {
     // normal, 60 degrees from every face. Joining by the group's normal keeps every face within the angle
     [Test]
     public void coneTipDoesNotGatherIntoOneGroup( [Values] SmoothNormals smoothNormals ) {
-        const int sides = 24;
-
-        var builder = new Builder( );
-        var tip     = new float3( 0.0f, ( float )( 1.0 / math.tan( math.radians( 30.0 ) ) ), 0.0f );
-        var inside  = new float3( 0.0f, tip.y / 3.0f, 0.0f );
-
-        float3 rim( int side ) {
-            var turn = 2.0 * math.PI_DBL * ( side % sides ) / sides;
-
-            return new float3( ( float )math.cos( turn ), 0.0f, ( float )math.sin( turn ) );
-        }
-
-        for( var side = 0; side < sides; ++side ) {
-            builder.triangleFacingAwayFrom( inside, tip, rim( side ), rim( side + 1 ) );
-        }
-
+        var builder = CreaseShapes.coneTip( out var tip );
         var creased = crease( builder, angle, smoothNormals );
         var tips    = Enumerable.Range( 0, creased.positions.Length ).Count( ( vertex ) => creased.positions[vertex].Equals( tip ) );
 
@@ -453,22 +277,7 @@ public class BurstCreasesTest : ContourVariantsTest {
     // and the group's normal ends up 42.4 degrees from the first. The guard gives the first a group of its own
     [Test]
     public void groupThatMovesAwayFromACornerLetsItGo( [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
-        var turns   = new[] { 0.0, 39.0, 58.5, 71.0 };
-        var corners = new[] { 1.0, 0.99, 0.98, 0.97 };
-        var axis    = new double3( 0.0, 1.0, 0.0 );
-
-        for( var index = 0; index < turns.Length; ++index ) {
-            var normal = new double3( math.sin( math.radians( turns[index] ) ), 0.0, math.cos( math.radians( turns[index] ) ) );
-            var across = math.cross( normal, axis );
-            var scale  = 1.0 + index;
-
-            var b = axis * scale;
-            var c = ( ( axis * math.cos( corners[index] ) ) + ( across * math.sin( corners[index] ) ) ) * scale;
-
-            builder.triangle( float3.zero, ( float3 )b, ( float3 )c );
-        }
-
+        var builder = CreaseShapes.turningTriangles( );
         var creased = crease( builder, angle, smoothNormals );
 
         Assert.AreEqual( 1, creased.statistics.guardedCornerCount, "guarded corners" );
@@ -477,22 +286,23 @@ public class BurstCreasesTest : ContourVariantsTest {
         assertCornersWithin( creased, angle, "turning triangles" );
     }
 
-    // corners of the same size go in the order of their triangles, which the GPU must follow too. Three triangles at a
-    // vertex with corners of exactly 90 degrees and normals 45 degrees apart: at 50 degrees the first two make a group
-    // and the third is alone. Taken the other way round, the last two would make the group
+    // corners of the same size go by their triangles' normals, x first, whatever the order of the triangles, which the
+    // GPU follows too. Three triangles at a vertex with corners of exactly 90 degrees and normals 45 degrees apart, at
+    // (0, -1, 0), (1, -1, 0) / sqrt( 2 ) and (1, 0, 0): at 50 degrees the first two by x make a group and the third is
+    // alone, in either order of the triangles. Taken the other way round, the last two would make the group
     [Test]
-    public void cornersOfTheSameSizeGoInTheOrderOfTheirTriangles( [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
-
-        builder.triangle( float3.zero, new float3( 1.0f, 0.0f, 0.0f ), new float3( 0.0f, 0.0f, 1.0f ) );
-        builder.triangle( float3.zero, new float3( 1.0f, 1.0f, 0.0f ), new float3( 0.0f, 0.0f, 2.0f ) );
-        builder.triangle( float3.zero, new float3( 0.0f, 1.0f, 0.0f ), new float3( 0.0f, 0.0f, 3.0f ) );
-
+    public void cornersOfTheSameSizeGoByTheirNormals( [Values] SmoothNormals smoothNormals, [Values] bool reversed ) {
+        var builder = CreaseShapes.cornersOfTheSameSize( reversed );
         var creased = crease( builder, 50.0, smoothNormals );
 
+        // the triangles in the order of their normals' x
+        var first  = creased.triangles[reversed ? 2 : 0].a;
+        var second = creased.triangles[1].a;
+        var third  = creased.triangles[reversed ? 0 : 2].a;
+
         Assert.AreEqual( 0, creased.statistics.guardedCornerCount, "guarded corners" );
-        Assert.AreEqual( creased.triangles[0].a, creased.triangles[1].a, "the first two triangles share their corner" );
-        Assert.AreNotEqual( creased.triangles[1].a, creased.triangles[2].a, "the third has its own" );
+        Assert.AreEqual( first, second, "the first two by their normals share their corner" );
+        Assert.AreNotEqual( second, third, "the third has its own" );
     }
 
     // ---- what a crease keeps ----
@@ -502,34 +312,8 @@ public class BurstCreasesTest : ContourVariantsTest {
     // normal does
     [Test]
     public void contourNormalGivesWayWhereItDoesNotFit( [Values( angle, 180.0 )] double degrees ) {
-        var builder = new Builder( );
+        var builder = CreaseShapes.patchWithOddNormals( out var normals );
         var up      = new float3( 0.0f, 1.0f, 0.0f );
-
-        for( var i = 0; i < 4; ++i )
-        for( var j = 0; j < 4; ++j ) {
-            builder.vertex( new float3( i, 0.0f, j ), up );
-        }
-
-        for( var i = 0; i < 3; ++i )
-        for( var j = 0; j < 3; ++j ) {
-            builder.quad( new float3( i, 0.0f, j ), new float3( i, 0.0f, j + 1 ), new float3( i + 1, 0.0f, j + 1 ), new float3( i + 1, 0.0f, j ) );
-        }
-
-        float3 tilted( double degrees ) {
-            return new float3( ( float )math.sin( math.radians( degrees ) ), ( float )math.cos( math.radians( degrees ) ), 0.0f );
-        }
-
-        // four vertices of the middle of the patch: one without a normal, one flipped, one 60 degrees off and one 10
-        var normals = new Dictionary<int, float3> {
-            [builder.vertex( new float3( 1.0f, 0.0f, 1.0f ) )] = float3.zero,
-            [builder.vertex( new float3( 1.0f, 0.0f, 2.0f ) )] = -up,
-            [builder.vertex( new float3( 2.0f, 0.0f, 1.0f ) )] = tilted( 60.0 ),
-            [builder.vertex( new float3( 2.0f, 0.0f, 2.0f ) )] = tilted( 10.0 )
-        };
-
-        foreach( var ( vertex, normal ) in normals ) {
-            builder.normals[vertex] = normal;
-        }
 
         var creased = crease( builder, degrees, SmoothNormals.Contour );
         var all     = degrees >= 180.0;
@@ -539,26 +323,21 @@ public class BurstCreasesTest : ContourVariantsTest {
         Assert.AreEqual( all ? 0 : 3, creased.statistics.replacedNormalCount, "contour normals replaced" );
 
         for( var vertex = 0; vertex < creased.normals.Length; ++vertex ) {
-            var kept     = all || !normals.TryGetValue( vertex, out var given ) || given.Equals( tilted( 10.0 ) );
+            var kept     = all || !normals.TryGetValue( vertex, out var given ) || given.Equals( CreaseShapes.tilted( 10.0 ) );
             var expected = kept ? builder.normals[vertex] : up;
 
             Assert.AreEqual( expected, creased.normals[vertex], $"normal of vertex {vertex}" );
         }
     }
 
-    // a triangle without area, along an edge of a patch, has no normal and has no say in the normals of its vertices
+    // a triangle too flat to have a normal, along an edge of a cube, has no say in the normals of its vertices. With
+    // one, its corners at the ends of the edge would start groups of their own, 45 degrees from both faces
     [Test]
-    public void triangleWithoutAreaHasNoSay( [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( ).box( float3.zero, new float3( 1.0f ) );
-
-        // along the edge from (0, 0, 0) to (1, 0, 0), through a vertex of its own halfway. That vertex has no other
-        // triangle, so it keeps the normal it came with
-        builder.vertex( new float3( 0.5f, 0.0f, 0.0f ), math.normalize( new float3( 0.0f, -1.0f, -1.0f ) ) );
-        builder.triangle( new float3( 0.0f, 0.0f, 0.0f ), new float3( 0.5f, 0.0f, 0.0f ), new float3( 1.0f, 0.0f, 0.0f ) );
-
+    public void triangleTooFlatToHaveANormalHasNoSay( [Values] SmoothNormals smoothNormals ) {
+        var builder = CreaseShapes.cubeWithFlatTriangle( );
         var creased = crease( builder, angle, smoothNormals );
 
-        Assert.AreEqual( 1, creased.statistics.zeroAreaTriangleCount, "triangles without area" );
+        Assert.AreEqual( 1, creased.statistics.flatTriangleCount, "triangles too flat to have a normal" );
         Assert.AreEqual( 24 + 1, creased.positions.Length, "creased vertices: the cube's and the one halfway" );
 
         assertSameTriangles( builder.positions.ToArray( ), builder.triangles.ToArray( ), creased, "cube with a flat triangle" );
@@ -572,13 +351,8 @@ public class BurstCreasesTest : ContourVariantsTest {
     // a vertex no triangle uses stays, in its place among the vertices, with its position and its normal
     [Test]
     public void looseVertexStaysInItsPlace( [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
         var normal  = new float3( 0.6f, 0.0f, 0.8f );
-
-        builder.box( float3.zero, new float3( 1.0f ) );
-        builder.loose( new float3( 5.0f, 6.0f, 7.0f ), normal );
-        builder.box( new float3( 2.0f, 0.0f, 0.0f ), new float3( 1.0f ) );
-
+        var builder = CreaseShapes.cubesWithALooseVertex( normal );
         var creased = crease( builder, angle, smoothNormals );
 
         Assert.AreEqual( 24 + 1 + 24, creased.positions.Length, "creased vertices" );
@@ -592,13 +366,7 @@ public class BurstCreasesTest : ContourVariantsTest {
     // corner they share has six faces around it, each its own group
     [Test]
     public void edgeOfFourTrianglesAndPinchedVertex( [Values] SmoothNormals smoothNormals ) {
-        var builder = new Builder( );
-
-        builder.box( new float3( 0.0f, 0.0f, 0.0f ), new float3( 1.0f ) );
-        builder.box( new float3( -1.0f, -1.0f, 0.0f ), new float3( 1.0f ) );
-        builder.box( new float3( 3.0f, 0.0f, 0.0f ), new float3( 1.0f ) );
-        builder.box( new float3( 2.0f, -1.0f, -1.0f ), new float3( 1.0f ) );
-
+        var builder = CreaseShapes.boxesAlongAnEdgeAndAtACorner( );
         var creased = crease( builder, angle, smoothNormals );
 
         assertSameTriangles( builder.positions.ToArray( ), builder.triangles.ToArray( ), creased, "boxes" );

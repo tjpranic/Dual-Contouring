@@ -1,0 +1,396 @@
+#pragma kernel clearVertices
+#pragma kernel triangleFaces
+#pragma kernel countCorners
+#pragma kernel placeRuns
+#pragma kernel scatterCorners
+#pragma kernel groupCorners
+#pragma kernel rewrite
+#pragma kernel finish
+
+// creases the contour a GPU implementation leaves in its buffers, kernel for kernel what BurstCreases does in jobs: the
+// comments there say why, the ones here what (Documents/Plans/Creased Normals.md). Any contour of vertices, normals and
+// quads of six indices does, which is what both GPU implementations give.
+//
+// Corner c is index c % 6 of quad c / 6, and triangle t = c / 3 is corners 3t to 3t + 2. Metal has no doubles, so this
+// works in floats where BurstCreases works in doubles
+
+#define CONTOUR_NORMALS 0
+
+struct Quad {
+    uint indices[6];
+    uint subMeshIndex;
+};
+
+// the contour. counts[0] is how many vertices it has and counts[1] how many quads, as the contour kernels leave them
+StructuredBuffer<float3> vertices;
+StructuredBuffer<float3> normals;
+StructuredBuffer<uint>   counts;
+
+// its quads, whose indices rewrite turns to those of the creased vertices
+RWStructuredBuffer<Quad> quads;
+
+RWStructuredBuffer<float3> faces;          // for every triangle, its unit normal
+RWStructuredBuffer<float>  weights;        // for every corner, its angle
+RWStructuredBuffer<uint>   cornerCounts;   // for every vertex, how many corners it has
+RWStructuredBuffer<uint>   cursors;        // for every vertex, how many of its corners are in its run so far
+RWStructuredBuffer<uint>   runStarts;      // for every vertex, where its run of corners starts
+RWStructuredBuffer<uint>   runs;           // the corners of every vertex together
+RWStructuredBuffer<float3> sums;           // the sums of the groups of a vertex, in the slots of its run
+RWStructuredBuffer<uint>   groupOfCorners; // for every corner, the number of its group among its vertex's
+RWStructuredBuffer<uint>   bases;          // for every vertex, its first creased vertex
+RWStructuredBuffer<uint>   totals;         // [0] corners placed in runs, [1] creased vertices
+
+// four of the buffers above again, read-only, for groupCorners: a kernel may write to at most eight buffers, and it
+// writes to seven others
+StructuredBuffer<float3> facesRead;
+StructuredBuffer<float>  weightsRead;
+StructuredBuffer<uint>   cornerCountsRead;
+StructuredBuffer<uint>   runStartsRead;
+
+// the creased contour: creasedCounts[0] is how many vertices it has and creasedCounts[1] how many quads
+RWStructuredBuffer<float3> creasedVertices;
+RWStructuredBuffer<float3> creasedNormals;
+RWStructuredBuffer<uint>   creasedCounts;
+
+// the cosine of the crease angle, below -1 at 180 degrees and above, and SmoothNormals
+float cosine;
+uint  smoothNormals;
+
+// thread groups of 64 along x in a dispatch, which goes on along y past 65,535 groups
+uint groupsX;
+
+uint threadOf( uint3 id ) {
+    return id.x + ( id.y * groupsX * 64 );
+}
+
+// the unit vector along a vector, and zero for zero ("vector" is a word of HLSL's own)
+float3 unit( float3 along ) {
+    float length2 = dot( along, along );
+
+    return length2 > 0.0f ? along * rsqrt( length2 ) : float3( 0.0f, 0.0f, 0.0f );
+}
+
+bool hasArea( float3 face ) {
+    return any( face != float3( 0.0f, 0.0f, 0.0f ) );
+}
+
+uint vertexOf( uint corner ) {
+    return quads[corner / 6].indices[corner % 6];
+}
+
+// the largest sine of an angle of a triangle under which it is too flat to have a normal, BurstCreases.flatness
+#define FLATNESS 1e-3f
+
+// the unit normal of a triangle, or zero when it is too flat to have one, taken at the corner opposite its longest side
+// as BurstCreases.faceOf takes it
+float3 faceOf( float3 a, float3 b, float3 c ) {
+    float ab = dot( b - a, b - a );
+    float bc = dot( c - b, c - b );
+    float ca = dot( a - c, a - c );
+
+    float3 across;
+    float  sides;
+
+    if( bc >= ab && bc >= ca ) {
+        across = cross( b - a, c - a );
+        sides  = sqrt( ab * ca );
+    }
+    else if( ca >= ab ) {
+        across = cross( c - b, a - b );
+        sides  = sqrt( ab * bc );
+    }
+    else {
+        across = cross( a - c, b - c );
+        sides  = sqrt( bc * ca );
+    }
+
+    float size = length( across );
+
+    return size > FLATNESS * sides ? across / size : float3( 0.0f, 0.0f, 0.0f );
+}
+
+float angleAt( float3 corner, float3 next, float3 previous ) {
+    float3 along  = next - corner;
+    float3 across = previous - corner;
+
+    return atan2( length( cross( along, across ) ), dot( along, across ) );
+}
+
+[numthreads( 64, 1, 1 )]
+void clearVertices( uint3 id : SV_DispatchThreadID ) {
+    uint vertex = threadOf( id );
+
+    if( vertex >= counts[0] ) {
+        return;
+    }
+
+    cornerCounts[vertex] = 0;
+    cursors[vertex]      = 0;
+}
+
+[numthreads( 64, 1, 1 )]
+void triangleFaces( uint3 id : SV_DispatchThreadID ) {
+    uint face = threadOf( id );
+
+    if( face >= counts[1] * 2 ) {
+        return;
+    }
+
+    float3 a = vertices[vertexOf( ( face * 3 ) + 0 )];
+    float3 b = vertices[vertexOf( ( face * 3 ) + 1 )];
+    float3 c = vertices[vertexOf( ( face * 3 ) + 2 )];
+
+    float3 normal = faceOf( a, b, c );
+
+    faces[face] = normal;
+
+    bool area = hasArea( normal );
+
+    weights[( face * 3 ) + 0] = area ? angleAt( a, b, c ) : 0.0f;
+    weights[( face * 3 ) + 1] = area ? angleAt( b, c, a ) : 0.0f;
+    weights[( face * 3 ) + 2] = area ? angleAt( c, a, b ) : 0.0f;
+}
+
+[numthreads( 64, 1, 1 )]
+void countCorners( uint3 id : SV_DispatchThreadID ) {
+    uint corner = threadOf( id );
+
+    if( corner >= counts[1] * 6 ) {
+        return;
+    }
+
+    InterlockedAdd( cornerCounts[vertexOf( corner )], 1 );
+}
+
+[numthreads( 64, 1, 1 )]
+void placeRuns( uint3 id : SV_DispatchThreadID ) {
+    uint vertex = threadOf( id );
+
+    if( vertex >= counts[0] ) {
+        return;
+    }
+
+    uint start;
+    InterlockedAdd( totals[0], cornerCounts[vertex], start );
+
+    runStarts[vertex] = start;
+}
+
+[numthreads( 64, 1, 1 )]
+void scatterCorners( uint3 id : SV_DispatchThreadID ) {
+    uint corner = threadOf( id );
+
+    if( corner >= counts[1] * 6 ) {
+        return;
+    }
+
+    uint vertex = vertexOf( corner );
+
+    uint slot;
+    InterlockedAdd( cursors[vertex], 1, slot );
+
+    runs[runStarts[vertex] + slot] = corner;
+}
+
+// larger corners first, then by their triangle's normal, x, y and z, and between corners alike in both by their order
+bool before( uint corner, uint other ) {
+    float weight      = weightsRead[corner];
+    float otherWeight = weightsRead[other];
+
+    if( weight != otherWeight ) {
+        return weight > otherWeight;
+    }
+
+    float3 face      = facesRead[corner / 3];
+    float3 otherFace = facesRead[other / 3];
+
+    if( face.x != otherFace.x ) {
+        return face.x < otherFace.x;
+    }
+    if( face.y != otherFace.y ) {
+        return face.y < otherFace.y;
+    }
+    if( face.z != otherFace.z ) {
+        return face.z < otherFace.z;
+    }
+    return corner < other;
+}
+
+// the corners of a group of a vertex that have area
+uint membersOf( uint start, uint end, uint group ) {
+    uint members = 0;
+
+    for( uint slot = start; slot < end; ++slot ) {
+        uint corner = runs[slot];
+
+        if( groupOfCorners[corner] == group && hasArea( facesRead[corner / 3] ) ) {
+            ++members;
+        }
+    }
+    return members;
+}
+
+// whether the contour's normal of a vertex of one group may stay: within the angle of every triangle with area at it
+bool contourNormalFits( uint vertex, uint start, uint end ) {
+    if( cosine < -1.0f ) {
+        return true;
+    }
+
+    float3 contour = unit( normals[vertex] );
+
+    for( uint slot = start; slot < end; ++slot ) {
+        float3 face = facesRead[runs[slot] / 3];
+
+        if( !hasArea( face ) ) {
+            continue;
+        }
+
+        if( !hasArea( contour ) || dot( contour, face ) < cosine ) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[numthreads( 64, 1, 1 )]
+void groupCorners( uint3 id : SV_DispatchThreadID ) {
+    uint vertex = threadOf( id );
+
+    if( vertex >= counts[0] ) {
+        return;
+    }
+
+    uint start = runStartsRead[vertex];
+    uint end   = start + cornerCountsRead[vertex];
+
+    // a vertex that no triangle uses stays as it is
+    if( start == end ) {
+        uint loose;
+        InterlockedAdd( totals[1], 1, loose );
+
+        bases[vertex]          = loose;
+        creasedVertices[loose] = vertices[vertex];
+        creasedNormals[loose]  = normals[vertex];
+        return;
+    }
+
+    // the run sorted, largest corner first
+    for( uint next = start + 1; next < end; ++next ) {
+        uint corner = runs[next];
+        uint place  = next;
+
+        while( place > start && before( corner, runs[place - 1] ) ) {
+            runs[place] = runs[place - 1];
+            --place;
+        }
+        runs[place] = corner;
+    }
+
+    uint groupCount = 0;
+
+    for( uint slot = start; slot < end; ++slot ) {
+        uint   corner = runs[slot];
+        float3 face   = facesRead[corner / 3];
+
+        if( !hasArea( face ) ) {
+            if( groupCount == 0 ) {
+                sums[start] = float3( 0.0f, 0.0f, 0.0f );
+                groupCount  = 1;
+            }
+            groupOfCorners[corner] = 0;
+            continue;
+        }
+
+        uint  best    = groupCount;
+        float nearest = cosine;
+
+        for( uint candidate = 0; candidate < groupCount; ++candidate ) {
+            float along = dot( face, unit( sums[start + candidate] ) );
+
+            if( along >= nearest ) {
+                nearest = along;
+                best    = candidate;
+            }
+        }
+
+        if( best == groupCount ) {
+            sums[start + best] = float3( 0.0f, 0.0f, 0.0f );
+            ++groupCount;
+        }
+
+        sums[start + best]    += face * weightsRead[corner];
+        groupOfCorners[corner] = best;
+    }
+
+    // the guard. Every pass but the last moves a corner into a group of its own, which it never leaves, so there are
+    // at most as many passes as corners and one more
+    bool moved  = true;
+    uint passes = 0;
+
+    while( moved && passes <= end - start ) {
+        moved = false;
+        ++passes;
+
+        for( uint slot = start; slot < end; ++slot ) {
+            uint   corner = runs[slot];
+            float3 face   = facesRead[corner / 3];
+
+            if( !hasArea( face ) ) {
+                continue;
+            }
+
+            uint group = groupOfCorners[corner];
+
+            if( dot( face, unit( sums[start + group] ) ) >= cosine || membersOf( start, end, group ) == 1 ) {
+                continue;
+            }
+
+            float3 weighted = face * weightsRead[corner];
+
+            sums[start + group]      -= weighted;
+            sums[start + groupCount]  = weighted;
+            groupOfCorners[corner]    = groupCount;
+
+            ++groupCount;
+
+            moved = true;
+        }
+    }
+
+    bool keep = groupCount == 1 && smoothNormals == CONTOUR_NORMALS && contourNormalFits( vertex, start, end );
+
+    uint first;
+    InterlockedAdd( totals[1], groupCount, first );
+
+    bases[vertex] = first;
+
+    for( uint index = 0; index < groupCount; ++index ) {
+        float3 normal = unit( sums[start + index] );
+
+        creasedVertices[first + index] = vertices[vertex];
+        creasedNormals[first + index]  = keep || !hasArea( normal ) ? normals[vertex] : normal;
+    }
+}
+
+[numthreads( 64, 1, 1 )]
+void rewrite( uint3 id : SV_DispatchThreadID ) {
+    uint index = threadOf( id );
+
+    if( index >= counts[1] ) {
+        return;
+    }
+
+    Quad quad = quads[index];
+
+    for( uint corner = 0; corner < 6; ++corner ) {
+        quad.indices[corner] = bases[quad.indices[corner]] + groupOfCorners[( index * 6 ) + corner];
+    }
+
+    quads[index] = quad;
+}
+
+[numthreads( 1, 1, 1 )]
+void finish( uint3 id : SV_DispatchThreadID ) {
+    creasedCounts[0] = totals[1];
+    creasedCounts[1] = counts[1];
+}
