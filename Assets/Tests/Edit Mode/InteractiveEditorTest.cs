@@ -201,8 +201,12 @@ public class InteractiveEditorTest {
         uniform.simplificationError         = 0.125f;
         uniform.lineQuadricWeight           = 0.25f;
         uniform.simplificationDetail        = 0.75f;
-        uniform.remeshing                   = Remeshing.Technique.FlatPairs;
+        uniform.remeshing                   = Remeshing.Technique.Isotropic;
         uniform.remeshingEdgeLength         = 1.5f;
+        uniform.remeshingFeatureAngle       = 55.0f;
+        uniform.remeshingIterations         = 3;
+        uniform.remeshingAreaIterations     = 7;
+        uniform.remeshingNormals            = Remeshing.Normals.Faces;
 
         editor.select( algorithm );
 
@@ -228,8 +232,12 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 0.125f,                                         octree.simplificationError );
         Assert.AreEqual( 0.25f,                                          octree.lineQuadricWeight );
         Assert.AreEqual( 0.75f,                                          octree.simplificationDetail );
-        Assert.AreEqual( Remeshing.Technique.FlatPairs,                  octree.remeshing );
+        Assert.AreEqual( Remeshing.Technique.Isotropic,                  octree.remeshing );
         Assert.AreEqual( 1.5f,                                           octree.remeshingEdgeLength );
+        Assert.AreEqual( 55.0f,                                          octree.remeshingFeatureAngle );
+        Assert.AreEqual( 3,                                              octree.remeshingIterations );
+        Assert.AreEqual( 7,                                              octree.remeshingAreaIterations );
+        Assert.AreEqual( Remeshing.Normals.Faces,                        octree.remeshingNormals );
 
         editor.select( Algorithm.Uniform );
 
@@ -2290,6 +2298,23 @@ public class InteractiveEditorTest {
         voxelizer.remeshingEdgeLength = 0.5f;
 
         Assert.AreNotEqual( remeshing, editor.remeshingSignature( ), "at another edge length" );
+
+        // and Isotropic's settings
+        voxelizer.remeshing = Remeshing.Technique.Isotropic;
+
+        foreach( var ( what, change ) in new ( string, Action )[] {
+            ( "technique",       ( ) => { } ),
+            ( "feature angle",   ( ) => voxelizer.remeshingFeatureAngle = 30.0f ),
+            ( "iterations",      ( ) => voxelizer.remeshingIterations = 2 ),
+            ( "area iterations", ( ) => voxelizer.remeshingAreaIterations = 9 ),
+            ( "normals",         ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Faces )
+        } ) {
+            change( );
+
+            Assert.AreNotEqual( remeshing, editor.remeshingSignature( ), $"another {what}" );
+
+            remeshing = editor.remeshingSignature( );
+        }
 
         Assert.AreEqual( contour,    editor.signature( ),           "what a contour depends on" );
         Assert.AreEqual( simplifier, editor.simplifierSignature( ), "what the collapses depend on" );

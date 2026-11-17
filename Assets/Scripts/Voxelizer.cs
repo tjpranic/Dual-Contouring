@@ -137,6 +137,34 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     [Tooltip( "How long the edges of the new faces are, against the mesh the remeshing is given: at 1 the result has as many vertices as that mesh, at 0.5 about four times as many, and at 2 about a quarter" ), Min( 0.01f )]
     public float remeshingEdgeLength = 1.0f;
 
+    [Tooltip( "Two triangles that meet at more than this many degrees have a sharp edge between them, which the remeshing keeps as a line. Open edges, edges of more than two triangles and edges between materials are kept whatever the angle" ), Range( 0.0f, 180.0f )]
+    public float remeshingFeatureAngle = 40.0f;
+
+    [Tooltip( "Isotropic only: how many times edges are split, collapsed and flipped and the vertices smoothed" ), Min( 0 )]
+    public int remeshingIterations = 5;
+
+    [Tooltip( "Isotropic only: how many rounds of smoothing follow, which make the areas around the vertices alike. Zero leaves them out" ), Min( 0 )]
+    public int remeshingAreaIterations = 5;
+
+    [Tooltip( "The normals the remeshed mesh starts from, before it is creased or split. Input: those the mesh it was given would show, creased at the Crease Angle, where each vertex lies on it. Faces: those of each vertex's own triangles" )]
+    public Remeshing.Normals remeshingNormals = Remeshing.Normals.Input;
+
+    // the remeshing settings, as the remeshing pass takes them. Split vertices take their triangles' normals whatever
+    // the remesh gives them, so the input is not creased for them: they ask for Faces, which costs nothing
+    public Remeshing.Settings remeshingSettings {
+        get {
+            return new Remeshing.Settings(
+                this.remeshing,
+                this.remeshingEdgeLength,
+                this.remeshingFeatureAngle,
+                this.remeshingIterations,
+                this.remeshingAreaIterations,
+                this.vertexNormals == VertexNormals.Split ? Remeshing.Normals.Faces : this.remeshingNormals,
+                this.creaseAngle
+            );
+        }
+    }
+
     // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
     [Header( "Wireframe" )]
 
@@ -463,7 +491,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         else {
             remeshMarker.Begin( );
 
-            mesh = this.remeshingInput.remesh( this.remeshing, this.remeshingEdgeLength, out this.edgeFlags, out var statistics );
+            mesh = this.remeshingInput.remesh( this.remeshingSettings, out this.edgeFlags, out var statistics );
 
             remeshMarker.End( );
 
@@ -494,7 +522,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             if( this.remeshing != Remeshing.Technique.Off ) {
                 remeshMarker.Begin( );
 
-                var remeshed = this.remeshingInput.remesh( this.remeshing, this.remeshingEdgeLength, out this.edgeFlags, out var statistics );
+                var remeshed = this.remeshingInput.remesh( this.remeshingSettings, out this.edgeFlags, out var statistics );
 
                 remeshMarker.End( );
 

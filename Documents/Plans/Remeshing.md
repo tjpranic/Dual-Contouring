@@ -2,7 +2,16 @@
 
 Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mesh simplification, with three techniques to choose between: evenly shaped triangles from a loop of edge splits, collapses, flips and smoothing; triangles or quads that follow an orientation field; and quads with few irregular vertices.
 
-**Status:** steps 0 to 2 done on 2026-11-17. Step 0, on the user's "Alright, begin on step 0.", took the baseline and measured what the pass will meet; step 1, on "Start step 1.", built the frame with a stand-in technique; step 2, on "Looks good so far, continue.", built Isotropic's skeleton, operations and search, uncommitted. All eight decisions were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16), which the user answered on 2026-11-17: against the mesh the pass is given. Step 3 waits for the go-ahead.
+**Status:** steps 0 to 2 done on 2026-11-17. Step 3 is implemented and under correctness review; its turned-box acceptance requirement is still outstanding (finding 19).
+- **Step 0,** on the user's "Alright, begin on step 0.": the baseline, and a measure of what the pass will meet.
+- **Step 1,** on "Start step 1.": the frame, with a stand-in technique.
+- **Step 2,** on "Looks good so far, continue.": Isotropic's skeleton, operations and search, committed as 7caab82.
+- **Step 3,** on "Alright, continue with step 3.", and after a pause on "Just do whatever is easiest to fix the long test, then proceed with step 3 of the plan.": the loop, with Isotropic wired in as a technique. Uncommitted.
+  - On 2026-11-18, "Add those fixes in.": preserve hard-polyline breakpoints and validate face orientation against the immutable input. Scale-aware angle-feature cleanup remains separate.
+
+**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting.
+
+**Next:** step 3b, features by angle at the scale of the edge length, which waits for the go-ahead.
 
 **Papers,** all in `Documents/Papers/`:
 - *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): the technique called **Isotropic** below. It is its section 4.
@@ -122,6 +131,7 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
      - **Smoothing:** a vertex on a line moves along the line, and a corner does not move.
    - **Two strengths of feature,** since step 0 (finding 17):
      - **Hard:** open edges, edges of more than two triangles and lines between materials. They are the simplifier's sharp edges, `check` holds their topology by Hoppe's tests, and the rules above hold them at every length.
+       - Every non-collinear bend of their input polylines is a fixed geometric breakpoint, even below the Feature Angle. This does not make it a feature-angle corner. Only collinear samples may be removed or redistributed, and new samples stay on the segment between breakpoints. Exact boundary geometry takes precedence over the target vertex count.
      - **By angle:** the rules above hold them, but they are not sharp edges to `check`. A feature edge by angle shorter than 4/5 *l* collapses like any other edge, and two corners by angle closer than that may become one, where `check` allows it. Edges and corners of the shape that are further apart than that keep their place, and the zigzags and slivers of finding 17, which are shorter, go. A detail of the shape smaller than the edge length goes too, as any detail under a remesh's resolution does.
      - **What this changes:** the first draft had the angle kind as a fourth kind of sharp edge in the simplifier's lists. That would have put the noise under Hoppe's tests, which never let two such corners meet.
    - **Collapses and flips are refused** where they would change the topology or turn a triangle over (finding 7), and a collapse also where it would leave an edge longer than 4/3 *l*, which the next round would only split again.
@@ -130,7 +140,7 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
      - **any other:** of the input's triangles of its own material whose normals are within 90° of its own, near where it was.
      - **Why not the patches:** the first draft had the patch between feature lines. Step 0 found patches by angle of under a cell² by the hundred on some models (finding 17), and a vertex would be held to a sliver. The normal keeps a vertex from going to the far side of a thin wall.
      - **The input is the surface.** With simplification on that is the simplified mesh, so a curved shape keeps the simplifier's flat facets, with new vertices spread over them. The distance to the true shape is the simplifier's and no worse.
-   - **A move that would turn a triangle over is not made.**
+   - **A move that would turn a triangle over is not made.** Every proposed face of a split, collapse, flip or smoothing move must also face the nearest input triangle of its material at its centre. This reference search does not filter by the proposed normal. Faces carry an input-facing anchor, inherited on split and retained through collapse and flip; the candidate and the nearest reference must agree with that anchor. A flip must agree with both replaced faces' anchors. No reference within reach, or an opposing reference, refuses the edit. These conservative checks prevent the accumulated drift that a comparison with only the preceding face permits; they are not a global self-intersection test.
    - **The damping factor λ** of the area smoothing has no value in the paper. Step 3 sets it by measurement.
    - **Edges are worked longest first when splitting and shortest first when collapsing,** with ties by index, so the result is the same every time. The paper gives no order.
 
@@ -224,6 +234,24 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
     - **What came out:** no open edge and no pinched vertex anywhere. The three balls stay one surface of a ball's topology, and the turned and new shapes come apart into their pieces. But 16 meshes at 64³ and 128³ keep one to three edges of four triangles. Five of the six looked at were paired by the fallback. Their two pairs still meet at both ends, since the sheets go on through each other there.
     - **What the build has to do instead:** choose, at such an edge, between the two pairings that suit the windings by what the fans round its two ends become, so that each is a disk. Step 4 does that and counts what is left.
 
+19. **Isotropic keeps the noise of finding 17 on contours** (step 3, Measurements). A cube turned about an axis or a diagonal, remeshed at the defaults:
+    - **Clean** where the input is: simplified, the cube turned about an axis comes out with its own 12 lines and 8 corners from every algorithm at 32³ and 64³, which a test now holds. So does Occupancy's contour at 32³, but not at 64³, where its 32 lines become 26.
+    - **Not clean** on contours whose edges cross the grid. At 64³ Uniform's contour of the cube turned about a diagonal has 359 lines and Occupancy's 259, and the remesh leaves 242 and 109. Simplified, Occupancy's comes out with 15 lines and Uniform's with 131; Manifold's came out with 12 in a run before the last changes to the loop.
+    - **Why:** where an edge crosses the grid, the contour's triangles bridge the crease, and each side of the bridge meets its face at about half the crease's angle. At a Feature Angle of 40° both sides of a right angle's bridge are features, which makes the crease two lines with a strip between them. Their corners are further apart than 4/5 *l*, so the rule of finding 9 that merges corners keeps them.
+    - **What would clear it** is a skeleton found at the scale of *l*, which all three techniques share. Decision 10 chose that, and step 3b builds it.
+
+20. **Contours and simplified meshes fold in places, and a remesh keeps their folds.** Uniform's contour of the turned shapes has a sliver lying in a flat face the other way up, and its simplified mesh has places crumpled within a cell. Every operation of the loop keeps a triangle facing as it did, so what is folded stays folded. The tests hold the remesh to adding no fold where the input faces one way.
+
+21. **A remesh that takes over the input's normals as they are breaks smooth shading.** The user saw it after step 3, and the step's tests did not: they run at a crease angle of 180°, where creasing changes nothing (Measurements).
+    - **Why:** the input's vertex normals lean between its faces at sharp edges. That is the creased normals plan's finding: a shared vertex on an edge has a normal halfway between its faces, and the simplifier carries such averages across whole faces.
+    - **With remeshing off,** those normals sit only on the vertices at the edges. The creasing replaces them there, because those vertices have triangles on both sides.
+    - **Isotropic as first built** gave each new vertex the input's normal mixed where it lies. That put the leaning normals inside the faces, where a vertex's triangles all lie within the crease angle. **Smooth Normals: Contour** kept them, and flat faces shaded in blotches.
+    - **What is built now** (decision 11): a setting, **Normals**, with both ways out:
+      - **Input:** the normals the input would show creased at the Crease Angle, at the corners of the input triangle each vertex lies in, mixed by where it lies;
+      - **Faces:** each vertex's own triangles' normal.
+      - The two measure within a point of each other. On contours they are as close to the true normals as remeshing off is, and on simplified meshes of flat faces they are closer.
+    - **Field Aligned and QuadriFlow** take their normals out the same way (What the three share).
+
 ## Design
 
 ### Settings
@@ -236,7 +264,8 @@ On `Voxelizer`, under a **Remeshing** header after Mesh Simplification, carried 
 | Edge Length | 1 | How long the edges of the new faces are, against the mesh the pass is given: 1 is the length at which the result has as many vertices as that mesh, 0.5 gives about four times as many and 2 about a quarter. On an unsimplified contour 1 is about one cell (finding 16, decision 9). |
 | Feature Angle | 40 | Two triangles that meet at more than this many degrees have a sharp edge between them, which is kept. The same number as the Crease Angle's default, and a setting of its own: one decides where the mesh is held, the other how it is shaded. |
 | Iterations | 5 | Isotropic only. How many times the loop of splits, collapses, flips and smoothing is gone through. The paper's "about 5". |
-| Area Iterations | 10 | Isotropic only. How many rounds of smoothing by vertex area follow the loop. Zero leaves them out. The paper's "fewer than 20"; provisional until step 3 measures. |
+| Normals | Input | The normals the remeshed mesh starts from, before it is creased or split. **Input:** those the mesh it was given would show creased at the Crease Angle, where each vertex lies on it. **Faces:** those of each vertex's own triangles. Split vertex normals ask for Faces, which costs nothing (finding 21, decision 11). |
+| Area Iterations | 5 | Isotropic only. How many rounds of smoothing by vertex area follow the loop. Zero leaves them out. The paper's "fewer than 20". Step 3 measured that ten rounds narrow a contour's spread of areas by 5% more than five do, for 8 to 16% more time, and leave a simplified mesh's as it is (Measurements). |
 | Faces | Quad Dominant | Field Aligned only. **Triangles**; **Quad Dominant**, quads with triangles and pentagons where rows of faces begin and end; or **Quads**, quads only. |
 
 - **How the length is had** (decision 9). From the mesh the pass is given: its area *A*, the sum of its triangles', and its vertex count *V*, of the vertices its triangles use. A mesh of equilateral triangles of side *l* has a vertex for every (√3/2) *l*² of its area, and one of squares a vertex for every *l*². So the length at 1 is √(*A* / ((√3/2) *V*)) for Isotropic and Field Aligned's triangles, and √(*A* / *V*) for quads, Field Aligned's or QuadriFlow's; the setting multiplies it. Field Aligned's Quads are solved at twice that and split, so they come out at it too.
@@ -254,7 +283,7 @@ On `Voxelizer`, under a **Remeshing** header after Mesh Simplification, carried 
 - **`Voxelizer.simplify( )`** remeshes what it makes, so another detail or error is shown remeshed.
 - **`contourVertices`** asks for shared vertices when remeshing is on, and such a contour is not drawn straight from the GPU.
 - **`ContourStatistics`** gains the time the pass took, the size of the mesh that went in, how many faces of each number of sides came out, and what `MeshTopology` counts of the output that the input did not have (finding 7).
-- **When a technique cannot do its work** it gives the input back unchanged with the reason, which the statistics carry. Nothing throws and nothing half-made is shown.
+- **When a technique cannot do its work** it gives the input back unchanged with the reason, which the statistics carry. Nothing throws and nothing half-made is shown. Isotropic gives up before it starts where the length would make more than 2²⁰ vertices (step 3).
 - **Burst only** (decision 8). Doubles, except Field Aligned's fields, which the paper says floats do for.
 
 ### What the three share
@@ -268,6 +297,7 @@ In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and 
   - **Then the ends,** which step 0 found the pairing alone leaves wrong where sheets pass through each other: where the two pairs of an edge still meet at both its ends, the other pairing that suits the windings is tried, and kept if it leaves each fan a disk.
   - **What still cannot be paired** is left as open edges, counted, and shown as finding 7 has it.
 - **Polygons out,** for the two field techniques: each polygon as triangles with the flags of finding 8. A quad is split along the diagonal that leaves its two triangles flatter.
+- **Normals out** (finding 21): the normals at the corners of the input's triangles as the input would show them creased (`BurstRemeshing.cornerNormalsOf`), which a new vertex takes mixed where it lies; or, under Faces, each vertex's own triangles'.
 - **Materials out,** for the two field techniques: an output face takes the sub-mesh that most of the input's area mapped into it has.
 
 ### Isotropic
@@ -277,12 +307,12 @@ In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and 
    - **`flip`** of an edge of two triangles.
 2. **The input, kept to go back to:** its triangles in a grid for the search of the nearest point, each with its sub-mesh and normal, and its feature lines (finding 9).
 3. **The loop,** for the set number of iterations, with *l* the edge length:
-   1. **Split** every edge longer than 4/3 *l* at its midpoint, longest first, the new edges among them, until none is longer.
-   2. **Collapse** every edge shorter than 4/5 *l*, shortest first, into the position finding 9 gives it, where `check` allows it and no edge longer than 4/3 *l* comes of it. A feature by angle does not stop it (finding 9).
+   1. **Split** every edge longer than 4/3 *l* at its midpoint, longest first, the new edges among them, until none is longer. The new vertex goes on to the nearest point of the input (step 3).
+   2. **Collapse** every edge shorter than 4/5 *l*, shortest first, into the position finding 9 gives it, where `check` allows it and no edge longer than 4/3 *l* comes of it. A feature by angle does not stop it (finding 9). A collapse into the middle of an edge goes to the nearest point of the input.
    3. **Flip** every edge of two triangles that is not a feature where that brings its four vertices nearer their number of edges: six, or four on an open edge, as the paper has it. A flip is refused where the new edge exists, where a triangle would turn over, and where it would make a feature (finding 9).
-   4. **Smooth:** every vertex towards the middle of its neighbours, within its tangent plane, then back onto the input. All moves of a round are worked out from the positions the round began with, in parallel.
-4. **Equal areas,** for the set number of rounds: the same move towards the middle of the neighbours weighted by their Voronoi areas, damped, and back onto the input. The Voronoi area is the one the paper's section 3 describes: from the circumcentres of a vertex's triangles, or the midpoints of edges where an angle is obtuse.
-5. **Out:** the positions; for each vertex the input's normal at the point it was put back on; the triangles with their sub-meshes.
+   4. **Smooth:** every vertex towards the middle of its neighbours, within its tangent plane, then back onto the input. All moves of a round are worked out from the positions the round began with, in parallel, and made one after another where they turn no triangle over (step 3).
+4. **Equal areas,** for the set number of rounds: the same move towards the middle of the neighbours weighted by their Voronoi areas, damped, and back onto the input. The Voronoi area is the one the paper's section 3 describes: from the circumcentres of a vertex's triangles, or the midpoints of edges where an angle is obtuse. Only vertices of the surface move: equal areas are a matter of the surface, and the loop has spread the lines' vertices along them.
+5. **Out:** the positions; for each vertex a normal as the Normals setting says (finding 21): the input's as it would show them creased, at the point the vertex lies on, or the vertex's own triangles'; the triangles with their sub-meshes.
 
 ### Field Aligned
 
@@ -438,13 +468,74 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - **Deliberate mistakes:** 45 were tried, 14 in split and flip, 8 in the skeleton, 13 in the feature mesh and 10 in the grid. Every one failed a test. Two of the three runs of operations, on the boxes that share an edge and on those that touch, were added after I took out what a flip worked out again, to show that it needs none of it.
      - **Baselines after step 2:** edit mode 3546 of 3546 in 359 s, play mode 21 of 21, Unity in front; the 480 `Start` hashes are step 0's, byte for byte.
 3. **Isotropic: the loop (medium).** The loop, the smoothing, the equalizing of areas. Wired in as a technique. **Measured here:** edge lengths, edges per vertex, angles and vertex areas after each iteration and each area round, which sets the damping factor and the two defaults; how far vertices are from the shapes; time by stage from 32³ to 128³, simplified and not.
+   - **Implemented 2026-11-17; turned-box acceptance outstanding,** on the user's "Alright, continue with step 3." after committing step 2 as 7caab82. It was paused once at the user's word, and resumed on "Just do whatever is easiest to fix the long test, then proceed with step 3 of the plan."
+     - **Built:**
+       - `BurstIsotropic.cs`: the loop, as one job for each operation, with profiler markers `Remeshing.Isotropic.*`:
+         - `SplitJob`, `CollapseJob` and `FlipJob`;
+         - the smoothing in three jobs: `AreasJob` for the Voronoi areas, `SmoothJob` for where each vertex goes, worked out in parallel, and `ApplyJob` for the moves;
+         - `NormalsJob` and `WriteJob` for the output.
+         - Also its `Settings` and `Report`; `placeOnInput`, which finds where a new vertex goes on the input; and `turnsOver`.
+         - `FeatureMesh` learned which corners are held.
+       - `SurfaceGrid`: a search over every sub-mesh, and a stop as soon as the nearest point found is nearer than the walls of the rings left. That stop is one of several changes made for speed while building, with the cached counts of edges, the flips' worklist, normals worked out in parallel, and a search only for collapses the lists allow at the middle. Their shares were not measured one by one.
+       - `BurstRemeshing.Topology`: lines of open and of non-manifold edges, joined end to end.
+       - `Remeshing`: the technique Isotropic (1); settings as a struct of their own; a give-up before it starts where the length would make more than 2²⁰ vertices; new open and non-manifold edges counted as lines; and what Isotropic did, in the statistics.
+       - On `Voxelizer`: **Feature Angle** (40), **Iterations** (5), **Area Iterations** (5) and **Normals** (Input). The editor's `select` carries them over, and its signature and warnings follow them.
+       - `BurstRemeshing.cornerNormalsOf`: the normals at the corners of the input's triangles as it would show them creased, which Isotropic's normals out are mixed from under Normals: Input (finding 21).
+       - `Assets/Tests/Edit Mode/TestProgress.cs`: writes `Temp/test_progress.txt` as each test starts and finishes, for the watchdog below.
+     - **Settled while building:**
+       - **Every vertex is on the input from when it is made.** A split puts its vertex on the nearest point of the input to the edge's middle: on the edge's line for a feature edge, else on the surface of its sub-mesh facing within 90° of its triangles. A collapse into the middle goes there too. Where there is no such point within 2 *l*, or a half of the split would turn over, the edge is left as it is. Before those refusals, vertices were left up to 0.29 cells off the input. Now the furthest is under 10⁻⁵ cells.
+       - **The moves of a smoothing round** are worked out together and made one after another. A move is held back where it would turn a triangle over, or face it away from the fan's normal. Without that second test, a sliver turned a little in each round and was over after a few.
+       - **The area rounds move only surface vertices, damped by λ.** The loop's own smoothing is undamped, as the paper has it.
+       - **Corners on a hard line are held.** Two corners along a line merge only where at most one is held. Otherwise a thin face between two materials lost its corners at long edge lengths.
+       - **A flip** goes by the sum of the squared differences from six edges, or four on a rim of two open edges. The paper gives no measure. The flips go from a worklist, with the counts of edges kept as they change.
+       - **The statistics count lines, not edges.** A remesh samples a rim again, which changes how many open edges it has but makes no new line.
+       - **The output normals** were at first the input's own, mixed at the point each vertex was put on. The user found smooth shading broken by that (finding 21). They now come, by the Normals setting (decision 11), from the input's corners as the input would show them creased at the Crease Angle, or from each vertex's own triangles. The input is creased with Smooth Normals at Contour whatever that setting is: under Faces, the creasing after the remesh gives every vertex its triangles' normal whatever it came with.
+       - **Tried and taken out:** a search that took only triangles facing within the Feature Angle. It changed nothing.
+       - **The defaults** are 5 iterations, 5 area rounds and λ = 0.75, from the sweep (Measurements).
+       - **A watchdog on Unity.** A deliberate mistake, L24, let splits turn a triangle over, and its test run went on for 45 minutes until the runner's timeout. Unity answers nothing while a Burst job runs, and it had to be restarted.
+         - **Every call that drives Unity now goes through a guard script** kept with the probes. It kills Unity when no test has started or finished for two minutes, or when a probe has written no row for two minutes. Unity is then opened again.
+         - **L24 is now caught that way.** The guard stopped it at 126 s, and the run went on.
+         - **A limit on vertices was tried and taken out.** The split pass stopped at eight times the vertices the mesh had or the length made, and 1024 more. It did not stop L24 within two minutes, most likely because each split got slower rather than the vertices growing without end. The user had it removed: "Before anything, since the vertex limit didn't fix the L24 mutant, remove the vertex limit." The sweep and timing ran with it in place. It was never reached, and it cost one more sum in a loop the build already makes.
+         - **The relaunched editor** opens without a Unity account signed in. The tests are unaffected.
+     - **Measured** (Measurements): the loop by iteration, the area rounds against λ, three edge lengths, how far the vertices are from the input, and the time by stage from 32³ to 128³. It gave findings 19 and 20, and decision 10 (Decisions).
+     - **Tests:** 115 more.
+       - **`BurstIsotropicTest`, 19 more:**
+         - on meshes built by hand, the stages one at a time: Voronoi areas, flips towards six edges, a round of smoothing as the paper describes it, a split onto the input, a line between materials round a disc;
+         - the whole loop: a flat square meshed evenly, the normals, areas made more alike, an upright box at two lengths, a line between materials, the same mesh twice, an island shorter than the length;
+         - the normals out: a vertex inside a face of a box creased at 40° has the face's normal, at two lengths; normals that turn over a patch are mixed where a vertex lies, against the mix worked out in the test; under Faces, each vertex has its own triangles' normal.
+       - **`BurstRemeshingTest`, 2 more:** a rim sampled again adds no line; the normals at a box's corners as creased at 40° and at 180°.
+       - **`RemeshingTest`, 94 more:** through the voxelizer, for every algorithm and implementation, three models, contoured and simplified. Each holds:
+         - the topology of the surface and of each material, and its lines and pinched vertices;
+         - every vertex within 10⁻⁵ cells of the input, and every triangle facing the input's way except where the input itself folds;
+         - about as many vertices as the input, and the same remesh twice.
+         - Besides those: every vertex on the input at 64³; the edge length against the vertex count; `remesh` against a fresh contour; each setting changing the remesh, Normals among them; the give-up at 2²⁰ vertices; the simplified box turned about an axis, which keeps 12 lines and 8 corners by every algorithm.
+         - And the normals out: a box along the grid shades flat on its faces at 40°, contoured and simplified, by Uniform and Occupancy, under both kinds of normals; at 180°, Input shows the input's normals leaning into the faces and Faces each vertex's own triangles'; split vertex normals ask the remesh for Faces.
+       - **Changed:** the carry-over and signature in `InteractiveEditorTest`, the defaults in `VoxelizerDefaultsTest`, and the settings struct in `WireframeTest`.
+     - **Deliberate mistakes:** 43 were tried, and 40 were caught. L24 was caught by the guard stopping Unity. Four more, on the limit on vertices, were caught and went out with it.
+       - **Ten were on the normals out,** and all ten were caught. One, the voxelizer's crease angle not passed on, first passed. The test of what Input shows at 180° then looked only at vertices whose triangles lie flat, which an input creased at any other angle does not lean into.
+       - **The three that pass** are guards that no test model reaches. Splitting, or collapsing into the middle, where no point of the input is within reach (L22, L23): every vertex starts on the input and stays on it, so an edge's middle always has a point of the input near it on these models. Asking the lists again at the point on the input after they allowed the middle (L4b): the two points are a sagitta apart, and no test mesh has a collapse allowed at one and refused at the other. They are kept.
+     - **Baselines after step 3:** edit mode 3665 of 3665 in 369 s with the normals out, Unity in front. Four of those tests are the user's own, added to `BurstIsotropicTest` and `BurstSurfaceGridTest` after the step was first reported. Play mode passed 21 of 21, and the 480 `Start` hashes are step 0's, byte for byte. Those two ran before the limit was taken out and the normals changed, neither of which they reach with remeshing off.
+     - **Correctness review, 2026-11-18:**
+       - The disc test kept boundary vertices on the input but allowed edges to cut across its bends. Its material area changed from 12.245869 to 12.208417 at a target length of 0.5. Hard-polyline breakpoints are now fixed independently of the feature classification, and projection along a hard line stays on its straight segment. The test checks complete segments, input bends and both materials' areas at lengths 0.5 and 2.
+       - A fold-free height field, `z = 2 sin(1.3x) cos(1.7y)` on a 6 by 6 patch, acquired a backward-facing triangle in its first collapse pass at length 2. An inherited input normal alone also allowed it: after moving, the face was over a different part of the input. Every stage now checks the local input orientation as well as the inherited anchor, without using the candidate normal to choose a favourable reference. A regression checks the result against an independent search of the input faces after one and five iterations.
+       - Validation: `BurstIsotropicTest` 31 of 31, `BurstSurfaceGridTest` 8 of 8, and the remeshing suites 266 of 266. The tests also cover a bent non-manifold line and an unoriented search that still respects material and reach. Removing the local-reference orientation check makes both height-field cases fail again.
+       - The measurements below predate these guards and pinned breakpoints; they are historical, not measurements of the corrected implementation. Finding 19 remains outstanding; decision 10 was answered on 2026-11-18, and step 3b takes it up.
+
+3b. **Features by angle at the scale of the edge length (medium).** Decision 10, finding 19. In `BurstFeatures`, which all three techniques share:
+   - an edge is a feature by angle where the surface bends by more than the Feature Angle across a band about *l* wide, not across the one edge, so that a strip of triangles bridging a crease counts as one crease;
+   - lines by angle shorter than *l* that end loose are taken out.
+
+   Hard features (open edges, edges of more than two triangles, edges between materials) are not touched.
+   - **Measured here:** the lines and corners of the two turned cubes against their own 12 and 8, contoured and simplified, by every algorithm from 32³ to 128³ (finding 19); the skeletons of the 15 models before and after; what it changes in Isotropic's measures and time.
+   - **Tested here:** the test of the simplified box turned about an axis widens to the contours and the box turned about a diagonal, wherever they then hold.
+
 4. **Field Aligned: the fields (large).** Sheets, the preparation, graph, normals, areas, hierarchy, colouring, both fields, for quads and triangles. **Measured here:** the energies by level, the irregular points of both fields against the edge length, time by stage from 32³ to 128³; what is left of finding 18 after the sheets; the hierarchy scored by min against max, and normals at creases against none (findings 11 and 17).
 5. **Field Aligned: the mesh (large).** Extraction, faces, holes, the split into quads, polygons, materials and normals out. Wired in. **Measured here:** everything under Tests' last point, and what the constraints do for lines between materials.
 6. **QuadriFlow: offsets and flow (large).** Offsets, the network, the flow solver with its tests, long offsets. **Measured here:** the size of the flow and the time it takes against the edge length; whether the paper's hierarchy of networks is needed.
 7. **QuadriFlow: the mesh (large).** Conjugate gradients, the greedy pass, the positions, extraction. Wired in. **Measured here:** turned triangles left after the greedy pass, which is what decision 6 waits for; vertices of other than four edges and holes, which say whether the code's work after extraction is wanted (finding 11); the rest as for step 5.
 8. **Scenes, tuning and documentation (medium).** The scenes, whatever the measurements show to cost most, a README section for each technique with its settings, what it keeps and what it does not, `AGENTS.md`, and this plan marked complete.
 
-Four of the nine are large, all of them the two field techniques. For scale: the simplifier was one large step among eight.
+Four of the ten are large, all of them the two field techniques. For scale: the simplifier was one large step among eight.
 
 **Changed from the first draft:** Isotropic was three large steps after QuadriFlow, for the earlier paper. Before the new paper was read, the draft's decision 1 put the loop at one medium step. It is two here, because the paper turned out to leave features and staying on the surface to its reader (finding 9).
 
@@ -539,6 +630,100 @@ Adaptive and Manifold are within a few hundredths of Uniform. Occupancy's contou
 | ThreeBalls | Uniform, GPU | 128³ | 125.1 | 367.2 | 240.3 |
 | ThreeBalls | Occupancy, GPU | 128³ | 22.0 | 241.2 | 213.0 |
 
+### The isotropic loop (step 3, 2026-11-17)
+
+**Setup:**
+- **Models:** step 0's 13 and two cubes, one turned 45° about an axis and one about a diagonal.
+- **Contours:** at 64³, by Uniform and Occupancy (Burst), contoured and simplified at the voxelizer's defaults: 60 meshes, 30 of each kind.
+- **Measures:**
+  - **edges within the paper's limits:** the share of edges between 4/5 *l* and 4/3 *l*;
+  - **six edges:** the share of inner vertices with six edges;
+  - **area spread:** the standard deviation of the inner vertices' Voronoi areas over their mean.
+  - Each figure is the median over the 30 meshes of a kind.
+- **The probe:** `IsotropicProbe.cs` in the probes folder, with `run_isotropic_sweep.sh`, `run_isotropic_times.sh` and `summarize_isotropic.py`. Unity was in front throughout, and the run was on the final code.
+
+**By iteration,** with no area rounds, at an edge length of 1 (contour / simplified). The time is of one remesh:
+
+| Iterations | Within the limits | Six edges | Smallest angle, mean | Triangles under 30° | Area spread | Vertices against the input | ms |
+|---|---|---|---|---|---|---|---|
+| 0 | 0.65 / 0.46 | 0.68 / 0.33 | 41.7° / 41.3° | 3.8% / 11.5% | 0.23 / 0.27 | 1 / 1 | 12 / 0.9 |
+| 1 | 0.84 / 0.68 | 0.83 / 0.66 | 48.3° / 45.0° | 1.0% / 5.0% | 0.16 / 0.17 | 1.18 / 1.30 | 50 / 3.0 |
+| 2 | 0.94 / 0.79 | 0.85 / 0.67 | 51.1° / 45.6° | 0.24% / 4.2% | 0.13 / 0.16 | 1.07 / 1.17 | 60 / 3.8 |
+| 3 | 0.96 / 0.82 | 0.86 / 0.71 | 52.4° / 45.9° | 0.32% / 4.7% | 0.12 / 0.15 | 1.03 / 1.14 | 71 / 4.4 |
+| 5 | 0.98 / 0.84 | 0.87 / 0.69 | 53.0° / 46.4° | 0.28% / 5.0% | 0.12 / 0.15 | 1.01 / 1.13 | 90 / 5.4 |
+| 7 | 0.98 / 0.84 | 0.88 / 0.72 | 53.2° / 47.0° | 0.28% / 4.3% | 0.13 / 0.15 | 1.00 / 1.13 | 110 / 6.1 |
+| 10 | 0.98 / 0.85 | 0.88 / 0.71 | 53.5° / 47.1° | 0.23% / 4.1% | 0.13 / 0.15 | 0.99 / 1.12 | 130 / 7.3 |
+
+Past five iterations, little changes but the time, so the default is the paper's 5. Simplified meshes stay behind contours: they come in with long thin triangles, and their features hold vertices in place.
+
+**The area rounds against λ,** after five iterations: the area spread, contour / simplified. With no rounds it is 0.123 / 0.147:
+
+| Rounds | λ = 0.25 | 0.5 | 0.75 | 1 |
+|---|---|---|---|---|
+| 2 | 0.106 / 0.141 | 0.095 / 0.138 | 0.091 / 0.138 | 0.092 / 0.138 |
+| 5 | 0.095 / 0.138 | 0.088 / 0.138 | 0.085 / 0.137 | 0.083 / 0.137 |
+| 10 | 0.089 / 0.138 | 0.084 / 0.137 | 0.081 / 0.137 | 0.080 / 0.137 |
+| 20 | 0.084 / 0.137 | 0.080 / 0.137 | 0.079 / 0.137 | 0.079 / 0.137 |
+
+- **The other measures** move by less than a percentage point across these runs. Triangles under 30° at five rounds go from 0.23% of a contour's at λ = 0.25 to 0.15% at 1, and from 5.4% to 5.7% of a simplified mesh's.
+- **A larger λ more often lets more rounds widen the spread again.** On contours, of the 120 steps from 0 to 2, 5, 10 and 20 rounds at each value, that happens in none at 0.25, 4 at 0.5, 9 at 0.75 and 13 at 1. The most is the cube's contour, by 13% from 10 rounds to 20.
+- **The defaults:** five rounds, at λ = 0.75, between the two. Ten rounds take 8 to 16% more time than five, and twenty 35 to 48% more.
+
+**Edge lengths,** five iterations and ten rounds at λ = 0.5 (contour / simplified):
+
+| Edge length | Vertices against the input | Within the limits | Six edges |
+|---|---|---|---|
+| 0.5 | 3.93 / 4.09 | 0.99 / 0.94 | 0.82 / 0.76 |
+| 1 | 1.01 / 1.13 | 0.99 / 0.85 | 0.87 / 0.69 |
+| 2 | 0.26 / 0.37 | 0.98 / 0.63 | 0.82 / 0.54 |
+
+**At the defaults** (5 iterations, 5 rounds, λ = 0.75, edge length 1):
+- **On the input:** every vertex of the 60 meshes is within 1.7 × 10⁻⁶ cells of the input mesh. No vertex was left without a point of the input within reach.
+- **The true shapes:** a contour's remesh has its vertices as far from the true shapes as the contour's, on average. A simplified mesh's remesh has them at 0.75 of the simplified mesh's distance.
+- **Vertices:** 0.95 to 1.07 times the input's on contours, and 0.94 to 1.28 on simplified meshes of 300 vertices or more. The smallest simplified meshes gain the most: the cube goes from 8 to 14, and the plate across the bounds from 16 to 36.
+- **Features smaller than *l* go,** as finding 9 has it. That is most visible on simplified meshes, where *l* is 9 to 48 cells (finding 16):
+  - **The hollows across faces** go from 84 lines and 56 corners to 48 to 50 lines and 32 to 33 corners, at every edge length tried.
+  - **The slab with a band** goes from 16 corners to 14, and at a length of 2 its slab is cut back to the band: 8 vertices and 12 lines.
+  - **The cube** and **the cube turned about an axis** keep their 12 lines and 8 corners.
+  - **The turned cubes' contours:** finding 19.
+
+**Time,** the remesh alone at its defaults, every algorithm (Burst) and the 15 models, the median of five after one to warm up, Unity in front, in ms:
+
+| Grid | Mesh | Median | Most | Build | Split | Collapse | Flip | Smooth | Areas | Out |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 32³ | contour | 30 | 68 | 10% | 11% | 38% | 18% | 11% | 11% | 1% |
+| 32³ | simplified | 3.7 | 20 | 9% | 11% | 33% | 15% | 15% | 14% | 2% |
+| 64³ | contour | 114 | 285 | 10% | 10% | 38% | 19% | 11% | 11% | 1% |
+| 64³ | simplified | 7.8 | 41 | 9% | 13% | 38% | 15% | 12% | 12% | 2% |
+| 128³ | contour | 435 | 1,267 | 11% | 9% | 39% | 19% | 11% | 11% | 1% |
+| 128³ | simplified | 11.6 | 80 | 9% | 13% | 40% | 16% | 10% | 11% | 1% |
+
+- **Against the contour,** the three balls and the new shapes at 128³ beside step 0's timings:
+  - **After simplification,** which is how the pass is meant to be used, the remesh adds 6% (Adaptive) to 31% (Occupancy, new shapes) to the contour. The three balls by Uniform take 33 ms, where contouring and simplifying took 239.
+  - **Without it,** the remesh takes 3 (Adaptive, whose contour is slow) to 26 times as long as the contour. The three balls by Uniform take 938 ms, where contouring took 37.
+- **The collapses** take the largest share everywhere. How that splits between `check`, the search for a point on the input and the rest was not measured.
+
+### The remesh's normals (step 3, 2026-11-18)
+
+**Setup:** Uniform (Burst), creased at 40° with Smooth Normals at Contour, the voxelizer's defaults. The measure is the share of triangle corners whose normal is more than 10° off the true normal of the shapes a quarter of the way into the triangle, which keeps clear of the edges where the true normal is not defined. The probe is `NormalsProbe.cs` in the probes folder, which also draws each mesh. Unity was in front.
+
+| Model | Grid | Mesh | Remeshing off | Isotropic as first built | Input | Faces |
+|---|---|---|---|---|---|---|
+| NewShapes | 64³ | contour | 4.5% | 10.0% | 5.4% | 5.5% |
+| NewShapes | 64³ | simplified | 13.3% | 27.9% | 13.3% | 13.2% |
+| Cube, turned | 32³ | contour | 2.8% | 7.3% | 1.6% | 1.6% |
+| Cube, turned | 32³ | simplified | 38.3% | 36.9% | 22.0% | 22.0% |
+| Cube, turned | 64³ | simplified | 34.9% | | 23.5% | 23.5% |
+| TurnedShapes | 64³ | simplified | 38.5% | | 28.6% | 29.0% |
+| Sphere | 64³ | both | 0% | 0% | 0% | 0% |
+
+- **The first build's** blotches show in the pictures as dark and bright patches on flat faces next to edges, and over whole faces of simplified meshes. **Smooth Normals: Faces** hid them, since it ignores the normals a vertex comes with.
+- **Input and Faces** draw alike on these models. They differ only where the input's own normals are better than its faces', which is on curved surfaces at lengths long enough for the difference to show. The sphere was not one.
+- **The cost:**
+  - **The measurement:** at 128³, the 15 models by Uniform and Occupancy, the median of five after one to warm up, Unity in front.
+  - **The result:** Input takes 1.4% longer than Faces on a contour at the median (−2.8% to 1.9%), and 4.8% longer on a simplified mesh (0.6% to 17%). It creases the input before the remesh and searches the input for every vertex's normal, where Faces only sums each vertex's triangles. A remesh's own spread from run to run was under 2%.
+  - **Not comparable with the step's timings above:** both ran four to four and a half times slower than those, measured the night before. The reason was not found. That morning the editor had been restarted, its Profiler was recording, and it used about one core while idle.
+
 ## Out of scope
 
 - **A managed or a GPU remesher** (decision 8).
@@ -574,4 +759,21 @@ The first eight were answered on 2026-11-17, before step 0. The first: "I've add
    - **Both,** as a mode beside the length: more to explain, and the two would only meet on unsimplified contours.
 
    Recommended: the mesh the pass is given, at 1. It is what "a pass that goes after mesh simplification" asks for, as far as I can read it, and it is what the papers do.
+
+### Asked after step 3
+
+10. **Features by angle at the scale of the edge length?** Finding 19. Isotropic keeps the noise of contours whose edges cross the grid: the crease of a turned cube comes out as two lines with a strip of triangles between them, and many corners.
+    - **Leave it:** simplification on, which is how the pass is meant to be used, cleans most of it for Manifold and Occupancy, and the cube turned about an axis for every algorithm. Uniform's and Adaptive's turned shapes, and every unsimplified contour of such an edge, keep it.
+    - **Find features by angle at the scale of *l*:** a feature edge by angle where the surface bends by more than the angle across a band about *l* wide, not across one edge, so that a strip of bridging triangles counts as one crease; and lines by angle shorter than *l* that end loose taken out. A change to `BurstFeatures`, which all three techniques use, and its own step, before Field Aligned: step 4 holds its fields to features too.
+    - **Raise the Feature Angle's default:** fewer noisy lines, by a fifth to a half at 60° (finding 17). It cannot mend the bridges: both sides of a bridge across a right angle meet their faces at about 45°, so at 60° neither is a feature and the crease is lost.
+
+    Recommended: at the scale of *l*, as a step of its own before step 4, since Field Aligned would otherwise inherit the same noise in the edges it holds its fields to.
+
+    **Answered on 2026-11-18: as recommended,** in the user's words "For decision 10, go with your recommendation." Features by angle are found at the scale of *l*, in step 3b, before step 4.
+
+11. **The remesh's normals.** Finding 21. The two ways out were:
+    - the normals the input would show creased, where each vertex lies;
+    - each vertex's own triangles' normal.
+
+    **Answered on 2026-11-18: both, as a setting,** in the user's words "Implement both options so I can experiment with both." Input is the default.
 

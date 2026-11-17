@@ -2,11 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using NUnit.Framework;
+using Unity.Mathematics;
 using UnityEngine;
 
 using Object             = UnityEngine.Object;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using VertexNormals      = SurfaceExtractor.VertexNormals;
+using SmoothNormals      = SurfaceExtractor.SmoothNormals;
 using ContourVertices    = SurfaceExtractor.ContourVertices;
 using QEFSolverType      = QEFSolver.Type;
 
@@ -220,8 +222,8 @@ public class RemeshingTest : TopologyTest {
         Assert.AreEqual( pairs,                                    remeshing.quads,              "quads" );
         Assert.AreEqual( triangleCountOf( mesh ) - ( 2 * pairs ), remeshing.triangles,          "triangles" );
         Assert.AreEqual( 0,                                        remeshing.largerFaces,        "larger faces" );
-        Assert.AreEqual( 0,                                        remeshing.newOpenEdges,       "new open edges" );
-        Assert.AreEqual( 0,                                        remeshing.newNonManifoldEdges, "new edges of more than two triangles" );
+        Assert.AreEqual( 0,                                        remeshing.newOpenLines,       "new open lines" );
+        Assert.AreEqual( 0,                                        remeshing.newNonManifoldLines, "new lines of edges of more than two triangles" );
         Assert.AreEqual( triangleCountOf( mesh ),                  remeshing.inputTriangleCount, "triangles given" );
 
         Assert.AreEqual( Remeshing.Technique.FlatPairs, remeshing.technique );
@@ -445,20 +447,469 @@ public class RemeshingTest : TopologyTest {
     // split, a mesh has three vertices for every triangle, which passes 65,535 at 21,845 triangles. The flags still
     // follow its triangles
     [Test]
-    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( ) {
+    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( [Values( Remeshing.Technique.FlatPairs, Remeshing.Technique.Isotropic )] Remeshing.Technique technique ) {
         var voxelizer = this.createVoxelizer<UniformDualContouring>( 6, QEFSolverType.SVD, shapesOf( Model.ThreeBalls ) );
 
         voxelizer.implementationType   = ImplementationType.Burst;
         voxelizer.vertexNormals        = VertexNormals.Split;
         voxelizer.keepDebugInformation = false;
-        voxelizer.remeshing            = Remeshing.Technique.FlatPairs;
+        voxelizer.remeshing            = technique;
 
         var statistics = voxelizer.contour( drawFromGPU: false );
         var mesh       = shown( voxelizer );
 
         Assert.Greater( statistics.triangleCount.Value, 21845, "triangles" );
         Assert.AreEqual( UnityEngine.Rendering.IndexFormat.UInt32, mesh.indexFormat, "index format" );
-        Assert.AreEqual( statistics.remeshing.Value.quads, pairsOf( mesh, voxelizer.shownEdgeFlags ), "quads" );
+        Assert.AreEqual( statistics.remeshing.Value.quads, voxelizer.shownEdgeFlags == null ? 0 : pairsOf( mesh, voxelizer.shownEdgeFlags ), "quads" );
+        Assert.AreEqual( 3 * statistics.triangleCount.Value, mesh.vertexCount, "three vertices for every triangle" );
+    }
+
+    // ---- Isotropic ----
+
+    // the kept mesh as it came, and remeshed by Isotropic, shown with shared vertices: creased at 180 degrees, every
+    // triangle around a vertex is one group. A GPU contour is only kept while remeshing is on, so it contours remeshed
+    private ( Mesh input, Mesh output, Remeshing.Statistics statistics ) isotropicOf( Voxelizer voxelizer ) {
+        voxelizer.vertexNormals = VertexNormals.Creased;
+        voxelizer.creaseAngle   = 180.0f;
+        voxelizer.remeshing     = Remeshing.Technique.Isotropic;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        voxelizer.remeshing = Remeshing.Technique.Off;
+        voxelizer.remesh( );
+
+        var input = Object.Instantiate( shown( voxelizer ) );
+
+        this.made.Add( input );
+
+        voxelizer.remeshing = Remeshing.Technique.Isotropic;
+
+        var statistics = voxelizer.remesh( ).Value.remeshing.Value;
+
+        return ( input, shown( voxelizer ), statistics );
+    }
+
+    private static BurstMesh.Triangle[] trianglesWithSubMeshesOf( Mesh mesh ) {
+        return Enumerable.Range( 0, mesh.subMeshCount ).SelectMany(
+            ( subMesh ) => {
+                var indices = mesh.GetTriangles( subMesh );
+
+                return Enumerable.Range( 0, indices.Length / 3 ).Select( ( triangle ) => new BurstMesh.Triangle( indices[triangle * 3], indices[( triangle * 3 ) + 1], indices[( triangle * 3 ) + 2], subMesh ) );
+            }
+        ).ToArray( );
+    }
+
+    private static BurstRemeshing.Topology linesOf( Mesh mesh ) {
+        using var triangles = new Unity.Collections.NativeArray<BurstMesh.Triangle>( trianglesWithSubMeshesOf( mesh ), Unity.Collections.Allocator.TempJob );
+        using var every     = new Unity.Collections.NativeArray<byte>( 0, Unity.Collections.Allocator.TempJob );
+
+        BurstRemeshing.count( triangles, every, out var topology, out _ );
+
+        return topology;
+    }
+
+    // the nearest point of a mesh to a point, facing either way, and the normal of the triangle it is on
+    private static double nearestOn( SurfaceGrid grid, Vector3 point, double reach, out double3 normal ) {
+        var from     = ( double3 )( float3 )point;
+        var best     = double.MaxValue;
+
+        normal = double3.zero;
+
+        foreach( var facing in new[] { new double3( 1, 0, 0 ), new double3( -1, 0, 0 ), new double3( 0, 1, 0 ), new double3( 0, -1, 0 ), new double3( 0, 0, 1 ), new double3( 0, 0, -1 ) } ) {
+            if( grid.nearestOnSurface( from, SurfaceGrid.anySubMesh, facing, reach, out var nearest, out var triangle ) && math.distance( from, nearest ) < best ) {
+                best   = math.distance( from, nearest );
+                normal = grid.normals[triangle];
+            }
+        }
+
+        return best;
+    }
+
+    // what the isotropic remesh keeps of the mesh it is given, for every algorithm and implementation, contoured and
+    // simplified: the topology of the surface and of every material, its lines of open edges and of edges of more than
+    // two triangles, its pinched vertices; every vertex on that mesh, every triangle facing the way the mesh does there;
+    // about as many vertices; and the same remesh every time
+    [Test]
+    public void theIsotropicRemeshKeepsWhatTheMeshIs( [ValueSource( nameof( variants ) )] Variant variant, [Values] Surface surface, [Values] bool simplified ) {
+        var voxelizer = this.create( variant, shapesOf( surface ), VertexNormals.Creased, Remeshing.Technique.Off );
+
+        voxelizer.meshSimplification = simplified;
+
+        var ( input, output, statistics ) = this.isotropicOf( voxelizer );
+        var cellSize                       = ( double )voxelizer.cellSize;
+        var length                         = statistics.edgeLength * cellSize;
+
+        Debug.Log( $"{variant} {surface} {( simplified ? "simplified" : "contour" )}: {output.vertexCount} vertices from {input.vertexCount}, ratio {output.vertexCount / ( double )input.vertexCount:F3}, edges of {statistics.edgeLength:F2} cells" );
+
+        Assert.IsNull( statistics.gaveUp, "gave up" );
+        Assert.AreEqual( 0, statistics.newOpenLines,        "new lines of open edges" );
+        Assert.AreEqual( 0, statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
+        Assert.AreEqual( 0, statistics.isotropic.Value.unplaced, "vertices without a point of the mesh within reach" );
+
+        // the topology
+        var was = MeshTopology.of( input );
+        var now = MeshTopology.of( output );
+
+        Assert.AreEqual( was.components,          now.components,          "pieces" );
+        Assert.AreEqual( was.eulerCharacteristic, now.eulerCharacteristic, "euler characteristic" );
+        Assert.AreEqual( was.pinchedVertices,     now.pinchedVertices,     "pinched vertices" );
+        Assert.LessOrEqual( now.windingConflicts, was.windingConflicts,   "edges two triangles run along the same way" );
+        Assert.AreEqual( 0,                       now.degenerateTriangles, "triangles that use a vertex twice" );
+
+        Assert.AreEqual( input.subMeshCount, output.subMeshCount, "sub-meshes" );
+
+        for( var subMesh = 0; subMesh < input.subMeshCount; ++subMesh ) {
+            var wasOf = MeshTopology.of( input, subMesh );
+            var nowOf = MeshTopology.of( output, subMesh );
+
+            Assert.AreEqual( ( wasOf.components, wasOf.eulerCharacteristic ), ( nowOf.components, nowOf.eulerCharacteristic ), $"pieces and euler characteristic of sub-mesh {subMesh}" );
+        }
+
+        var wasLines = linesOf( input );
+        var nowLines = linesOf( output );
+
+        Assert.AreEqual( ( wasLines.openLines, wasLines.nonManifoldLines ), ( nowLines.openLines, nowLines.nonManifoldLines ), "lines of open edges and of edges of more than two triangles" );
+
+        // on the mesh it was given, and facing its way
+        var built = new HandBuiltMesh( );
+
+        built.positions.AddRange( input.vertices );
+        built.triangles.AddRange( trianglesWithSubMeshesOf( input ) );
+
+        using var features = new FeatureMeshRun( built, 40.0 );
+        using var grid     = SurfaceGrid.of( features.mesh, 2.0 * cellSize, Unity.Collections.Allocator.TempJob );
+
+        var positions = output.vertices;
+
+        foreach( var position in positions ) {
+            Assert.LessOrEqual( nearestOn( grid, position, cellSize, out _ ) / cellSize, 1e-5, $"the vertex at {position} is on the mesh, in cells" );
+        }
+
+        foreach( var triangle in trianglesWithSubMeshesOf( output ) ) {
+            var a      = ( double3 )( float3 )positions[triangle.a];
+            var b      = ( double3 )( float3 )positions[triangle.b];
+            var c      = ( double3 )( float3 )positions[triangle.c];
+            var facing = math.cross( b - a, c - a );
+            var middle = ( a + b + c ) / 3.0;
+
+            Assert.Greater( math.length( facing ), 0.0, $"the triangle at {middle} has an area" );
+
+            // within an edge length of the mesh: corners by angle closer than that become one, and cut the shape
+            var off = nearestOn( grid, ( float3 )middle, 2.0 * length, out _ );
+
+            Assert.LessOrEqual( off, length, $"the middle of the triangle at {middle / cellSize} in cells is within an edge length of the mesh" );
+
+            // and where it lies on the mesh, it does not face away from the mesh at its corners and its middle alike,
+            // but where the mesh itself faces its way within half a cell, as where it folds or crumples: a contour or
+            // its simplified mesh may, and a fold stays one, the remesh turning no triangle over from how it was
+            // (step 3 of the plan)
+            if( off < 0.25 * cellSize ) {
+                var away = new[] { a, b, c, middle }.All( ( point ) => {
+                    nearestOn( grid, ( float3 )point, cellSize, out var there );
+
+                    return !( math.dot( facing, there ) > 0.0 );
+                } );
+
+                Assert.IsTrue(
+                    !away || grid.nearestOnSurface( middle, SurfaceGrid.anySubMesh, facing, 0.5 * cellSize, out _, out _ ),
+                    $"the triangle {a / cellSize}, {b / cellSize}, {c / cellSize} in cells, of normal {math.normalize( facing )}, faces away from the mesh, which does not fold there"
+                );
+            }
+        }
+
+        // about as many vertices, on meshes of 300 vertices and more: from 1.06 to 1.18 as many at this grid when the plan
+        // measured it, where the lines are a larger share of the mesh than at 64^3, which gave 0.95 to 1.07 (step 3).
+        // The simplified meshes here are all smaller
+        if( input.vertexCount >= 300 ) {
+            var ratio = output.vertexCount / ( double )input.vertexCount;
+
+            Assert.That( ratio, Is.InRange( 0.9, 1.25 ), $"vertices, against the {input.vertexCount} of the mesh given" );
+        }
+
+        // and the same again
+        var first = MeshComparison.trianglesOf( output );
+
+        voxelizer.remesh( );
+
+        CollectionAssert.AreEqual( first, MeshComparison.trianglesOf( shown( voxelizer ) ), "the second remesh" );
+    }
+
+    // every vertex is on the mesh it was given at 64^3 too, on the turned shapes, whose triangles bridge their creases
+    // and fold most, and where smoothing holds the most moves back
+    [Test]
+    public void everyVertexIsOnTheMeshAtSixtyFourCubed( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] bool simplified, [Values( 1.0f, 2.0f )] float edgeLength ) {
+        Voxelizer voxelizer = algorithm == Algorithm.Uniform
+            ? this.createVoxelizer<UniformDualContouring>( 6, QEFSolverType.SVD, shapesOf( Surface.TurnedShapes ) )
+            : this.createVoxelizer<OccupancyDualContouring>( 6, QEFSolverType.SVD, shapesOf( Surface.TurnedShapes ) );
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.meshSimplification   = simplified;
+        voxelizer.remeshingEdgeLength  = edgeLength;
+
+        var ( input, output, statistics ) = this.isotropicOf( voxelizer );
+        var cellSize                       = ( double )voxelizer.cellSize;
+
+        var built = new HandBuiltMesh( );
+
+        built.positions.AddRange( input.vertices );
+        built.triangles.AddRange( trianglesWithSubMeshesOf( input ) );
+
+        using var features = new FeatureMeshRun( built, 40.0 );
+        using var grid     = SurfaceGrid.of( features.mesh, 2.0 * cellSize, Unity.Collections.Allocator.TempJob );
+
+        var furthest = output.vertices.Max( ( position ) => nearestOn( grid, position, cellSize, out _ ) ) / cellSize;
+
+        Debug.Log( $"{algorithm} {( simplified ? "simplified" : "contour" )} at {edgeLength}: {output.vertexCount} vertices, the furthest {furthest:G3} cells from the mesh, {statistics.isotropic.Value.held} moves held, {statistics.isotropic.Value.refusedSplits} splits refused" );
+
+        Assert.LessOrEqual( furthest, 1e-5, "the furthest vertex from the mesh, in cells" );
+    }
+
+    // a box turned about an axis, simplified down to its eight corners, keeps its twelve edges as lines and its eight
+    // corners, by every algorithm, as the plan measured it at 32^3 and 64^3 (step 3). Contoured, and turned about a
+    // diagonal, its edges keep the steps of the grid, whose lines come and go (finding 19)
+    [Test]
+    public void aSimplifiedBoxTurnedAboutAnAxisKeepsItsTwelveLinesAndEightCorners( [Values] Algorithm algorithm ) {
+        var shapes = new[] { cube( new Vector3( 0.013f, -0.021f, 0.017f ), 0.25f ).rotated( Quaternion.AngleAxis( 45.0f, Vector3.up ) ) };
+
+        Voxelizer voxelizer = algorithm switch {
+            Algorithm.Uniform   => this.createVoxelizer<UniformDualContouring>  ( 5, QEFSolverType.SVD, shapes ),
+            Algorithm.Adaptive  => this.createVoxelizer<AdaptiveDualContouring> ( 6, QEFSolverType.SVD, shapes ),
+            Algorithm.Manifold  => this.createVoxelizer<ManifoldDualContouring> ( 6, QEFSolverType.SVD, shapes ),
+            Algorithm.Occupancy => this.createVoxelizer<OccupancyDualContouring>( 5, QEFSolverType.SVD, shapes ),
+            _                   => throw new ArgumentException( algorithm.ToString( ) )
+        };
+
+        if( voxelizer is AdaptiveDualContouring adaptive ) {
+            adaptive.simplification = false;
+        }
+        if( voxelizer is ManifoldDualContouring manifold ) {
+            manifold.errorThreshold  = 0.0f;
+            manifold.enforceManifold = true;
+        }
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.meshSimplification   = true;
+
+        var ( input, output, statistics ) = this.isotropicOf( voxelizer );
+
+        Assert.IsNull( statistics.gaveUp, "gave up" );
+
+        foreach( var ( mesh, which ) in new[] { ( input, "simplified" ), ( output, "remeshed" ) } ) {
+            var built = new HandBuiltMesh( );
+
+            built.positions.AddRange( mesh.vertices );
+            built.triangles.AddRange( trianglesWithSubMeshesOf( mesh ) );
+
+            using var features = new FeatureMeshRun( built, 40.0 );
+
+            Assert.AreEqual( ( 12, 8 ), ( features.lineCount, features.kinds.Count( ( kind ) => kind == BurstIsotropic.Kind.Corner ) ), $"lines and corners, {which}, of {mesh.vertexCount} vertices" );
+        }
+    }
+
+    // a box along the grid shades flat on its faces when remeshed, contoured or simplified, with either kind of normals
+    // out: creased at 40 degrees, every corner of every triangle has the triangle's own normal. Its contour's vertices on
+    // its edges have normals between its faces, which a remesh that took them over as they are spread into the faces,
+    // where the creasing kept them (finding 21)
+    [Test]
+    public void aRemeshedBoxShadesFlatOnItsFaces( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] bool simplified, [Values] Remeshing.Normals normals ) {
+        var shapes = new[] { cube( new Vector3( 0.013f, -0.021f, 0.017f ), 0.28f ) };
+
+        Voxelizer voxelizer = algorithm == Algorithm.Uniform
+            ? this.createVoxelizer<UniformDualContouring>( 5, QEFSolverType.SVD, shapes )
+            : this.createVoxelizer<OccupancyDualContouring>( 5, QEFSolverType.SVD, shapes );
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.meshSimplification   = simplified;
+        voxelizer.vertexNormals        = VertexNormals.Creased;
+        voxelizer.creaseAngle          = 40.0f;
+        voxelizer.smoothNormals        = SmoothNormals.Contour;
+        voxelizer.remeshing            = Remeshing.Technique.Isotropic;
+        voxelizer.remeshingNormals     = normals;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var mesh          = shown( voxelizer );
+        var positions     = mesh.vertices;
+        var vertexNormals = mesh.normals;
+        var worst         = 0.0f;
+
+        foreach( var triangle in trianglesWithSubMeshesOf( mesh ) ) {
+            var face = Vector3.Cross( positions[triangle.b] - positions[triangle.a], positions[triangle.c] - positions[triangle.a] ).normalized;
+
+            foreach( var corner in new[] { triangle.a, triangle.b, triangle.c } ) {
+                worst = Mathf.Max( worst, Vector3.Angle( face, vertexNormals[corner] ) );
+            }
+        }
+
+        Assert.LessOrEqual( worst, 1.0f, "the most a corner's normal is off its triangle's, in degrees" );
+    }
+
+    // at a crease angle of 180 the creasing changes nothing, so what the remesh gives is shown: with Input, the
+    // contour's normals as the input shows them at 180, where the vertices lie, which on a box lean between its faces
+    // and reach into them near its edges, where a vertex's triangles lie flat (finding 21); with Faces, the normal of each
+    // vertex's own triangles, weighted by their areas
+    [Test]
+    public void theRemeshsNormalsAreTheInputsOrTheFaces( [Values] Remeshing.Normals normals ) {
+        var voxelizer = this.createVoxelizer<UniformDualContouring>( 5, QEFSolverType.SVD, new[] { cube( new Vector3( 0.013f, -0.021f, 0.017f ), 0.28f ) } );
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.vertexNormals        = VertexNormals.Creased;
+        voxelizer.creaseAngle          = 180.0f;
+        voxelizer.remeshing            = Remeshing.Technique.Isotropic;
+        voxelizer.remeshingNormals     = normals;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var mesh      = shown( voxelizer );
+        var positions = mesh.vertices;
+        var sums      = new double3[positions.Length];
+        var faces     = new List<double3>[positions.Length];
+
+        foreach( var triangle in trianglesWithSubMeshesOf( mesh ) ) {
+            var a = ( double3 )( float3 )positions[triangle.a];
+            var n = math.cross( ( double3 )( float3 )positions[triangle.b] - a, ( double3 )( float3 )positions[triangle.c] - a );
+
+            foreach( var corner in new[] { triangle.a, triangle.b, triangle.c } ) {
+                sums[corner] += n;
+                ( faces[corner] ??= new List<double3>( ) ).Add( math.normalize( n ) );
+            }
+        }
+
+        var offOwn = Enumerable.Range( 0, positions.Length ).Select( ( vertex ) => Vector3.Angle( mesh.normals[vertex], ( Vector3 )( float3 )math.normalize( sums[vertex] ) ) ).ToArray( );
+        var flat   = Enumerable.Range( 0, positions.Length ).Where( ( vertex ) => faces[vertex].All( ( face ) => math.dot( face, math.normalize( sums[vertex] ) ) > math.cos( math.radians( 1.0 ) ) ) ).ToArray( );
+
+        if( normals == Remeshing.Normals.Faces ) {
+            Assert.LessOrEqual( offOwn.Max( ), 0.01f, "the most a vertex's normal is off its own triangles', in degrees" );
+        }
+        else {
+            Assert.Greater( flat.Max( ( vertex ) => offOwn[vertex] ), 5.0f, "the most the normal of a vertex whose triangles lie flat is off them, in degrees" );
+        }
+    }
+
+    // a voxelizer that splits its vertices asks the remesh for the normals of the faces, which cost nothing: splitting
+    // gives every vertex its triangle's normal whatever the remesh gave it
+    [Test]
+    public void splitVerticesAskTheRemeshForTheNormalsOfTheFaces( ) {
+        var voxelizer = this.createVoxelizer<UniformDualContouring>( resolution, QEFSolverType.SVD, shapesOf( Model.Sphere ) );
+
+        voxelizer.remeshingNormals = Remeshing.Normals.Input;
+        voxelizer.vertexNormals    = VertexNormals.Creased;
+
+        Assert.AreEqual( Remeshing.Normals.Input, voxelizer.remeshingSettings.normals, "creased" );
+
+        voxelizer.vertexNormals = VertexNormals.Split;
+
+        Assert.AreEqual( Remeshing.Normals.Faces, voxelizer.remeshingSettings.normals, "split" );
+    }
+
+    // shorter edges give more vertices, and longer ones fewer, by the square of the length (decision 9)
+    [Test]
+    public void theEdgeLengthSetsHowManyVerticesThereAre( [ValueSource( nameof( cpuVariants ) )] Variant variant ) {
+        var voxelizer = this.create( variant, shapesOf( Model.ThreeBalls ), VertexNormals.Creased, Remeshing.Technique.Off );
+        var counts    = new Dictionary<float, int>( );
+
+        voxelizer.creaseAngle = 180.0f;
+        voxelizer.remeshing   = Remeshing.Technique.Isotropic;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        foreach( var length in new[] { 0.5f, 1.0f, 2.0f } ) {
+            voxelizer.remeshingEdgeLength = length;
+
+            counts[length] = voxelizer.remesh( ).Value.vertexCount.Value;
+        }
+
+        Debug.Log( $"{variant}: {string.Join( ", ", counts.Select( ( pair ) => $"{pair.Value} at {pair.Key}" ) )}" );
+
+        Assert.That( counts[0.5f] / ( double )counts[1.0f], Is.InRange( 3.5, 4.5 ),   "at half the length" );
+        Assert.That( counts[2.0f] / ( double )counts[1.0f], Is.InRange( 0.2, 0.33 ),  "at twice the length" );
+    }
+
+    // remesh after a change of any of Isotropic's settings shows what a fresh contour under them shows
+    [Test]
+    public void remeshShowsWhatAFreshIsotropicContourShows( [ValueSource( nameof( cpuVariants ) )] Variant variant ) {
+        var voxelizer = this.create( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.Isotropic );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        removeVolumes( voxelizer );
+
+        foreach( var ( what, change ) in new ( string, Action )[] {
+            ( "at first",                ( ) => { } ),
+            ( "at another feature angle", ( ) => voxelizer.remeshingFeatureAngle = 60.0f ),
+            ( "with fewer iterations",    ( ) => voxelizer.remeshingIterations = 2 ),
+            ( "with more area rounds",    ( ) => voxelizer.remeshingAreaIterations = 8 ),
+            ( "at another edge length",   ( ) => voxelizer.remeshingEdgeLength = 1.5f )
+        } ) {
+            change( );
+
+            var statistics = voxelizer.remesh( ).Value;
+            var fresh      = this.create( variant, shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.Isotropic );
+
+            fresh.remeshingEdgeLength     = voxelizer.remeshingEdgeLength;
+            fresh.remeshingFeatureAngle   = voxelizer.remeshingFeatureAngle;
+            fresh.remeshingIterations     = voxelizer.remeshingIterations;
+            fresh.remeshingAreaIterations = voxelizer.remeshingAreaIterations;
+
+            var expected = fresh.contour( drawFromGPU: false );
+
+            MeshComparison.assertSameTriangles( shown( fresh ), shown( voxelizer ) );
+
+            Assert.AreEqual( expected.vertexCount, statistics.vertexCount, $"{what}: vertices reported" );
+            Assert.IsNull( voxelizer.shownEdgeFlags, $"{what}: a mesh of triangles draws every edge" );
+        }
+    }
+
+    // the feature angle, the iterations and the area rounds each change what the remesh makes, through the voxelizer
+    [Test]
+    public void eachOfIsotropicsSettingsChangesTheRemesh( ) {
+        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.Isotropic );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var defaults = MeshComparison.trianglesOf( shown( voxelizer ) );
+
+        foreach( var ( what, change, back ) in new ( string, Action, Action )[] {
+            ( "a feature angle above the cubes' right angles", ( ) => voxelizer.remeshingFeatureAngle = 100.0f, ( ) => voxelizer.remeshingFeatureAngle = 40.0f ),
+            ( "two iterations",                                ( ) => voxelizer.remeshingIterations = 2,        ( ) => voxelizer.remeshingIterations = 5 ),
+            ( "no area rounds",                                ( ) => voxelizer.remeshingAreaIterations = 0,    ( ) => voxelizer.remeshingAreaIterations = 5 ),
+            ( "the normals of the faces",                      ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Faces, ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Input )
+        } ) {
+            change( );
+            voxelizer.remesh( );
+
+            CollectionAssert.AreNotEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), $"with {what}" );
+
+            back( );
+            voxelizer.remesh( );
+
+            CollectionAssert.AreEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), $"back from {what}" );
+        }
+    }
+
+    // a length that would make more vertices than mostVertices gives up, and the mesh is shown as it came
+    [Test]
+    public void anEdgeLengthOfTooManyVerticesGivesUp( ) {
+        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.ThreeBalls ), VertexNormals.Creased, Remeshing.Technique.Off );
+
+        voxelizer.creaseAngle = 180.0f;
+        voxelizer.contour( drawFromGPU: false );
+
+        var plain = MeshComparison.trianglesOf( shown( voxelizer ) );
+
+        voxelizer.remeshing           = Remeshing.Technique.Isotropic;
+        voxelizer.remeshingEdgeLength = 0.01f;
+
+        var statistics = voxelizer.remesh( ).Value.remeshing.Value;
+
+        StringAssert.Contains( "would make about", statistics.gaveUp, "why it gave up" );
+        Assert.IsNull( statistics.isotropic, "what Isotropic did" );
+
+        CollectionAssert.AreEqual( plain, MeshComparison.trianglesOf( shown( voxelizer ) ), "the mesh as it came" );
     }
 
 }

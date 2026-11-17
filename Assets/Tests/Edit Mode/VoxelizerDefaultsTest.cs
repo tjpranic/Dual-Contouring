@@ -33,6 +33,10 @@ public class VoxelizerDefaultsTest {
 
             Assert.AreEqual( Remeshing.Technique.Off, voxelizer.remeshing,           "remeshing" );
             Assert.AreEqual( 1.0f,                    voxelizer.remeshingEdgeLength, "remeshing edge length" );
+            Assert.AreEqual( 40.0f,                   voxelizer.remeshingFeatureAngle,   "remeshing feature angle" );
+            Assert.AreEqual( 5,                       voxelizer.remeshingIterations,     "remeshing iterations" );
+            Assert.AreEqual( 5,                       voxelizer.remeshingAreaIterations, "remeshing area iterations" );
+            Assert.AreEqual( Remeshing.Normals.Input, voxelizer.remeshingNormals,        "remeshing normals" );
 
             Assert.AreEqual( Wireframe.Look.Off, voxelizer.wireframe,          "wireframe" );
             Assert.AreEqual( 1.0f,               voxelizer.wireframeLineWidth, "wireframe line width" );

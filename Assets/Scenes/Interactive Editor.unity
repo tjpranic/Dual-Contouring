@@ -477,6 +477,10 @@ MonoBehaviour:
   simplificationDetail: 0
   remeshing: 0
   remeshingEdgeLength: 1
+  remeshingFeatureAngle: 40
+  remeshingIterations: 5
+  remeshingAreaIterations: 5
+  remeshingNormals: 0
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -525,6 +529,10 @@ MonoBehaviour:
   simplificationDetail: 0
   remeshing: 0
   remeshingEdgeLength: 1
+  remeshingFeatureAngle: 40
+  remeshingIterations: 5
+  remeshingAreaIterations: 5
+  remeshingNormals: 0
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -574,6 +582,10 @@ MonoBehaviour:
   simplificationDetail: 0
   remeshing: 0
   remeshingEdgeLength: 1
+  remeshingFeatureAngle: 40
+  remeshingIterations: 5
+  remeshingAreaIterations: 5
+  remeshingNormals: 0
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -702,6 +714,10 @@ MonoBehaviour:
   simplificationDetail: 0
   remeshing: 0
   remeshingEdgeLength: 1
+  remeshingFeatureAngle: 40
+  remeshingIterations: 5
+  remeshingAreaIterations: 5
+  remeshingNormals: 0
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}

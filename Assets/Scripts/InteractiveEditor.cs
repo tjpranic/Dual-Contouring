@@ -247,8 +247,12 @@ public class InteractiveEditor : MonoBehaviour {
             to.lineQuadricWeight    = from.lineQuadricWeight;
             to.simplificationDetail = from.simplificationDetail;
 
-            to.remeshing           = from.remeshing;
-            to.remeshingEdgeLength = from.remeshingEdgeLength;
+            to.remeshing               = from.remeshing;
+            to.remeshingEdgeLength     = from.remeshingEdgeLength;
+            to.remeshingFeatureAngle   = from.remeshingFeatureAngle;
+            to.remeshingIterations     = from.remeshingIterations;
+            to.remeshingAreaIterations = from.remeshingAreaIterations;
+            to.remeshingNormals        = from.remeshingNormals;
 
             to.wireframe          = from.wireframe;
             to.wireframeLineWidth = from.wireframeLineWidth;
@@ -633,11 +637,15 @@ public class InteractiveEditor : MonoBehaviour {
     }
 
     // what the mesh shown depends on beside the contour and its simplification: how it is remeshed. With remeshing off
-    // the edge length is nothing
+    // the other settings are nothing
     public string remeshingSignature( ) {
         var voxelizer = this.voxelizer;
 
-        return voxelizer.remeshing != Remeshing.Technique.Off ? FormattableString.Invariant( $"{voxelizer.remeshing},{voxelizer.remeshingEdgeLength:R}" ) : "";
+        return voxelizer.remeshing != Remeshing.Technique.Off
+            ? FormattableString.Invariant(
+                $"{voxelizer.remeshing},{voxelizer.remeshingEdgeLength:R},{voxelizer.remeshingFeatureAngle:R},{voxelizer.remeshingIterations},{voxelizer.remeshingAreaIterations},{voxelizer.remeshingNormals}"
+            )
+            : "";
     }
 
     // contours the shapes with the selected voxelizer, whatever its implementation, as "Contour" does. The mesh is read
@@ -1121,9 +1129,9 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
                     UnityEditor.EditorGUILayout.HelpBox( $"Remeshing gave the mesh back as it came: {remeshing.gaveUp}", UnityEditor.MessageType.Warning );
                 }
 
-                if( remeshing.newOpenEdges > 0 || remeshing.newNonManifoldEdges > 0 ) {
+                if( remeshing.newOpenLines > 0 || remeshing.newNonManifoldLines > 0 ) {
                     UnityEditor.EditorGUILayout.HelpBox(
-                        $"The remeshed mesh has {remeshing.newOpenEdges:N0} more open edges and {remeshing.newNonManifoldEdges:N0} more edges of more than two triangles than the mesh it was made from",
+                        $"The remeshed mesh has {remeshing.newOpenLines:N0} more lines of open edges and {remeshing.newNonManifoldLines:N0} more lines of edges of more than two triangles than the mesh it was made from",
                         UnityEditor.MessageType.Warning
                     );
                 }

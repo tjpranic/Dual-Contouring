@@ -96,6 +96,8 @@ internal class FeatureMeshRun : IDisposable {
                 lineCount = this.lineCount
             }.Execute( );
 
+            this.mesh.constrain( );
+
             for( var index = 0; index < this.operations.Length; ++index ) {
                 var operation = this.operations[index];
                 var edge      = this.mesh.mesh.edgeBetween( operation.a, operation.b );

@@ -770,7 +770,7 @@ public class WireframeTest : ContouringTest {
     // the cube's contour with the stand-in's flags, which pair its triangles into quads
     private ( Mesh mesh, byte[] flags ) quadsOfTheCube( ) {
         var contour = this.contour( cubeModel );
-        var mesh    = Remeshing.of( contour, 1.0f / 16.0f ).remesh( Remeshing.Technique.FlatPairs, 1.0f, out var flags, out var statistics );
+        var mesh    = Remeshing.of( contour, 1.0f / 16.0f ).remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( contour );
         this.made.Add( mesh );

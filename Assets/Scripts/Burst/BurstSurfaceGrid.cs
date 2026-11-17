@@ -10,7 +10,8 @@ using Unity.Mathematics;
 // segments that may.
 //
 // A search goes out from the cell of the point ring by ring, and stops once the rings that are left are further away
-// than the nearest point it has found, or than the reach it was given. Only the triangles of one sub-mesh that face
+// than the nearest point it has found, or than the reach it was given: the next ring is as far as the walls of the
+// rings so far. Only the triangles of one sub-mesh that face
 // within 90 degrees of a direction count, and only the segments of one line or two
 public struct SurfaceGrid : IDisposable {
 
@@ -126,24 +127,37 @@ public struct SurfaceGrid : IDisposable {
         return length > 0.0 ? a + ( along * math.saturate( math.dot( point - a, along ) / length ) ) : a;
     }
 
-    // whether a triangle counts for a search of a sub-mesh facing a direction
+    // a search of the surface of any sub-mesh
+    public const int anySubMesh = -2;
+
+    // whether a triangle counts for a search of a sub-mesh, or of any, facing a direction
     public readonly bool counts( int triangle, int subMesh, double3 facing ) {
-        return this.subMeshes[triangle] == subMesh && math.dot( this.normals[triangle], facing ) > 0.0;
+        return ( subMesh == anySubMesh ? this.subMeshes[triangle] >= 0 : this.subMeshes[triangle] == subMesh ) && math.dot( this.normals[triangle], facing ) > 0.0;
     }
 
-    // the nearest point within the reach on a triangle of the sub-mesh that faces within 90 degrees of the direction.
-    // Gives whether there is one, and the triangle it is on
+    // the nearest point within the reach on a triangle of the sub-mesh, or of any, that faces within 90 degrees of the
+    // direction. Gives whether there is one, and the triangle it is on
     public readonly bool nearestOnSurface( double3 point, int subMesh, double3 facing, double reach, out double3 nearest, out int triangle ) {
+        return this.nearestOnSurface( point, subMesh, facing, true, reach, out nearest, out triangle );
+    }
+
+    // Choose the reference surface without filtering by the proposed face's orientation.
+    public readonly bool nearestOnSurface( double3 point, int subMesh, double reach, out double3 nearest, out int triangle ) {
+        return this.nearestOnSurface( point, subMesh, double3.zero, false, reach, out nearest, out triangle );
+    }
+
+    private readonly bool nearestOnSurface( double3 point, int subMesh, double3 facing, bool oriented, double reach, out double3 nearest, out int triangle ) {
         nearest  = point;
         triangle = -1;
 
         var best   = reach * reach;
         var centre = this.cellOf( point );
+        var wall   = this.wallOf( point, centre );
         var rings  = ( int )math.ceil( reach / this.cellSize ) + 1;
 
         for( var ring = 0; ring <= rings; ++ring ) {
-            // every cell of this ring and the rings after it is at least so far from the point
-            if( ring >= 1 && best <= square( ( ring - 1 ) * this.cellSize ) ) {
+            // every cell of this ring and the rings after it is at least so far from the point: beyond the rings before
+            if( ring >= 1 && best <= square( ( ( ring - 1 ) * this.cellSize ) + wall ) ) {
                 break;
             }
 
@@ -161,7 +175,7 @@ public struct SurfaceGrid : IDisposable {
                     for( var item = range.x; item < range.x + range.y; ++item ) {
                         var candidate = this.triangleItems[item];
 
-                        if( !this.counts( candidate, subMesh, facing ) ) {
+                        if( !this.counts( candidate, subMesh, oriented ? facing : this.normals[candidate] ) ) {
                             continue;
                         }
 
@@ -189,10 +203,11 @@ public struct SurfaceGrid : IDisposable {
 
         var best   = reach * reach;
         var centre = this.cellOf( point );
+        var wall   = this.wallOf( point, centre );
         var rings  = ( int )math.ceil( reach / this.cellSize ) + 1;
 
         for( var ring = 0; ring <= rings; ++ring ) {
-            if( ring >= 1 && best <= square( ( ring - 1 ) * this.cellSize ) ) {
+            if( ring >= 1 && best <= square( ( ( ring - 1 ) * this.cellSize ) + wall ) ) {
                 break;
             }
 
@@ -228,6 +243,13 @@ public struct SurfaceGrid : IDisposable {
         }
 
         return segment != -1;
+    }
+
+    // how far a point is from the nearest wall of its cell
+    private readonly double wallOf( double3 point, int3 cell ) {
+        var inside = point - ( this.origin + ( ( double3 )cell * this.cellSize ) );
+
+        return math.max( 0.0, math.cmin( math.min( inside, this.cellSize - inside ) ) );
     }
 
     private static double square( double value ) {

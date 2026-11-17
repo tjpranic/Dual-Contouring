@@ -311,6 +311,21 @@ public class BurstRemeshingTest {
 
         Assert.AreEqual( 0, two.openEdges,        "two boxes that share an edge: open" );
         Assert.AreEqual( 1, two.nonManifoldEdges, "two boxes that share an edge: of more than two triangles" );
+
+        // the lines the edges make
+        Assert.AreEqual( ( 1, 0 ), ( triangle.openLines, triangle.nonManifoldLines ), "a triangle: lines" );
+        Assert.AreEqual( ( 1, 0 ), ( patch.openLines, patch.nonManifoldLines ),       "a patch of 2 by 2: lines" );
+        Assert.AreEqual( ( 0, 0 ), ( box.openLines, box.nonManifoldLines ),           "a box: lines" );
+        Assert.AreEqual( ( 0, 1 ), ( two.openLines, two.nonManifoldLines ),           "two boxes that share an edge: lines" );
+
+        // two triangles apart have two rims, and boxes that share an edge of two segments one line of two edges
+        var apart = countsOf( new Builder( ).triangle( Vector3.zero, Vector3.right, Vector3.up ).triangle( Vector3.forward * 2, Vector3.forward * 2 + Vector3.right, Vector3.forward * 2 + Vector3.up ) ).topology;
+
+        Assert.AreEqual( ( 6, 2 ), ( apart.openEdges, apart.openLines ), "two triangles apart: open edges and lines" );
+
+        var longer = countsOf( new Builder( ).box( Vector3Int.zero, new Vector3Int( 1, 1, 2 ) ).box( new Vector3Int( 1, 1, 0 ), new Vector3Int( 1, 1, 2 ) ) ).topology;
+
+        Assert.AreEqual( ( 2, 1 ), ( longer.nonManifoldEdges, longer.nonManifoldLines ), "two boxes that share an edge of two segments: edges and lines" );
     }
 
     [Test]
@@ -470,7 +485,7 @@ public class BurstRemeshingTest {
         // squares of three materials, given in an order that the mesh's sub-meshes change
         var patch = new Builder( ).patch( 3, 2, 1.0f, ( i, j ) => ( i + j ) % 3 );
         var kept  = Remeshing.of( this.meshOf( patch ), 1.0f );
-        var mesh  = kept.remesh( Remeshing.Technique.FlatPairs, 1.0f, out var flags, out var statistics );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
@@ -512,7 +527,7 @@ public class BurstRemeshingTest {
         var octahedron = new Builder( ).octahedron( );
         var given      = this.meshOf( octahedron );
         var kept       = Remeshing.of( given, 0.5f );
-        var mesh       = kept.remesh( Remeshing.Technique.FlatPairs, 1.0f, out var flags, out var statistics );
+        var mesh       = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
@@ -530,7 +545,7 @@ public class BurstRemeshingTest {
         var box   = new Builder( ).box( Vector3Int.zero, new Vector3Int( 2, 1, 1 ) );
         var given = this.meshOf( box );
         var kept  = Remeshing.of( given, 0.5f );
-        var mesh  = kept.remesh( Remeshing.Technique.FlatPairs, 2.0f, out _, out var statistics );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 2.0f ), out _, out var statistics );
 
         this.made.Add( mesh );
 
@@ -540,8 +555,8 @@ public class BurstRemeshingTest {
         Assert.AreEqual( 0,                             statistics.triangles,          "faces: triangles" );
         Assert.AreEqual( 10,                            statistics.quads,              "faces: quads" );
         Assert.AreEqual( 0,                             statistics.largerFaces,        "faces: larger" );
-        Assert.AreEqual( 0,                             statistics.newOpenEdges,       "new open edges" );
-        Assert.AreEqual( 0,                             statistics.newNonManifoldEdges, "new edges of more than two triangles" );
+        Assert.AreEqual( 0,                             statistics.newOpenLines,       "new open lines" );
+        Assert.AreEqual( 0,                             statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
         Assert.GreaterOrEqual( statistics.milliseconds, 0.0,                           "time" );
 
         // twice the length that keeps the vertex count, in cells of half a unit
@@ -554,7 +569,7 @@ public class BurstRemeshingTest {
     public void aRemeshCountsOnlyTheEdgesItAdds( [Values( "patch", "two boxes" )] string model ) {
         var builder = model == "patch" ? new Builder( ).patch( 3, 2 ) : new Builder( ).box( Vector3Int.zero, Vector3Int.one ).box( new Vector3Int( 1, 1, 0 ), Vector3Int.one );
         var kept    = Remeshing.of( this.meshOf( builder ), 1.0f );
-        var mesh    = kept.remesh( Remeshing.Technique.FlatPairs, 1.0f, out _, out var statistics );
+        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out _, out var statistics );
 
         this.made.Add( mesh );
 
@@ -562,8 +577,64 @@ public class BurstRemeshingTest {
 
         Assert.Greater( given.openEdges + given.nonManifoldEdges, 0, "open and non-manifold edges of the mesh given" );
 
-        Assert.AreEqual( 0, statistics.newOpenEdges,        "new open edges" );
-        Assert.AreEqual( 0, statistics.newNonManifoldEdges, "new edges of more than two triangles" );
+        Assert.AreEqual( 0, statistics.newOpenLines,        "new open lines" );
+        Assert.AreEqual( 0, statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
+    }
+
+    // the normals at a mesh's corners are those it would show creased: on a box whose vertices lean between its faces,
+    // creased at 40 degrees, every corner has its own face's normal; at 180, nothing is creased and every corner has its
+    // vertex's normal (finding 21)
+    [Test]
+    public void theNormalsAtTheCornersAreThoseTheCreasedMeshShows( ) {
+        var built = new HandBuiltMesh( ).box( Vector3Int.zero, Vector3Int.one * 2 );
+
+        using var positions = built.nativePositions( );
+        using var normals   = built.nativeNormals( );
+        using var triangles = built.nativeTriangles( );
+
+        using var creased = BurstRemeshing.cornerNormalsOf( positions, normals, triangles, 40.0, Allocator.TempJob );
+        using var asGiven = BurstRemeshing.cornerNormalsOf( positions, normals, triangles, 180.0, Allocator.TempJob );
+
+        Assert.AreEqual( triangles.Length * 3, creased.Length, "three to a triangle" );
+
+        for( var index = 0; index < triangles.Length; ++index ) {
+            var triangle = triangles[index];
+            var face     = math.normalize( math.cross( positions[triangle.b] - positions[triangle.a], positions[triangle.c] - positions[triangle.a] ) );
+            var vertices = new[] { triangle.a, triangle.b, triangle.c };
+
+            for( var corner = 0; corner < 3; ++corner ) {
+                Assert.LessOrEqual( math.distance( creased[( index * 3 ) + corner], face ), 1e-6f, $"creased: corner {corner} of triangle {index}" );
+                Assert.AreEqual( normals[vertices[corner]], asGiven[( index * 3 ) + corner], $"at 180: corner {corner} of triangle {index}" );
+            }
+        }
+    }
+
+    // a remesh that samples a rim again has more or fewer open edges than the mesh it was given, and as many rims: it
+    // adds no line of open edges
+    [Test]
+    public void aRemeshThatSamplesARimAgainAddsNoLine( ) {
+        var builder = new Builder( ).patch( 6, 6 );
+        var kept    = Remeshing.of( this.meshOf( builder ), 1.0f );
+        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.Isotropic, 0.5f ), out _, out var statistics );
+
+        this.made.Add( mesh );
+
+        var given = countsOf( builder ).topology;
+
+        using var triangles = new NativeArray<BurstMesh.Triangle>( Enumerable.Range( 0, mesh.subMeshCount ).SelectMany(
+            ( subMesh ) => {
+                var indices = mesh.GetTriangles( subMesh );
+
+                return Enumerable.Range( 0, indices.Length / 3 ).Select( ( triangle ) => new BurstMesh.Triangle( indices[triangle * 3], indices[( triangle * 3 ) + 1], indices[( triangle * 3 ) + 2], subMesh ) );
+            }
+        ).ToArray( ), Allocator.TempJob );
+        using var every = new NativeArray<byte>( 0, Allocator.TempJob );
+
+        BurstRemeshing.count( triangles, every, out var made, out _ );
+
+        Assert.Greater( made.openEdges, given.openEdges, "more open edges than the patch had" );
+        Assert.AreEqual( ( 1, 1 ), ( given.openLines, made.openLines ), "one rim before and after" );
+        Assert.AreEqual( 0, statistics.newOpenLines, "new lines of open edges" );
     }
 
     [Test]

@@ -15,10 +15,53 @@ public class Remeshing {
     public enum Technique {
         Off = 0,
 
+        // triangles close to equilateral and all about one size, with the mesh's features and topology kept
+        // (BurstIsotropic)
+        Isotropic = 1,
+
         // pairs of triangles that lie flat together become quads, and nothing moves
         [InspectorName( "Flat Pairs (Stand-In)" )]
         FlatPairs = 99
     }
+
+    // where the normals of a remeshed mesh come from, which its creasing or splitting then starts from (finding 21,
+    // decision 11)
+    public enum Normals {
+        // the normals the mesh it was given would show creased at the crease angle, at the point of it each vertex lies
+        // on (BurstRemeshing.cornerNormalsOf)
+        Input = 0,
+
+        // the normal of each vertex's own triangles, weighted by their areas
+        Faces = 1
+    }
+
+    // how a mesh is remeshed: the technique, the edge length against the mesh's own (decision 9), and what Isotropic
+    // takes besides: among it the normals out, and the crease angle the input is shown at for Normals.Input
+    public readonly struct Settings {
+
+        public readonly Technique technique;
+        public readonly float     edgeLength;
+        public readonly float     featureAngle;   // degrees
+        public readonly int       iterations;
+        public readonly int       areaIterations;
+        public readonly Normals   normals;
+        public readonly float     creaseAngle;    // degrees
+
+        public Settings( Technique technique, float edgeLength, float featureAngle = 40.0f, int iterations = 5, int areaIterations = 5, Normals normals = Normals.Input, float creaseAngle = 40.0f ) {
+            this.technique      = technique;
+            this.edgeLength     = edgeLength;
+            this.featureAngle   = featureAngle;
+            this.iterations     = iterations;
+            this.areaIterations = areaIterations;
+            this.normals        = normals;
+            this.creaseAngle    = creaseAngle;
+        }
+
+    }
+
+    // the most vertices a remesh is let make: a shorter edge length gives up rather than run out of memory. A million
+    // vertices take about half a gigabyte in the lists
+    public const int mostVertices = 1 << 20;
 
     // what a remesh did
     public readonly struct Statistics {
@@ -38,17 +81,22 @@ public class Remeshing {
         public readonly int quads;
         public readonly int largerFaces;
 
-        // edges of one triangle, and of more than two, that it has beyond those of the mesh it was given (finding 7)
-        public readonly int newOpenEdges;
-        public readonly int newNonManifoldEdges;
+        // lines of edges of one triangle, and of more than two, that it has beyond those of the mesh it was given
+        // (finding 7): a hole torn, or sheets joined. Isotropic leaves none
+        public readonly int newOpenLines;
+        public readonly int newNonManifoldLines;
 
         // why it gave the mesh back as it came, or null when it did not
         public readonly string gaveUp;
 
+        // what Isotropic did, stage by stage, where it remeshed
+        public readonly BurstIsotropic.Report? isotropic;
+
         public Statistics(
-            Technique technique, double milliseconds, int inputVertexCount, int inputTriangleCount, double edgeLength, int triangles, int quads, int largerFaces, int newOpenEdges,
-            int newNonManifoldEdges, string gaveUp
+            Technique technique, double milliseconds, int inputVertexCount, int inputTriangleCount, double edgeLength, int triangles, int quads, int largerFaces, int newOpenLines,
+            int newNonManifoldLines, string gaveUp, BurstIsotropic.Report? isotropic = null
         ) {
+            this.isotropic           = isotropic;
             this.technique           = technique;
             this.milliseconds        = milliseconds;
             this.inputVertexCount    = inputVertexCount;
@@ -57,8 +105,8 @@ public class Remeshing {
             this.triangles           = triangles;
             this.quads               = quads;
             this.largerFaces         = largerFaces;
-            this.newOpenEdges        = newOpenEdges;
-            this.newNonManifoldEdges = newNonManifoldEdges;
+            this.newOpenLines        = newOpenLines;
+            this.newNonManifoldLines = newNonManifoldLines;
             this.gaveUp              = gaveUp;
         }
 
@@ -145,8 +193,9 @@ public class Remeshing {
     // the mesh remeshed: a new mesh of shared vertices, and for each of its triangles in the order of its index buffer,
     // which of its edges are edges of its faces (BurstRemeshing.allEdges). A technique that cannot do its work gives the
     // mesh as it came, without flags, and says why in the statistics
-    public Mesh remesh( Technique technique, float edgeLength, out byte[] flags, out Statistics statistics ) {
+    public Mesh remesh( in Settings settings, out byte[] flags, out Statistics statistics ) {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew( );
+        var technique = settings.technique;
 
         using var positions = new NativeArray<float3>( this.positions, Allocator.TempJob );
         using var normals   = new NativeArray<float3>( this.normals, Allocator.TempJob );
@@ -154,14 +203,65 @@ public class Remeshing {
 
         this.measure( positions, triangles );
 
-        var length = edgeLength * BurstRemeshing.lengthOf( this.area, this.usedVertexCount, facesOf( technique ) );
+        var length = settings.edgeLength * BurstRemeshing.lengthOf( this.area, this.usedVertexCount, facesOf( technique ) );
 
         Mesh                      mesh;
         string                    gaveUp = null;
         BurstRemeshing.Topology   topology;
         BurstRemeshing.FaceCounts faces;
+        BurstIsotropic.Report?    report = null;
 
         switch( technique ) {
+            case Technique.Isotropic: {
+                gaveUp = this.tooManyVertices( length, technique );
+
+                if( gaveUp != null ) {
+                    using var every = new NativeArray<byte>( 0, Allocator.TempJob );
+
+                    mesh     = BurstMesh.createMesh( positions, normals, triangles );
+                    flags    = null;
+                    topology = this.topology;
+
+                    BurstRemeshing.count( triangles, every, out _, out faces );
+
+                    break;
+                }
+
+                using var outPositions  = new NativeList<float3>( Allocator.TempJob );
+                using var outNormals    = new NativeList<float3>( Allocator.TempJob );
+                using var outTriangles  = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
+                using var cornerNormals = settings.normals == Normals.Input
+                    ? BurstRemeshing.cornerNormalsOf( positions, normals, triangles, settings.creaseAngle, Allocator.TempJob )
+                    : new NativeArray<float3>( 0, Allocator.TempJob );
+
+                BurstIsotropic.remesh(
+                    positions,
+                    normals,
+                    triangles,
+                    cornerNormals,
+                    new BurstIsotropic.Settings {
+                        length        = length,
+                        featureCosine = math.cos( math.radians( ( double )settings.featureAngle ) ),
+                        iterations    = settings.iterations,
+                        areaRounds    = settings.areaIterations,
+                        damping       = BurstIsotropic.damping
+                    },
+                    outPositions,
+                    outNormals,
+                    outTriangles,
+                    out var isotropic
+                );
+
+                report = isotropic;
+                mesh   = BurstMesh.createMesh( outPositions.AsArray( ), outNormals.AsArray( ), outTriangles.AsArray( ) );
+                flags  = null;
+
+                using var none = new NativeArray<byte>( 0, Allocator.TempJob );
+
+                BurstRemeshing.count( outTriangles.AsArray( ), none, out topology, out faces );
+
+                break;
+            }
             case Technique.FlatPairs: {
                 using var sides     = new NativeArray<BurstRemeshing.Side>( triangles.Length * 3, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
                 using var pairFlags = new NativeArray<byte>( triangles.Length, Allocator.TempJob );
@@ -203,12 +303,26 @@ public class Remeshing {
             faces.triangles,
             faces.quads,
             faces.larger,
-            Math.Max( 0, topology.openEdges - this.topology.openEdges ),
-            Math.Max( 0, topology.nonManifoldEdges - this.topology.nonManifoldEdges ),
-            gaveUp
+            Math.Max( 0, topology.openLines - this.topology.openLines ),
+            Math.Max( 0, topology.nonManifoldLines - this.topology.nonManifoldLines ),
+            gaveUp,
+            report
         );
 
         return mesh;
+    }
+
+    // why a remesh at a length gives up before it starts: the mesh has no area, or the length would make more
+    // vertices than mostVertices. Null when it does not
+    private string tooManyVertices( double length, Technique technique ) {
+        if( !( length > 0.0 ) ) {
+            return "the mesh has no area";
+        }
+
+        var perVertex = facesOf( technique ) == BurstRemeshing.Faces.Triangles ? math.sqrt( 3.0 ) / 2.0 * length * length : length * length;
+        var vertices  = this.area / perVertex;
+
+        return vertices > mostVertices ? $"edges of {length / this.cellSize:G3} cells would make about {vertices:N0} vertices, more than {mostVertices:N0}" : null;
     }
 
     // the flags of the triangles in the order of the index buffer a mesh of them has: by sub-mesh, and in the order of

@@ -5,7 +5,8 @@ using Unity.Jobs;
 using Unity.Mathematics;
 
 // what the remeshing techniques share (Documents/Plans/Remeshing.md): the length the edges of a remesh are measured
-// against, the faces a remeshed mesh is made of, and which of a mesh's edges are open or have more than two triangles.
+// against, the faces a remeshed mesh is made of, which of a mesh's edges are open or have more than two triangles, and
+// the normals a mesh shows at the corners of its triangles, which a remeshed mesh takes its own from (finding 21).
 // And the stand-in technique that the frame around the techniques is tested with until the first of them is built,
 // which pairs triangles that lie flat together into quads. The plan takes it out again at step 5
 public static class BurstRemeshing {
@@ -80,6 +81,55 @@ public static class BurstRemeshing {
     // the edges of a mesh's triangles, each as the corner it starts from: corner 3 t + k of triangle t, whose edge runs
     // to corner k + 1. Sorted by the edge's two vertices and then by corner, the sides of each edge come together, in
     // the order of their triangles, which keeps everything made from them the same from run to run
+    // the normal at every corner of every triangle, three to a triangle in their order, as the mesh would show them
+    // creased at the angle (BurstCreases) with Smooth Normals at Contour: within a face that is the normal the creasing
+    // gives the vertex there, and across a crease each side has its own. Under Faces the creasing after a remesh gives
+    // every vertex its own triangles' normal whatever the remesh gave it, so Contour is all that is needed here. A remeshed vertex takes its normal from the corners of the triangle it lies
+    // on (finding 21), so that it shades as the mesh it was given did there. The vertices of a mesh the voxelizer keeps
+    // carry the contour's normals, which on a sharp edge lie between its faces, and which the creasing replaces there;
+    // spread over the faces by a remesh, the creasing would keep them. The caller disposes of the array
+    public static NativeArray<float3> cornerNormalsOf(
+        NativeArray<float3>             positions,
+        NativeArray<float3>             normals,
+        NativeArray<BurstMesh.Triangle> triangles,
+        double                          angle,
+        Allocator                       allocator
+    ) {
+        BurstCreases.crease( positions, normals, triangles, angle, SurfaceExtractor.SmoothNormals.Contour, Allocator.TempJob, out var creasedPositions, out var creasedNormals, out var creasedTriangles, out _ );
+
+        try {
+            var corners = new NativeArray<float3>( triangles.Length * 3, allocator, NativeArrayOptions.UninitializedMemory );
+
+            new CornerNormalsJob { normals = creasedNormals, triangles = creasedTriangles, corners = corners }.Schedule( triangles.Length, 256 ).Complete( );
+
+            return corners;
+        }
+        finally {
+            creasedPositions.Dispose( );
+            creasedNormals.Dispose( );
+            creasedTriangles.Dispose( );
+        }
+    }
+
+    // the normals of a mesh's vertices at the corners of its triangles, three to a triangle
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct CornerNormalsJob : IJobParallelFor {
+
+        [ReadOnly] public NativeArray<float3>             normals;
+        [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
+
+        [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<float3> corners;
+
+        public void Execute( int triangle ) {
+            var corners = this.triangles[triangle];
+
+            this.corners[triangle * 3]         = this.normals[corners.a];
+            this.corners[( triangle * 3 ) + 1] = this.normals[corners.b];
+            this.corners[( triangle * 3 ) + 2] = this.normals[corners.c];
+        }
+
+    }
+
     public struct Side : IComparable<Side> {
 
         // the lower vertex of the edge in the high half, the higher in the low
@@ -122,12 +172,15 @@ public static class BurstRemeshing {
 
     }
 
-    // how many of a mesh's edges have one triangle, and how many more than two: what a technique may leave that the mesh
-    // it was given did not have (finding 7)
+    // how many of a mesh's edges have one triangle, and how many more than two, and how many lines each kind makes,
+    // going from edge to edge of the kind at their vertices: what a technique may leave that the mesh it was given did
+    // not have (finding 7). A remesh that samples a line again changes how many edges it has and not that it is a line
     public struct Topology {
 
         public int openEdges;
         public int nonManifoldEdges;
+        public int openLines;
+        public int nonManifoldLines;
 
     }
 
@@ -168,6 +221,23 @@ public static class BurstRemeshing {
             var topology     = new Topology( );
             var inconsistent = 0;
 
+            // the lines, as sets of the vertices of their edges
+            var vertexCount = 1;
+
+            for( var side = 0; side < this.sides.Length; ++side ) {
+                vertexCount = math.max( vertexCount, ( int )( this.sides[side].key & 0xffffffff ) + 1 );
+            }
+
+            var openParents        = new NativeArray<int>( vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+            var nonManifoldParents = new NativeArray<int>( vertexCount, Allocator.Temp, NativeArrayOptions.UninitializedMemory );
+            var onOpen             = new NativeBitArray( vertexCount, Allocator.Temp );
+            var onNonManifold      = new NativeBitArray( vertexCount, Allocator.Temp );
+
+            for( var vertex = 0; vertex < vertexCount; ++vertex ) {
+                openParents[vertex]        = vertex;
+                nonManifoldParents[vertex] = vertex;
+            }
+
             for( var start = 0; start < this.sides.Length; ) {
                 var end = start + 1;
                 while( end < this.sides.Length && this.sides[end].key == this.sides[start].key ) {
@@ -175,12 +245,22 @@ public static class BurstRemeshing {
                 }
 
                 var count = end - start;
+                var lower = ( int )( this.sides[start].key >> 32 );
+                var upper = ( int )( this.sides[start].key & 0xffffffff );
 
                 if( count == 1 ) {
                     ++topology.openEdges;
+
+                    union( openParents, lower, upper );
+                    onOpen.Set( lower, true );
+                    onOpen.Set( upper, true );
                 }
                 else if( count > 2 ) {
                     ++topology.nonManifoldEdges;
+
+                    union( nonManifoldParents, lower, upper );
+                    onNonManifold.Set( lower, true );
+                    onNonManifold.Set( upper, true );
                 }
 
                 // the triangles on both sides of an edge that both leave out are one face. An edge left out anywhere else
@@ -232,11 +312,24 @@ public static class BurstRemeshing {
                 }
             }
 
+            for( var vertex = 0; vertex < vertexCount; ++vertex ) {
+                if( onOpen.IsSet( vertex ) && find( openParents, vertex ) == vertex ) {
+                    ++topology.openLines;
+                }
+                if( onNonManifold.IsSet( vertex ) && find( nonManifoldParents, vertex ) == vertex ) {
+                    ++topology.nonManifoldLines;
+                }
+            }
+
             this.topology[0] = topology;
             this.faces[0]    = faces;
 
             parents.Dispose( );
             sideCounts.Dispose( );
+            openParents.Dispose( );
+            nonManifoldParents.Dispose( );
+            onOpen.Dispose( );
+            onNonManifold.Dispose( );
         }
 
         private bool drawn( int corner ) {

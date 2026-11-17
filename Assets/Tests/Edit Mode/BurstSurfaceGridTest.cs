@@ -359,6 +359,15 @@ public class BurstSurfaceGridTest {
         Assert.IsFalse( answers[2].found, "nothing of sub-mesh 0 faces up" );
         Assert.IsFalse( answers[3].found, "nothing of sub-mesh 1 faces down" );
         Assert.IsFalse( answers[4].found, "the upper square is beyond the reach" );
+
+        Assert.IsTrue( grid.nearestOnSurface( point, 0, 1.0, out var lower, out var lowerTriangle ), "an unoriented search includes the downward-facing square" );
+        Assert.AreEqual( 0.0, lower.z, 1e-6 );
+        Assert.Less( grid.normals[lowerTriangle].z, 0.0 );
+        Assert.IsTrue( grid.nearestOnSurface( point, 1, 1.0, out var upper, out _ ), "an unoriented search still respects material" );
+        Assert.AreEqual( 0.1, upper.z, 1e-6 );
+        Assert.IsFalse( grid.nearestOnSurface( point, 1, 0.05, out _, out _ ), "an unoriented search still respects reach" );
+        Assert.IsTrue( grid.nearestOnSurface( point, SurfaceGrid.anySubMesh, 1.0, out var any, out _ ) );
+        Assert.AreEqual( lower, any, "without a material restriction, the nearer square wins regardless of facing" );
     }
 
 }

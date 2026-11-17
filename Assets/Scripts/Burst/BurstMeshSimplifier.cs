@@ -1037,7 +1037,7 @@ public static class BurstMeshSimplifier {
 
         // the two triangles of an edge of two, as a b c and b a d: the first runs along the edge from a to b, the second
         // back. Gives whether they do run along it opposite ways
-        private readonly bool quadOf( int edge, out int a, out int b, out int c, out int d, out int first, out int second ) {
+        public readonly bool quadOf( int edge, out int a, out int b, out int c, out int d, out int first, out int second ) {
             a      = this.edges[edge].x;
             b      = this.edges[edge].y;
             first  = -1;
