@@ -201,6 +201,8 @@ public class InteractiveEditorTest {
         uniform.simplificationError         = 0.125f;
         uniform.lineQuadricWeight           = 0.25f;
         uniform.simplificationDetail        = 0.75f;
+        uniform.remeshing                   = Remeshing.Technique.FlatPairs;
+        uniform.remeshingEdgeLength         = 1.5f;
 
         editor.select( algorithm );
 
@@ -226,6 +228,8 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 0.125f,                                         octree.simplificationError );
         Assert.AreEqual( 0.25f,                                          octree.lineQuadricWeight );
         Assert.AreEqual( 0.75f,                                          octree.simplificationDetail );
+        Assert.AreEqual( Remeshing.Technique.FlatPairs,                  octree.remeshing );
+        Assert.AreEqual( 1.5f,                                           octree.remeshingEdgeLength );
 
         editor.select( Algorithm.Uniform );
 
@@ -1290,15 +1294,18 @@ public class InteractiveEditorTest {
     // spends time in the first, and one that simplifies, in a contour or by itself, in the second
     private sealed class Work : IDisposable {
 
-        private ProfilerRecorder voxelizing = new( "Voxelizer.Voxelize", 1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
+        private ProfilerRecorder voxelizing  = new( "Voxelizer.Voxelize", 1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
         private ProfilerRecorder simplifying = new( "Voxelizer.Simplify", 1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
+        private ProfilerRecorder remeshing   = new( "Voxelizer.Remesh",   1, ProfilerRecorderOptions.SumAllSamplesInFrame | ProfilerRecorderOptions.StartImmediately );
 
         private readonly long voxelizingBefore;
         private readonly long simplifyingBefore;
+        private readonly long remeshingBefore;
 
         public Work( ) {
             this.voxelizingBefore  = this.voxelizing.CurrentValue;
             this.simplifyingBefore = this.simplifying.CurrentValue;
+            this.remeshingBefore   = this.remeshing.CurrentValue;
         }
 
         public bool contoured {
@@ -1309,9 +1316,15 @@ public class InteractiveEditorTest {
             get { return this.simplifying.CurrentValue != this.simplifyingBefore; }
         }
 
+        // a remesh by a technique, in a contour or by itself. Showing the kept mesh with remeshing off is none
+        public bool remeshed {
+            get { return this.remeshing.CurrentValue != this.remeshingBefore; }
+        }
+
         public void Dispose( ) {
             this.voxelizing.Dispose( );
             this.simplifying.Dispose( );
+            this.remeshing.Dispose( );
         }
 
     }
@@ -2031,6 +2044,256 @@ public class InteractiveEditorTest {
         finally {
             UnityEditor.Undo.RevertAllDownToGroup( undoGroup );
         }
+    }
+
+
+    // ---- remeshing ----
+
+    // the starter model on 32 cells or leaves across
+    private InteractiveEditor createRemeshing( Variant variant ) {
+        var editor = configure( this.createEditor( 5.0f ), variant );
+
+        addStarterModel( editor.transform );
+
+        editor.voxelizer.resolution += 1;
+
+        return editor;
+    }
+
+    // the test of the tests below: a contour that is remeshed shows as a contour and a remesh
+    [Test]
+    public void aRemeshShowsInTheWorkOfTheVoxelizers( ) {
+        var editor = this.createRemeshing( new( Algorithm.Uniform, ImplementationType.Burst ) );
+
+        using( var work = new Work( ) ) {
+            editor.contour( );
+
+            Assert.IsTrue( work.contoured,  "contoured" );
+            Assert.IsFalse( work.remeshed,  "remeshed with remeshing off" );
+        }
+
+        editor.voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+
+        using( var work = new Work( ) ) {
+            editor.contour( );
+
+            Assert.IsTrue( work.contoured, "contoured" );
+            Assert.IsTrue( work.remeshed,  "remeshed" );
+        }
+
+        // and nothing is owed after it
+        using( var work = new Work( ) ) {
+            this.tickAt( editor, 1.0, 2.0 );
+
+            Assert.IsFalse( work.contoured, "contoured after a contour that was remeshed" );
+            Assert.IsFalse( work.remeshed,  "remeshed after a contour that was remeshed" );
+            Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+        }
+    }
+
+    // what the remeshing pass was given is kept, remeshing on or off, so turning it on, changing it and turning it off
+    // again remesh without contouring, for every implementation that keeps a mesh of shared vertices: the managed ones
+    // too, since remeshing is Burst code. The GPU creases its own vertices with remeshing off, and keeps nothing to
+    // remesh, so turning remeshing on there takes a contour
+    [Test]
+    public void aChangeOfRemeshingRemeshesWithoutContouring( [ValueSource( nameof( variants ) )] Variant variant ) {
+        var editor = this.createRemeshing( variant );
+
+        this.giveMaterials( editor, 3 );
+
+        this.time = 0.0;
+
+        var contour = editor.contour( );
+        var plain   = MeshComparison.trianglesOf( shown( editor ) );
+
+        Assert.IsNull( contour.remeshing, "remeshed with remeshing off" );
+
+        using( var work = new Work( ) ) {
+            editor.voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+
+            this.tickAt( editor, 1.0 );
+
+            if( variant.implementation == ImplementationType.GPU ) {
+                Assert.IsTrue( work.contoured, "contoured, with nothing kept to remesh" );
+            }
+            else {
+                Assert.IsFalse( work.contoured, "contoured" );
+                Assert.IsFalse( work.simplified, "simplified" );
+            }
+
+            Assert.IsTrue( work.remeshed, "remeshed" );
+            Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+            Assert.IsFalse( editor.stateIsOfRemeshing, "the remesh is still owed" );
+
+            Assert.IsNotNull( editor.voxelizer.shownEdgeFlags, "flags of the mesh shown" );
+            Assert.IsTrue( editor.lastContour.Value.remeshing.HasValue, "the remesh reported" );
+            Assert.AreEqual( triangleCountOf( shown( editor ) ), editor.lastContour.Value.triangleCount, "triangles reported" );
+            Assert.AreEqual( 3, shown( editor ).subMeshCount, "sub-meshes, one for every material" );
+        }
+
+        using( var work = new Work( ) ) {
+            editor.voxelizer.remeshingEdgeLength = 2.0f;
+
+            this.tickAt( editor, 2.0, 2.0 + editor.debounce );
+
+            Assert.IsFalse( work.contoured, "contoured for another edge length" );
+            Assert.IsTrue( work.remeshed,   "remeshed for another edge length" );
+            Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+            editor.voxelizer.remeshing = Remeshing.Technique.Off;
+
+            this.tickAt( editor, 3.0, 3.0 + editor.debounce );
+
+            Assert.IsFalse( work.contoured, "contoured with remeshing off again" );
+            Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+            Assert.IsNull( editor.voxelizer.shownEdgeFlags, "flags with remeshing off again" );
+            Assert.IsFalse( editor.lastContour.Value.remeshing.HasValue, "a remesh reported with remeshing off again" );
+
+            // the CPU's contour as it was, the GPU's as remeshing off shows its contour of shared vertices
+            if( variant.implementation != ImplementationType.GPU ) {
+                CollectionAssert.AreEqual( plain, MeshComparison.trianglesOf( shown( editor ) ), "the contour as it was shown first" );
+            }
+        }
+    }
+
+    // a change of detail shows another simplified mesh, and that is remeshed
+    [Test]
+    public void aChangeOfDetailRemeshesTheMeshAtTheDetail( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = this.createSimplifying( new( Algorithm.Uniform, implementation ) );
+
+        editor.voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+
+        this.time = 0.0;
+
+        var contour = editor.contour( );
+
+        Assert.AreEqual( contour.triangleCount, contour.remeshing.Value.inputTriangleCount, "triangles given to the remesh, which keeps them" );
+
+        using var work = new Work( );
+
+        editor.voxelizer.simplificationDetail = 0.5f;
+
+        this.tickAt( editor, 1.0, 1.0 + editor.debounce );
+
+        Assert.IsFalse( work.contoured,  "contoured" );
+        Assert.IsTrue( work.simplified, "simplified" );
+        Assert.IsTrue( work.remeshed,   "remeshed" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+
+        var remeshing = editor.lastContour.Value.remeshing.Value;
+
+        Assert.Greater( remeshing.inputTriangleCount, contour.remeshing.Value.inputTriangleCount * 2, "triangles given to the remesh at a detail of 0.5" );
+        Assert.AreEqual( triangleCountOf( shown( editor ) ), remeshing.inputTriangleCount, "triangles given to the remesh, against those shown" );
+
+        // and nothing is owed after it
+        this.tickAt( editor, 2.0, 3.0 );
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // forgets what the voxelizer kept for remeshing, as a script recompile does: the mesh stays shown
+    private static void forgetRemeshingInput( Voxelizer voxelizer ) {
+        var kept = typeof( Voxelizer ).GetField( "remeshingInput", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic );
+
+        Assert.IsNotNull( kept.GetValue( voxelizer ), "what the voxelizer kept for remeshing" );
+
+        kept.SetValue( voxelizer, null );
+    }
+
+    // after a script recompile the mesh is still shown and what it was remeshed from is gone. A change of the remeshing
+    // then takes a contour, which a Burst implementation makes by itself and a managed one waits to be asked for
+    [Test]
+    public void aMeshWhoseRemeshingInputWasForgottenIsContouredAgain( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = this.createRemeshing( new( Algorithm.Uniform, implementation ) );
+
+        this.time = 0.0;
+        editor.contour( );
+
+        var mesh = shown( editor );
+
+        forgetRemeshingInput( editor.voxelizer );
+
+        editor.enabled = false;
+        editor.enabled = true;
+
+        using var work = new Work( );
+
+        this.tickAt( editor, 1.0, 2.0 );
+
+        Assert.IsFalse( work.contoured, "contoured with nothing changed" );
+        Assert.AreSame( mesh, shown( editor ) );
+
+        editor.voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+
+        this.tickAt( editor, 3.0, 3.0 + editor.debounce );
+
+        if( implementation == ImplementationType.Managed ) {
+            Assert.IsFalse( work.contoured, "contoured by itself" );
+            Assert.AreSame( mesh, shown( editor ) );
+            Assert.AreEqual( RemeshScheduler.State.Manual, editor.state );
+
+            editor.contour( );
+        }
+
+        Assert.IsTrue( work.contoured, "contoured" );
+        Assert.IsNotNull( editor.voxelizer.shownEdgeFlags, "flags of the mesh shown" );
+
+        this.tickAt( editor, 6.0 );
+
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // a contour of nothing has nothing to remesh, and is up to date under any remeshing
+    [Test]
+    public void aContourOfNothingIsUpToDateUnderAnyRemeshing( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
+        var editor = configure( this.createEditor( 5.0f ), new( Algorithm.Uniform, implementation ) );
+
+        this.time = 0.0;
+        editor.contour( );
+
+        Assert.AreEqual( 0, shown( editor ).vertexCount, "vertices of a contour of nothing" );
+
+        using var work = new Work( );
+
+        editor.voxelizer.remeshing           = Remeshing.Technique.FlatPairs;
+        editor.voxelizer.remeshingEdgeLength = 0.5f;
+
+        this.tickAt( editor, 1.0, 2.0, 3.0 );
+
+        Assert.IsFalse( work.contoured, "contoured" );
+        Assert.AreEqual( RemeshScheduler.State.UpToDate, editor.state );
+    }
+
+    // the signature of how a contour is remeshed follows the technique and, with one, the edge length. Neither changes
+    // what a contour or its simplification depends on
+    [Test]
+    public void theRemeshingSignatureFollowsItsSettings( ) {
+        var editor    = this.createSimplifying( new( Algorithm.Uniform, ImplementationType.Burst ) );
+        var voxelizer = editor.voxelizer;
+
+        var contour    = editor.signature( );
+        var simplifier = editor.simplifierSignature( );
+        var detail     = editor.detailSignature( );
+
+        Assert.AreEqual( "", editor.remeshingSignature( ), "with remeshing off" );
+
+        voxelizer.remeshingEdgeLength = 2.0f;
+
+        Assert.AreEqual( "", editor.remeshingSignature( ), "with remeshing off, at another edge length" );
+
+        voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+
+        var remeshing = editor.remeshingSignature( );
+
+        Assert.AreNotEqual( "", remeshing, "with remeshing on" );
+
+        voxelizer.remeshingEdgeLength = 0.5f;
+
+        Assert.AreNotEqual( remeshing, editor.remeshingSignature( ), "at another edge length" );
+
+        Assert.AreEqual( contour,    editor.signature( ),           "what a contour depends on" );
+        Assert.AreEqual( simplifier, editor.simplifierSignature( ), "what the collapses depend on" );
+        Assert.AreEqual( detail,     editor.detailSignature( ),     "what the mesh shown depends on of the simplification" );
     }
 
 }

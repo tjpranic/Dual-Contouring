@@ -50,6 +50,7 @@ public class WireframeTest : ContouringTest {
     private GameObject      shown;
     private Mesh            drawn;
     private Material[]      drawnMaterials;
+    private byte[]          drawnFlags;
     private Voxelizer       drawnBy;
     private Look            look;
 
@@ -60,6 +61,9 @@ public class WireframeTest : ContouringTest {
         ShaderUtil.allowAsyncCompilation = false;
 
         this.wireframe = new Wireframe( );
+
+        // NUnit keeps the fixture from one test to the next, and with it the flags the last one drew with
+        this.drawnFlags = null;
 
         RenderPipelineManager.beginCameraRendering += this.drawWireframe;
     }
@@ -102,7 +106,7 @@ public class WireframeTest : ContouringTest {
             fillColor = fillColor
         };
 
-        this.wireframe.draw( camera, this.drawn, Matrix4x4.identity, OffscreenRender.layer, style, this.drawnMaterials );
+        this.wireframe.draw( camera, this.drawn, Matrix4x4.identity, OffscreenRender.layer, style, this.drawnMaterials, this.drawnFlags );
     }
 
     private void view( bool perspective ) {
@@ -150,7 +154,13 @@ public class WireframeTest : ContouringTest {
     // a voxelizer that contours the shapes on 16^3 cells with Burst and shows the contour with an unlit material of each
     // colour. It draws its own wireframe, with the tests' lines
     private Voxelizer voxelizerShowing( Shape[] shapes, params Color[] colors ) {
+        return this.voxelizerShowing( Remeshing.Technique.Off, shapes, colors );
+    }
+
+    private Voxelizer voxelizerShowing( Remeshing.Technique remeshing, Shape[] shapes, params Color[] colors ) {
         var voxelizer = this.createUniformVoxelizer( 4, ImplementationType.Burst, QEFSolverType.SVD, shapes );
+
+        voxelizer.remeshing = remeshing;
 
         voxelizer.gameObject.layer = OffscreenRender.layer;
         voxelizer.GetComponent<MeshRenderer>( ).sharedMaterials = this.unlitMaterials( colors );
@@ -221,11 +231,13 @@ public class WireframeTest : ContouringTest {
         this.drawnBy        = null;
         this.drawn          = voxelizer.GetComponent<MeshFilter>( ).sharedMesh;
         this.drawnMaterials = voxelizer.GetComponent<MeshRenderer>( ).sharedMaterials;
+        this.drawnFlags     = voxelizer.shownEdgeFlags?.ToArray( );
 
         var image = this.render( look );
 
-        this.drawnBy = drawnBy;
-        this.drawn   = null;
+        this.drawnBy    = drawnBy;
+        this.drawn      = null;
+        this.drawnFlags = null;
 
         return image;
     }
@@ -323,6 +335,59 @@ public class WireframeTest : ContouringTest {
         }
 
         return result;
+    }
+
+    // the triangles whose normal points at the camera, within about 8°, with their places in the index buffer
+    private List<( Facing facing, int index )> facingWithIndices( Mesh mesh ) {
+        var vertices = mesh.vertices;
+        var toCamera = -this.offscreen.camera.transform.forward;
+        var result   = new List<( Facing, int )>( );
+        var place    = 0;
+
+        for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+            var triangles = mesh.GetTriangles( subMesh );
+
+            for( var index = 0; index < triangles.Length; index += 3, ++place ) {
+                var a = vertices[triangles[index + 0]];
+                var b = vertices[triangles[index + 1]];
+                var c = vertices[triangles[index + 2]];
+
+                if( Vector3.Dot( Vector3.Cross( b - a, c - a ).normalized, toCamera ) > 0.99f ) {
+                    result.Add( ( new( this.offscreen.pixelOf( a ), this.offscreen.pixelOf( b ), this.offscreen.pixelOf( c ), subMesh ), place ) );
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // points a quarter, half and three quarters along the edges that two of the triangles share, those that both draw
+    // apart from those that both leave out, by the flags of the triangles in the order of the index buffer
+    private static ( List<Vector2> drawn, List<Vector2> leftOut ) sharedEdgePointsByFlags( IEnumerable<( Facing facing, int index )> triangles, byte[] flags ) {
+        Vector2Int key( Vector2 point ) {
+            return new( Mathf.RoundToInt( point.x * 1000.0f ), Mathf.RoundToInt( point.y * 1000.0f ) );
+        }
+
+        var edges = new Dictionary<( Vector2Int, Vector2Int ), ( Vector2 start, Vector2 end, int drawn, int leftOut )>( );
+
+        void add( Vector2 start, Vector2 end, bool drawn ) {
+            var ( first, second ) = ( key( start ), key( end ) );
+            var edge = first.x < second.x || ( first.x == second.x && first.y < second.y ) ? ( first, second ) : ( second, first );
+            var known = edges.TryGetValue( edge, out var found ) ? found : ( start: start, end: end, drawn: 0, leftOut: 0 );
+            edges[edge] = ( known.start, known.end, known.drawn + ( drawn ? 1 : 0 ), known.leftOut + ( drawn ? 0 : 1 ) );
+        }
+
+        foreach( var ( triangle, index ) in triangles ) {
+            add( triangle.a, triangle.b, ( flags[index] & 1 ) != 0 );
+            add( triangle.b, triangle.c, ( flags[index] & 2 ) != 0 );
+            add( triangle.c, triangle.a, ( flags[index] & 4 ) != 0 );
+        }
+
+        List<Vector2> along( IEnumerable<( Vector2 start, Vector2 end, int drawn, int leftOut )> chosen ) {
+            return chosen.SelectMany( ( edge ) => new[] { 0.25f, 0.5f, 0.75f }.Select( ( fraction ) => Vector2.Lerp( edge.start, edge.end, fraction ) ) ).ToList( );
+        }
+
+        return ( along( edges.Values.Where( ( edge ) => edge.drawn == 2 ) ), along( edges.Values.Where( ( edge ) => edge.leftOut == 2 ) ) );
     }
 
     // points a quarter, half and three quarters along the edges that two of the triangles share. An edge on the outline
@@ -700,6 +765,90 @@ public class WireframeTest : ContouringTest {
         Assert.Greater( points.Count, 300, "points on edges inside the front face" );
 
         this.assertColors( image, points, ( point ) => look == Look.OverSurface ? lineColor : materialColors[0], "points on edges" );
+    }
+
+    // the cube's contour with the stand-in's flags, which pair its triangles into quads
+    private ( Mesh mesh, byte[] flags ) quadsOfTheCube( ) {
+        var contour = this.contour( cubeModel );
+        var mesh    = Remeshing.of( contour, 1.0f / 16.0f ).remesh( Remeshing.Technique.FlatPairs, 1.0f, out var flags, out var statistics );
+
+        this.made.Add( contour );
+        this.made.Add( mesh );
+
+        Assert.Greater( statistics.quads, 100, "quads" );
+
+        return ( mesh, flags );
+    }
+
+    // an edge both its triangles leave out, such as the diagonal of a quad, is not drawn, and the others are as they were
+    [Test]
+    public void edgesTheFlagsLeaveOutAreNotDrawn( [Values( Look.OverSurface, Look.LinesOnly )] Look look ) {
+        this.view( perspective: false );
+
+        var ( mesh, flags ) = this.quadsOfTheCube( );
+
+        this.show( mesh, materialColors[0] );
+
+        var surface  = this.render( Look.Off );
+        var unmasked = this.render( look );
+
+        this.drawnFlags = flags;
+
+        var image = this.render( look );
+
+        var ( drawn, leftOut ) = sharedEdgePointsByFlags( this.facingWithIndices( mesh ), flags );
+
+        Assert.Greater( drawn.Count,   200, "points on edges that are drawn" );
+        Assert.Greater( leftOut.Count, 200, "points on edges that are left out" );
+
+        var line = look == Look.OverSurface ? lineColor : materialColors[0];
+
+        this.assertColors( image,    drawn,   ( point ) => line,                                                                        "points on edges that are drawn" );
+        this.assertColors( image,    leftOut, ( point ) => look == Look.OverSurface ? this.offscreen.at( surface, point ) : fillColor, "points on edges that are left out" );
+        this.assertColors( unmasked, leftOut, ( point ) => line,                                                                        "points on the same edges without flags" );
+
+        // other flags, of every edge, are drawn as they are
+        this.drawnFlags = Enumerable.Repeat( BurstRemeshing.allEdges, flags.Length ).ToArray( );
+
+        assertSameImage( unmasked, this.render( look ), "with flags of every edge, against no flags" );
+    }
+
+    // flags that are not one for every triangle, as of another mesh, are taken for none
+    [Test]
+    public void flagsOfAnotherMeshAreTakenForNone( ) {
+        this.view( perspective: false );
+
+        var ( mesh, flags ) = this.quadsOfTheCube( );
+
+        this.show( mesh, materialColors[0] );
+
+        var unmasked = this.render( Look.OverSurface );
+
+        this.drawnFlags = flags.Take( flags.Length - 1 ).ToArray( );
+
+        assertSameImage( unmasked, this.render( Look.OverSurface ), "with flags for one triangle less, against no flags" );
+    }
+
+    // a voxelizer whose contour is remeshed draws its faces, without the edges inside them
+    [Test]
+    public void voxelizerDrawsTheFacesOfItsRemeshedContour( [Values( Look.OverSurface, Look.LinesOnly )] Look look ) {
+        this.view( perspective: false );
+
+        var voxelizer = this.voxelizerShowing( Remeshing.Technique.FlatPairs, cubeModel, materialColors[0] );
+        var mesh      = voxelizer.GetComponent<MeshFilter>( ).sharedMesh;
+        var surface   = this.render( Look.Off );
+        var image     = this.render( look );
+
+        Assert.IsNotNull( voxelizer.shownEdgeFlags, "flags" );
+
+        assertSameImage( this.renderByTheTest( voxelizer, look ), image, "drawn by the voxelizer, against the test's own drawing of its mesh and flags" );
+
+        var ( drawn, leftOut ) = sharedEdgePointsByFlags( this.facingWithIndices( mesh ), voxelizer.shownEdgeFlags.ToArray( ) );
+
+        Assert.Greater( leftOut.Count, 200, "points on edges that are left out" );
+
+        this.assertColors( image, drawn,   ( point ) => look == Look.OverSurface ? lineColor : materialColors[0],                    "points on edges that are drawn" );
+        this.assertColors( image, leftOut, ( point ) => look == Look.OverSurface ? this.offscreen.at( surface, point ) : fillColor, "points on edges that are left out" );
     }
 
     [Test]

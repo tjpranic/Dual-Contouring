@@ -115,15 +115,28 @@ public class InteractiveEditor : MonoBehaviour {
     [NonSerialized]
     private RemeshScheduler detailScheduler = new( );
 
-    // what the schedulers said at the last update, for the inspector, and whether that is about simplifying the contour
-    // that is shown and not about contouring
+    // when to remesh the mesh the remeshing pass was given last again by itself, which takes no contour and no
+    // simplification (Voxelizer.remesh). It is Burst code too, and runs by itself for a managed implementation
+    [NonSerialized]
+    private RemeshScheduler remeshingScheduler = new( );
+
+    // what the schedulers said at the last update, for the inspector, and whether that is about simplifying or
+    // remeshing the contour that is shown and not about contouring
     public RemeshScheduler.State state { get; private set; } = RemeshScheduler.State.UpToDate;
 
     public bool stateIsOfSimplification { get; private set; }
+    public bool stateIsOfRemeshing      { get; private set; }
 
-    // whether automatic contouring is paused, and how long the contour or the simplification that paused it took
-    public bool   paused             { get { return this.scheduler.paused; } }
-    public double lastTimedDuration  { get { return ( this.stateIsOfSimplification ? this.simplifierScheduler.lastDuration : this.scheduler.lastDuration ) ?? 0.0; } }
+    // whether automatic contouring is paused, and how long the contour, the simplification or the remesh that paused it
+    // took
+    public bool   paused { get { return this.scheduler.paused; } }
+    public double lastTimedDuration {
+        get {
+            var scheduler = this.stateIsOfSimplification ? this.simplifierScheduler : this.stateIsOfRemeshing ? this.remeshingScheduler : this.scheduler;
+
+            return scheduler.lastDuration ?? 0.0;
+        }
+    }
 
     // the time in seconds and whether Unity is the active application, which tests replace with their own
     [NonSerialized]
@@ -233,6 +246,9 @@ public class InteractiveEditor : MonoBehaviour {
             to.simplificationError  = from.simplificationError;
             to.lineQuadricWeight    = from.lineQuadricWeight;
             to.simplificationDetail = from.simplificationDetail;
+
+            to.remeshing           = from.remeshing;
+            to.remeshingEdgeLength = from.remeshingEdgeLength;
 
             to.wireframe          = from.wireframe;
             to.wireframeLineWidth = from.wireframeLineWidth;
@@ -513,7 +529,8 @@ public class InteractiveEditor : MonoBehaviour {
     // changes the mesh.
     //
     // Whether the mesh is simplified is in it: a contour that is not simplified keeps nothing to simplify later. How
-    // it is simplified is not, since that takes no contour (simplifierSignature, detailSignature)
+    // it is simplified is not, since that takes no contour (simplifierSignature, detailSignature), and neither is how
+    // it is remeshed, on or off: what the remeshing pass is given is kept either way (remeshingSignature)
     public string signatureOf( List<DensityFunction> shapes ) {
         var voxelizer = this.voxelizer;
         var text      = new StringBuilder( );
@@ -615,6 +632,14 @@ public class InteractiveEditor : MonoBehaviour {
         return voxelizer.meshSimplification ? FormattableString.Invariant( $"{voxelizer.simplificationDetail:R}" ) : "";
     }
 
+    // what the mesh shown depends on beside the contour and its simplification: how it is remeshed. With remeshing off
+    // the edge length is nothing
+    public string remeshingSignature( ) {
+        var voxelizer = this.voxelizer;
+
+        return voxelizer.remeshing != Remeshing.Technique.Off ? FormattableString.Invariant( $"{voxelizer.remeshing},{voxelizer.remeshingEdgeLength:R}" ) : "";
+    }
+
     // contours the shapes with the selected voxelizer, whatever its implementation, as "Contour" does. The mesh is read
     // back from the GPU, because drawing straight from it only happens in play mode, and its vertices are not
     // reordered, which takes time and only makes drawing it a little faster
@@ -636,9 +661,14 @@ public class InteractiveEditor : MonoBehaviour {
         this.simplifierScheduler.contoured( this.now, this.simplifierSignature( ), ( statistics.simplificationMilliseconds ?? 0.0 ) / 1000.0, this.active );
         this.detailScheduler.shown( this.detailSignature( ) );
 
+        // and remeshed. Remeshing again takes as long as the remesh within it took. With remeshing off that is nothing,
+        // so the first remesh after turning it on is done at once, as the first simplification is
+        this.remeshingScheduler.contoured( this.now, this.remeshingSignature( ), ( statistics.remeshing?.milliseconds ?? 0.0 ) / 1000.0, this.active );
+
         this.lastContour             = statistics;
         this.state                   = RemeshScheduler.State.UpToDate;
         this.stateIsOfSimplification = false;
+        this.stateIsOfRemeshing      = false;
 
 #if UNITY_EDITOR
         UnityEditor.SceneView.RepaintAll( );
@@ -657,10 +687,38 @@ public class InteractiveEditor : MonoBehaviour {
 
         due.contoured( this.now, due == this.detailScheduler ? this.detailSignature( ) : this.simplifierSignature( ), statistics.milliseconds / 1000.0, this.active );
 
+        // what it shows is remeshed as the settings are now
+        this.remeshingScheduler.shown( this.remeshingSignature( ) );
+
         // the time stays that of the contour, the sizes are those of what is shown now
         this.lastContour = new Voxelizer.ContourStatistics(
             this.lastContour?.milliseconds ?? statistics.milliseconds, statistics.vertexCount, statistics.triangleCount, statistics.unsimplifiedVertexCount, statistics.unsimplifiedTriangleCount,
-            statistics.simplificationMilliseconds
+            statistics.simplificationMilliseconds, statistics.remeshing
+        );
+
+#if UNITY_EDITOR
+        UnityEditor.SceneView.RepaintAll( );
+#endif
+
+        return true;
+    }
+
+    // shows the mesh the remeshing pass was given last again as the remeshing settings are now, without contouring or
+    // simplifying, and notes how long it took. Gives whether there was such a mesh: after a script recompile there is
+    // none, though the mesh made from it is still shown
+    private bool remesh( ) {
+        if( !( this.voxelizer.remesh( reorderVertices: false ) is Voxelizer.ContourStatistics statistics ) ) {
+            return false;
+        }
+
+        this.remeshingScheduler.contoured( this.now, this.remeshingSignature( ), statistics.milliseconds / 1000.0, this.active );
+
+        this.padSubMeshes( );
+
+        // the time and the simplification stay those of the contour, the sizes are those of what is shown now
+        this.lastContour = new Voxelizer.ContourStatistics(
+            this.lastContour?.milliseconds ?? statistics.milliseconds, statistics.vertexCount, statistics.triangleCount, statistics.unsimplifiedVertexCount, statistics.unsimplifiedTriangleCount,
+            this.lastContour?.simplificationMilliseconds, statistics.remeshing
         );
 
 #if UNITY_EDITOR
@@ -690,9 +748,11 @@ public class InteractiveEditor : MonoBehaviour {
         this.scheduler.debounce           = this._debounce;
         this.simplifierScheduler.debounce = this._debounce;
         this.detailScheduler.debounce     = this._debounce;
+        this.remeshingScheduler.debounce  = this._debounce;
 
         this.state                   = this.scheduler.update( this.now, signature, this.contoursByItself, this.active );
         this.stateIsOfSimplification = false;
+        this.stateIsOfRemeshing      = false;
 
         // a contour that is owed brings the simplification settings with it. With the contour up to date, what can be
         // behind is how it is simplified: the collapses first, which the mesh at any detail is made from
@@ -724,6 +784,30 @@ public class InteractiveEditor : MonoBehaviour {
 
                     this.state                   = this.scheduler.update( this.now, signature, this.contoursByItself, this.active );
                     this.stateIsOfSimplification = false;
+                }
+            }
+        }
+
+        // with the contour and its simplification up to date, what can be behind is how it is remeshed
+        if( this.state == RemeshScheduler.State.UpToDate ) {
+            this.state              = this.remeshingScheduler.update( this.now, this.remeshingSignature( ), true, this.active );
+            this.stateIsOfRemeshing = this.state != RemeshScheduler.State.UpToDate;
+
+            if( this.state == RemeshScheduler.State.Due ) {
+                if( this.remesh( ) || this.nothingShown ) {
+                    // a contour of nothing has nothing to remesh, and is up to date as it is
+                    this.remeshingScheduler.shown( this.remeshingSignature( ) );
+
+                    this.state              = RemeshScheduler.State.UpToDate;
+                    this.stateIsOfRemeshing = false;
+                }
+                else {
+                    // what the mesh shown was remeshed from is gone, or was never kept, as when the GPU creased its own
+                    // vertices, and it takes a contour to have it
+                    this.scheduler.invalidate( );
+
+                    this.state              = this.scheduler.update( this.now, signature, this.contoursByItself, this.active );
+                    this.stateIsOfRemeshing = false;
                 }
             }
         }
@@ -763,6 +847,7 @@ public class InteractiveEditor : MonoBehaviour {
         this.scheduler           = new RemeshScheduler( );
         this.simplifierScheduler = new RemeshScheduler( );
         this.detailScheduler     = new RemeshScheduler( );
+        this.remeshingScheduler  = new RemeshScheduler( );
 
         var signature = this.signature( );
 
@@ -775,6 +860,7 @@ public class InteractiveEditor : MonoBehaviour {
 
         this.simplifierScheduler.shown( this.simplifierSignature( ) );
         this.detailScheduler.shown( this.detailSignature( ) );
+        this.remeshingScheduler.shown( this.remeshingSignature( ) );
 
 #if UNITY_EDITOR
         UnityEditor.EditorApplication.update -= this.onEditorUpdate;
@@ -1020,6 +1106,28 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
             if( statistics.unsimplifiedVertexCount.HasValue ) {
                 UnityEditor.EditorGUILayout.LabelField( $"Simplified from {statistics.unsimplifiedVertexCount:N0} vertices, {statistics.unsimplifiedTriangleCount:N0} triangles" );
             }
+
+            if( statistics.remeshing is Remeshing.Statistics remeshing ) {
+                UnityEditor.EditorGUILayout.LabelField(
+                    $"Remeshed from {remeshing.inputVertexCount:N0} vertices, {remeshing.inputTriangleCount:N0} triangles, in {remeshing.milliseconds:F1} ms",
+                    UnityEditor.EditorStyles.wordWrappedLabel
+                );
+                UnityEditor.EditorGUILayout.LabelField(
+                    $"Edges of {remeshing.edgeLength:G3} cells: {remeshing.triangles:N0} triangles, {remeshing.quads:N0} quads, {remeshing.largerFaces:N0} larger faces",
+                    UnityEditor.EditorStyles.wordWrappedLabel
+                );
+
+                if( remeshing.gaveUp != null ) {
+                    UnityEditor.EditorGUILayout.HelpBox( $"Remeshing gave the mesh back as it came: {remeshing.gaveUp}", UnityEditor.MessageType.Warning );
+                }
+
+                if( remeshing.newOpenEdges > 0 || remeshing.newNonManifoldEdges > 0 ) {
+                    UnityEditor.EditorGUILayout.HelpBox(
+                        $"The remeshed mesh has {remeshing.newOpenEdges:N0} more open edges and {remeshing.newNonManifoldEdges:N0} more edges of more than two triangles than the mesh it was made from",
+                        UnityEditor.MessageType.Warning
+                    );
+                }
+            }
         }
 
         foreach( var warning in editor.warnings( ) ) {
@@ -1134,11 +1242,13 @@ public class InteractiveEditorEditor : UnityEditor.Editor {
     private static string statusOf( InteractiveEditor editor ) {
         return editor.state switch {
             RemeshScheduler.State.UpToDate   => "Up to date",
-            RemeshScheduler.State.Due        => editor.stateIsOfSimplification ? "Simplifying" : "Contouring",
+            RemeshScheduler.State.Due        => editor.stateIsOfSimplification ? "Simplifying" : editor.stateIsOfRemeshing ? "Remeshing" : "Contouring",
             RemeshScheduler.State.Waiting    => "Waiting for changes to settle",
             RemeshScheduler.State.Manual     => "Out of date. Managed implementations only contour when Contour is pressed",
             RemeshScheduler.State.Paused     => editor.stateIsOfSimplification
                 ? $"Out of date. Simplifying by itself is paused, because the last time took {editor.lastTimedDuration:F1} s. Press Contour; it resumes after a contour under {RemeshScheduler.pauseLimit:F0} s"
+                : editor.stateIsOfRemeshing
+                ? $"Out of date. Remeshing by itself is paused, because the last time took {editor.lastTimedDuration:F1} s. Press Contour; it resumes after a contour under {RemeshScheduler.pauseLimit:F0} s"
                 : $"Out of date. Contouring by itself is paused, because the last contour took {editor.lastTimedDuration:F1} s. It resumes after a contour under {RemeshScheduler.pauseLimit:F0} s",
             RemeshScheduler.State.Background => "Out of date. Contours once Unity is the active application again",
             _                                => editor.state.ToString( )

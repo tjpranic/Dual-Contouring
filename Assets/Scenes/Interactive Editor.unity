@@ -475,6 +475,8 @@ MonoBehaviour:
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
+  remeshing: 0
+  remeshingEdgeLength: 1
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -521,6 +523,8 @@ MonoBehaviour:
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
+  remeshing: 0
+  remeshingEdgeLength: 1
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -568,6 +572,8 @@ MonoBehaviour:
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
+  remeshing: 0
+  remeshingEdgeLength: 1
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
@@ -694,6 +700,8 @@ MonoBehaviour:
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
+  remeshing: 0
+  remeshingEdgeLength: 1
   wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}

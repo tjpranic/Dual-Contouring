@@ -2,7 +2,7 @@
 
 Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mesh simplification, with three techniques to choose between: evenly shaped triangles from a loop of edge splits, collapses, flips and smoothing; triangles or quads that follow an orientation field; and quads with few irregular vertices.
 
-**Status:** step 0 done on 2026-11-17, on the user's "Alright, begin on step 0." No code is written in the repository. All eight decisions were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16), which the user answered on 2026-11-17: against the mesh the pass is given. Step 1 waits for the go-ahead.
+**Status:** steps 0 and 1 done on 2026-11-17. Step 0, on the user's "Alright, begin on step 0.", took the baseline and measured what the pass will meet; step 1, on "Start step 1.", built the frame with a stand-in technique, uncommitted. All eight decisions were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16), which the user answered on 2026-11-17: against the mesh the pass is given. Step 2 waits for the go-ahead.
 
 **Papers,** all in `Documents/Papers/`:
 - *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): the technique called **Isotropic** below. It is its section 4.
@@ -248,6 +248,8 @@ On `Voxelizer`, under a **Remeshing** header after Mesh Simplification, carried 
 
 - **`Voxelizer.contour`:** after the simplifier's block and before `finish`. The pass takes a mesh with shared vertices and gives one back.
 - **What the voxelizer keeps:** the pass's input, as managed arrays, in a class of its own beside `MeshSimplification`. With simplification on that input is small; without, it is the contour, 4 MB at 128³.
+  - **As step 1 built it** (`Remeshing`): kept whenever the mesh has shared vertices, remeshing on or off. That is every CPU contour, and a GPU contour when it is asked for shared vertices, which is when simplification or remeshing is on. A GPU contour with both off splits or creases its own vertices as it did, bit for bit, and keeps nothing: turning remeshing on there takes a contour.
+  - **What keeping costs** with remeshing off: about 1 ms on a Burst contour of 38.5 ms at 128³, for reading the mesh into arrays. Its area, vertex count and edges are only worked out when it is first remeshed.
 - **`Voxelizer.remesh( )`** shows the kept input again under the remeshing settings as they are now, without contouring or simplifying. It gives nothing when there is nothing kept, as `simplify` does.
 - **`Voxelizer.simplify( )`** remeshes what it makes, so another detail or error is shown remeshed.
 - **`contourVertices`** asks for shared vertices when remeshing is on, and such a contour is not drawn straight from the GPU.
@@ -388,6 +390,31 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - **The default edge length:** a length in cells cannot follow the simplifier (finding 16), so decision 9 asked what it should be measured against. The user's answer, the mesh the pass is given, makes the default 1.
      - **Where the probe ran:** `RemeshProbe.cs` in the probes folder outside the repository, on hidden objects. No file in the repository changed but this plan. The open scene was not touched.
 1. **The frame (medium).** The settings and inspector, the hook, what is kept, `remesh`, the statistics, the request for shared vertices, the flags through `finish`, the wireframe's mask, the editor's signature, scheduler and `select`. A stand-in technique that turns pairs of triangles into quads where they are flat, so that the flags and the wireframe can be tested before a technique gives quads; it is taken out again at step 5.
+   - **Done 2026-11-17:**
+     - **Built:**
+       - `Assets/Scripts/Burst/BurstRemeshing.cs`: the edge length of decision 9 (`lengthOf`); a job for a mesh's area and the vertices its triangles use; the sides of a mesh's edges, sorted so that each edge's triangles come together; a job that counts open and non-manifold edges and the faces the flags make, by their sides; and the stand-in, `FlatPairsJob`.
+       - `Assets/Scripts/Remeshing.cs`: the `Technique` setting's values, what a remesh did (`Remeshing.Statistics`), the kept mesh, and the pass, which gives a new mesh and its flags in the order of its index buffer.
+       - On `Voxelizer`: a **Remeshing** section with **Technique** and **Edge Length**; `contourVertices` asks for shared vertices while remeshing; the hook between simplifying and `finish`; `remesh( )`; `simplify( )` remeshes what it shows; `ContourStatistics.remeshing`; `shownEdgeFlags`; profiler markers `Voxelizer.KeepForRemeshing` and `Voxelizer.Remesh`.
+       - `Wireframe.draw` takes the flags, packed four triangles to a word in a raw buffer, and the shader leaves out the edges they do. Flags that are not one for every triangle are taken for none.
+       - In `InteractiveEditor`: a fourth signature and scheduler, `stateIsOfRemeshing`, the two settings carried over by `select`, and the inspector's lines: what went in, the edge length in cells, the faces by sides, the time, and warnings when the pass gave up or left new open or non-manifold edges.
+     - **Settled while building:**
+       - **Only Technique and Edge Length so far.** Feature Angle comes with the skeleton at step 2, Iterations and Area Iterations with the loop at step 3, Faces with step 5. A setting that does nothing yet would only mislead.
+       - **The setting's values:** Off is 0, the stand-in 99, shown as "Flat Pairs (Stand-In)". The techniques of the plan get 1 to 3 at their steps, so the stand-in's value never comes back as one of them.
+       - **The stand-in** pairs triangles across an edge of exactly two, of one sub-mesh, wound the same way, within a degree of each other and making a convex quad, longest edge first. It moves nothing. It gives up, and shows the mesh as it came, when it pairs nothing.
+       - **The order of the flags survives `finish`:** creasing, splitting and `Mesh.OptimizeReorderVertexBuffer` keep the triangles' order in the index buffer, which the tests hold with reordering on and off.
+       - **The editor's remeshing scheduler** starts from the time the remesh within the last contour took, as the simplifier's does. With remeshing off that is nothing, so the first remesh after turning it on is done at once.
+       - **The project's first sort in a Burst job:** `NativeArray.Sort` works there.
+     - **Tests:** 190 more.
+       - **`BurstRemeshingTest`, 23:** the lengths, the area, the edge and face counts with and without flags, the stand-in on patches, boxes, an octahedron, bent and dart-shaped pairs and two materials, and the order of the flags.
+       - **`RemeshingTest`, 145:** through the voxelizer for every algorithm and implementation, three models, both kinds of normals, reordered or not. What is kept, `remesh` against a fresh contour, simplification and remeshing together, the cells of the kept contour, and 32-bit indices.
+       - **`WireframeTest`, 5 in three tests:** edges left out are not drawn, other flags are, and the voxelizer draws its remeshed faces.
+       - **`InteractiveEditorTest`, 17:** the carry-over, a change of remeshing remeshes without contouring for all nine variants, a change of detail remeshes, a forgotten input takes a contour, a contour of nothing is up to date, the signature.
+       - **`VoxelizerDefaultsTest`:** remeshing off at an edge length of 1.
+     - **Deliberate mistakes:** 43 were tried, two of them in the shader, and 42 failed a test.
+       - **Four tests were added to get there** before the run: the edges a remesh adds, the cells after a change of resolution, new flags on the same wireframe, and nothing owed after a contour that remeshed.
+       - **The one that passed** is the line by which `simplify` tells the remeshing scheduler that what it shows is remeshed. Without it, a change of detail and of the remeshing at once remeshes twice, with the same mesh shown. It is kept: no test can see it without a counter in production code.
+     - **Found and not changed:** a voxelizer that draws straight from the GPU throws in `contour` when a material slot of its renderer is empty, since it reads the colour of every material. It is older than this plan, and the editor's voxelizers and the scenes always have materials. The test that met it gives its voxelizer one.
+     - **Baselines after step 1:** edit mode 3516 of 3516, play mode 21 of 21, 480 `Start` hashes unchanged from step 0.
 2. **Isotropic: skeleton and operations (medium).** The feature skeleton with its two strengths, `split` and `flip` on the simplifier's lists, the positions of collapses, the nearest-point search, with their tests. The simplifier's meshes hashed before and after.
 3. **Isotropic: the loop (medium).** The loop, the smoothing, the equalizing of areas. Wired in as a technique. **Measured here:** edge lengths, edges per vertex, angles and vertex areas after each iteration and each area round, which sets the damping factor and the two defaults; how far vertices are from the shapes; time by stage from 32³ to 128³, simplified and not.
 4. **Field Aligned: the fields (large).** Sheets, the preparation, graph, normals, areas, hierarchy, colouring, both fields, for quads and triangles. **Measured here:** the energies by level, the irregular points of both fields against the edge length, time by stage from 32³ to 128³; what is left of finding 18 after the sheets; the hierarchy scored by min against max, and normals at creases against none (findings 11 and 17).

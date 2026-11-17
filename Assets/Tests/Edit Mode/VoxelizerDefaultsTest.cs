@@ -8,7 +8,8 @@ using QEFSolverType      = QEFSolver.Type;
 
 // a voxelizer that is added to a scene starts out contouring the way the papers describe: the vertex of a cell is the
 // minimizer of its QEF, and stays where the QEF puts it. It runs the managed implementation where the algorithm has one,
-// creases its normals at 40 degrees, does not simplify the mesh of the contour, and draws no wireframe until asked to
+// creases its normals at 40 degrees, does not simplify or remesh the mesh of the contour, and draws no wireframe until
+// asked to
 public class VoxelizerDefaultsTest {
 
     private static void assertDefaults<T>( ImplementationType implementation = ImplementationType.Managed ) where T : Voxelizer {
@@ -29,6 +30,9 @@ public class VoxelizerDefaultsTest {
             Assert.AreEqual( 0.05f, voxelizer.simplificationError, "simplification error" );
             Assert.AreEqual( 1e-5f, voxelizer.lineQuadricWeight,   "line quadric weight" );
             Assert.AreEqual( 0.0f,  voxelizer.simplificationDetail, "simplification detail" );
+
+            Assert.AreEqual( Remeshing.Technique.Off, voxelizer.remeshing,           "remeshing" );
+            Assert.AreEqual( 1.0f,                    voxelizer.remeshingEdgeLength, "remeshing edge length" );
 
             Assert.AreEqual( Wireframe.Look.Off, voxelizer.wireframe,          "wireframe" );
             Assert.AreEqual( 1.0f,               voxelizer.wireframeLineWidth, "wireframe line width" );

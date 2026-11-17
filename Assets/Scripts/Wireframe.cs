@@ -58,6 +58,8 @@ public sealed class Wireframe : IDisposable {
     private static readonly int fillColorID      = Shader.PropertyToID( "fillColor" );
     private static readonly int subMeshColorsID  = Shader.PropertyToID( "subMeshColors" );
     private static readonly int linesOnlyID      = Shader.PropertyToID( "linesOnly" );
+    private static readonly int edgeFlagsID      = Shader.PropertyToID( "edgeFlags" );
+    private static readonly int useEdgeFlagsID   = Shader.PropertyToID( "useEdgeFlags" );
 
     private readonly Material                    material;
     private readonly List<MaterialPropertyBlock> blocks        = new( );
@@ -73,19 +75,34 @@ public sealed class Wireframe : IDisposable {
     private GraphicsBuffer positions;
     private GraphicsBuffer indices;
 
+    // which edges of each triangle are drawn, packed four triangles to a word, and the flags they were made from. A
+    // buffer of one word stands in when every edge is drawn, since the shader reads a buffer either way
+    private byte[]         bufferedFlags;
+    private GraphicsBuffer flags;
+    private GraphicsBuffer noFlags;
+
     public Wireframe( ) {
         this.material = new Material( Resources.Load<Shader>( "Shaders/RenderContourWireframe" ) ) { hideFlags = HideFlags.DontSave };
     }
 
     // draws the lines of the mesh, placed by localToWorld, for the camera. materials are the renderer's, which draws
-    // sub-mesh n with the n-th. A sub-mesh without one is not drawn by the renderer, and gets no lines either
-    public void draw( Camera camera, Mesh mesh, Matrix4x4 localToWorld, int layer, Style style, IReadOnlyList<Material> materials ) {
+    // sub-mesh n with the n-th. A sub-mesh without one is not drawn by the renderer, and gets no lines either.
+    // edgeFlags, when there are any, say for each triangle in the order of the index buffer which of its edges are
+    // drawn: bit k for the edge from its corner k to corner k + 1 (BurstRemeshing.allEdges). So the triangles of a quad
+    // draw no line between them. Flags that are not one for every triangle are taken for none
+    public void draw( Camera camera, Mesh mesh, Matrix4x4 localToWorld, int layer, Style style, IReadOnlyList<Material> materials, byte[] edgeFlags = null ) {
         if( style.look == Look.Off || mesh == null || !hasFloatPositions( mesh ) || !hasTriangles( mesh ) ) {
             return;
         }
 
         this.holdBuffersOf( mesh );
         this.takeColorsOf( materials );
+
+        if( edgeFlags != null && edgeFlags.Length != triangleCountOf( mesh ) ) {
+            edgeFlags = null;
+        }
+
+        var flags = this.flagsBufferOf( edgeFlags );
 
         var stream      = mesh.GetVertexAttributeStream( VertexAttribute.Position );
         var worldBounds = transform( mesh.bounds, localToWorld );
@@ -108,6 +125,8 @@ public sealed class Wireframe : IDisposable {
             block.SetInteger    ( indexStartID,     descriptor.indexStart );
             block.SetInteger    ( baseVertexID,     descriptor.baseVertex );
             block.SetInteger    ( subMeshIndexID,   subMesh );
+            block.SetBuffer     ( edgeFlagsID,      flags );
+            block.SetInteger    ( useEdgeFlagsID,   edgeFlags != null ? 1 : 0 );
 
             this.setStyle( block, localToWorld, style );
 
@@ -156,6 +175,13 @@ public sealed class Wireframe : IDisposable {
 
     public void Dispose( ) {
         this.releaseBuffers( );
+
+        this.flags?.Dispose( );
+        this.noFlags?.Dispose( );
+
+        this.flags         = null;
+        this.noFlags       = null;
+        this.bufferedFlags = null;
 
         destroy( this.material );
 
@@ -237,6 +263,48 @@ public sealed class Wireframe : IDisposable {
         this.positions    = null;
         this.indices      = null;
         this.bufferedMesh = null;
+    }
+
+    private static int triangleCountOf( Mesh mesh ) {
+        var count = 0;
+
+        for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+            count += ( int )mesh.GetIndexCount( subMesh ) / 3;
+        }
+
+        return count;
+    }
+
+    // the flags as the shader reads them, a byte for each triangle in words of four, made again only when the flags
+    // are not the ones it was made from. A remeshed mesh is not changed once it is shown, and neither are its flags
+    private GraphicsBuffer flagsBufferOf( byte[] edgeFlags ) {
+        if( edgeFlags == null ) {
+            if( this.noFlags == null || !this.noFlags.IsValid( ) ) {
+                this.noFlags = new GraphicsBuffer( GraphicsBuffer.Target.Raw, 1, 4 );
+                this.noFlags.SetData( new uint[] { BurstRemeshing.allEdges } );
+            }
+
+            return this.noFlags;
+        }
+
+        if( edgeFlags == this.bufferedFlags && this.flags != null && this.flags.IsValid( ) ) {
+            return this.flags;
+        }
+
+        this.flags?.Dispose( );
+
+        var words = new uint[Math.Max( 1, ( edgeFlags.Length + 3 ) / 4 )];
+
+        for( var triangle = 0; triangle < edgeFlags.Length; ++triangle ) {
+            words[triangle / 4] |= ( uint )edgeFlags[triangle] << ( 8 * ( triangle % 4 ) );
+        }
+
+        this.flags = new GraphicsBuffer( GraphicsBuffer.Target.Raw, words.Length, 4 );
+        this.flags.SetData( words );
+
+        this.bufferedFlags = edgeFlags;
+
+        return this.flags;
     }
 
     // one property block for each sub-mesh, kept from draw to draw

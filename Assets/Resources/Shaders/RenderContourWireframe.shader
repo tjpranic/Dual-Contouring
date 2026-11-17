@@ -65,6 +65,12 @@ Shader "Custom/RenderContourWireframe"
             int  baseVertex;
             uint subMeshIndex;
 
+            // which edges each triangle draws, a byte for each in the order of the index buffer, four to a word: bit k
+            // for the edge from corner k to corner k + 1. A remeshed mesh leaves out the edges inside its faces, such as
+            // the diagonal of a quad. Without them every edge is drawn
+            ByteAddressBuffer edgeFlags;
+            uint              useEdgeFlags;
+
             #endif
 
             // the contour is drawn procedurally, so there's no per-object transform from the renderer
@@ -80,6 +86,7 @@ Shader "Custom/RenderContourWireframe"
                 float4               positionCS  : SV_POSITION;
                 float3               barycentric : TEXCOORD0;
                 nointerpolation uint subMesh     : TEXCOORD1;
+                nointerpolation uint edges       : TEXCOORD2;
             };
 
             #if !defined( CONTOUR_QUADS )
@@ -101,10 +108,13 @@ Shader "Custom/RenderContourWireframe"
                 Quad   quad     = quads[vertexID / 6];
                 float3 position = vertices[quad.indices[vertexID % 6]];
                 uint   subMesh  = quad.subMeshIndex;
+                uint   edges    = 7u;
                 #else
                 uint   vertexIndex = readIndex( indexStart + vertexID ) + baseVertex;
                 float3 position    = asfloat( positions.Load3( vertexIndex * positionStride + positionOffset ) );
                 uint   subMesh     = subMeshIndex;
+                uint   face        = ( indexStart + vertexID ) / 3;
+                uint   edges       = useEdgeFlags != 0 ? ( edgeFlags.Load( face & ~3u ) >> ( ( face & 3u ) * 8u ) ) & 7u : 7u;
                 #endif
 
                 uint corner = vertexID % 3;
@@ -113,14 +123,22 @@ Shader "Custom/RenderContourWireframe"
                 output.positionCS  = TransformWorldToHClip( mul( localToWorld, float4( position, 1.0f ) ).xyz );
                 output.barycentric = float3( corner == 0, corner == 1, corner == 2 );
                 output.subMesh     = subMesh;
+                output.edges       = edges;
                 return output;
             }
 
             half4 fragmentShader( Varyings input ) : SV_TARGET {
                 // a barycentric coordinate is zero on the edge across from its corner, and its rate of change across
-                // the screen turns it into a distance in pixels. The two triangles of an edge each draw half the line
+                // the screen turns it into a distance in pixels. The two triangles of an edge each draw half the line.
+                // The edge across from corner c runs from corner c + 1 to c + 2, which is bit c + 1 of the edges drawn;
+                // an edge that is not drawn is too far to draw
                 float3 distances = input.barycentric / fwidth( input.barycentric );
-                float  distance  = min( distances.x, min( distances.y, distances.z ) );
+
+                distances.x = ( input.edges & 2u ) != 0 ? distances.x : 1e6f;
+                distances.y = ( input.edges & 4u ) != 0 ? distances.y : 1e6f;
+                distances.z = ( input.edges & 1u ) != 0 ? distances.z : 1e6f;
+
+                float distance = min( distances.x, min( distances.y, distances.z ) );
                 float  coverage  = saturate( lineWidth * 0.5f + 0.5f - distance );
 
                 if( linesOnly > 0.5f ) {

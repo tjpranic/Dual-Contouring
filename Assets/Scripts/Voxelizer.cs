@@ -90,12 +90,12 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         get { return 1.0f / ( 1 << this.resolution ); }
     }
 
-    // what an implementation is asked for. A mesh that is going to be simplified needs vertices that its triangles
-    // share, so it is asked for with shared vertices, and creased or split afterwards. The GPU implementations split
-    // and crease by themselves, and the others give shared vertices whatever they are asked for
+    // what an implementation is asked for. A mesh that is going to be simplified or remeshed needs vertices that its
+    // triangles share, so it is asked for with shared vertices, and creased or split afterwards. The GPU implementations
+    // split and crease by themselves, and the others give shared vertices whatever they are asked for
     public ContourVertices contourVertices {
         get {
-            if( this.meshSimplification ) {
+            if( this.meshSimplification || this.remeshing != Remeshing.Technique.Off ) {
                 return ContourVertices.Shared;
             }
             return this.vertexNormals == VertexNormals.Split ? ContourVertices.Split : ContourVertices.Creased;
@@ -126,6 +126,16 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     [Tooltip( "Which of the meshes between the simplest the error allows and the contour itself is shown: 0 is the simplest, 1 is the contour" ), Range( 0.0f, 1.0f )]
     public float simplificationDetail = 0.0f;
+
+    // what is done to the mesh of every contour after it is simplified and before its normals are creased or split
+    // (Remeshing)
+    [Header( "Remeshing" )]
+
+    [Tooltip( "Rebuild the mesh of the contour after it is simplified, with faces of even shape and size. Off, the mesh is shown as it comes" )]
+    public Remeshing.Technique remeshing = Remeshing.Technique.Off;
+
+    [Tooltip( "How long the edges of the new faces are, against the mesh the remeshing is given: at 1 the result has as many vertices as that mesh, at 0.5 about four times as many, and at 2 about a quarter" ), Min( 0.01f )]
+    public float remeshingEdgeLength = 1.0f;
 
     // what is drawn over the contour, which changes nothing about the contour itself (Wireframe)
     [Header( "Wireframe" )]
@@ -217,6 +227,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     private static readonly ProfilerMarker voxelizeMarker      = new( "Voxelizer.Voxelize" );
     private static readonly ProfilerMarker simplifyMarker      = new( "Voxelizer.Simplify" );
+    private static readonly ProfilerMarker keepMarker          = new( "Voxelizer.KeepForRemeshing" );
+    private static readonly ProfilerMarker remeshMarker        = new( "Voxelizer.Remesh" );
     private static readonly ProfilerMarker splitVerticesMarker = new( "Voxelizer.SplitVertices" );
     private static readonly ProfilerMarker creaseMarker        = new( "Voxelizer.Crease" );
     private static readonly ProfilerMarker finishMeshMarker    = new( "Voxelizer.FinishMesh" );
@@ -224,18 +236,20 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
     // how a contour went: how long it took in all, and the size of its mesh. A mesh drawn straight from the GPU is
     // never read back, so its size is not known. A mesh that was simplified also has the size it came with, and how
-    // long simplifying it took of the whole
+    // long simplifying it took of the whole. A mesh that was remeshed has what the remesh did
     public readonly struct ContourStatistics {
 
-        public readonly double  milliseconds;
-        public readonly int?    vertexCount;
-        public readonly int?    triangleCount;
-        public readonly int?    unsimplifiedVertexCount;
-        public readonly int?    unsimplifiedTriangleCount;
-        public readonly double? simplificationMilliseconds;
+        public readonly double                milliseconds;
+        public readonly int?                  vertexCount;
+        public readonly int?                  triangleCount;
+        public readonly int?                  unsimplifiedVertexCount;
+        public readonly int?                  unsimplifiedTriangleCount;
+        public readonly double?               simplificationMilliseconds;
+        public readonly Remeshing.Statistics? remeshing;
 
         public ContourStatistics(
-            double milliseconds, int? vertexCount, int? triangleCount, int? unsimplifiedVertexCount = null, int? unsimplifiedTriangleCount = null, double? simplificationMilliseconds = null
+            double milliseconds, int? vertexCount, int? triangleCount, int? unsimplifiedVertexCount = null, int? unsimplifiedTriangleCount = null, double? simplificationMilliseconds = null,
+            Remeshing.Statistics? remeshing = null
         ) {
             this.milliseconds               = milliseconds;
             this.vertexCount                = vertexCount;
@@ -243,6 +257,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             this.unsimplifiedVertexCount    = unsimplifiedVertexCount;
             this.unsimplifiedTriangleCount  = unsimplifiedTriangleCount;
             this.simplificationMilliseconds = simplificationMilliseconds;
+            this.remeshing                  = remeshing;
         }
 
     }
@@ -261,6 +276,19 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     private MeshSimplification simplification;
     private float              simplificationCellSize;
 
+    // the mesh the remeshing pass was given last, kept whether remeshing is on or not, so that remesh can show it again
+    // under other remeshing settings. Only a mesh of shared vertices is kept: there is none when the GPU split or creased
+    // its own. And for each triangle of the mesh shown, in the order of its index buffer, which of its edges are edges of
+    // its faces, which the wireframe draws, or none when every edge is
+    private Remeshing remeshingInput;
+    private byte[]    edgeFlags;
+
+    // for each triangle of the mesh shown, in the order of its index buffer, which of its edges are edges of its faces
+    // (BurstRemeshing.allEdges), or nothing when every edge is, as when the mesh was not remeshed
+    public IReadOnlyList<byte> shownEdgeFlags {
+        get { return this.edgeFlags; }
+    }
+
     public virtual void Start( ) {
         this.contour( );
     }
@@ -274,7 +302,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     // called again and again.
     // - drawFromGPU: with the GPU implementation and the debug view off, draw the mesh straight from the compute
     //   buffers instead of reading it back. That drawing happens in Update, which only runs in play mode. A mesh that
-    //   is simplified is read back whatever this says, since it is simplified on the CPU.
+    //   is simplified or remeshed is read back whatever this says, since that is done on the CPU.
     // - reorderVertices: reorder the vertex buffer, which makes the mesh a little faster to draw and takes 5 to 10% of
     //   a Burst contour of 128^3 cells
     public ContourStatistics contour( IEnumerable<DensityFunction> densityFunctions, bool drawFromGPU = true, bool reorderVertices = true ) {
@@ -289,8 +317,10 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         this.stopDrawingFromGPU( );
 
         this.simplification = null;
+        this.remeshingInput = null;
+        this.edgeFlags      = null;
 
-        if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU && !this.meshSimplification ) {
+        if( drawFromGPU && this.debugFlags == Debug.Off && this.implementationType == ImplementationType.GPU && !this.meshSimplification && this.remeshing == Remeshing.Technique.Off ) {
             // when debug mode is off, draw the GPU generated mesh without moving it to CPU memory
             this.directToGPU = voxelization.tryVisit(
                 ( GPUVoxelization voxelization ) => {
@@ -366,7 +396,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
             simplifying.Stop( );
         }
 
-        mesh = this.finish( mesh, !doneByGPU, reorderVertices );
+        mesh = this.remeshAndFinish( mesh, !doneByGPU, this.cellSize, reorderVertices, out var remeshing );
 
         captureDebugMarker.Begin( );
 
@@ -374,7 +404,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         captureDebugMarker.End( );
 
-        return this.statisticsOf( stopwatch.Elapsed.TotalMilliseconds, this.simplification != null ? simplifying.Elapsed.TotalMilliseconds : null, mesh );
+        return this.statisticsOf( stopwatch.Elapsed.TotalMilliseconds, this.simplification != null ? simplifying.Elapsed.TotalMilliseconds : null, mesh, remeshing );
     }
 
     // shows the last contour again under the simplification settings as they are now, without contouring: the mesh at
@@ -402,12 +432,80 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
 
         simplifyMarker.End( );
 
-        mesh = this.finish( mesh, true, reorderVertices );
+        // what it shows is remeshed as a contour is
+        mesh = this.remeshAndFinish( mesh, true, this.simplificationCellSize, reorderVertices, out var remeshing );
 
-        // all of it is simplifying
+        // all of it is simplifying, and remeshing what that gave
         var milliseconds = stopwatch.Elapsed.TotalMilliseconds;
 
-        return this.statisticsOf( milliseconds, milliseconds, mesh );
+        return this.statisticsOf( milliseconds, milliseconds, mesh, remeshing );
+    }
+
+    // shows the mesh the remeshing pass was given last again under the remeshing settings as they are now, without
+    // contouring or simplifying: remeshed, or as it came with remeshing off. Gives nothing, and changes nothing, when
+    // no mesh is kept: before the first contour, after clear, after a contour of nothing, after a contour the GPU split,
+    // creased or drew straight from its buffers, or after the scripts were loaded again
+    public ContourStatistics? remesh( bool reorderVertices = true ) {
+        if( this.remeshingInput == null ) {
+            return null;
+        }
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew( );
+
+        Mesh                  mesh;
+        Remeshing.Statistics? remeshing = null;
+
+        this.edgeFlags = null;
+
+        if( this.remeshing == Remeshing.Technique.Off ) {
+            mesh = this.remeshingInput.mesh( );
+        }
+        else {
+            remeshMarker.Begin( );
+
+            mesh = this.remeshingInput.remesh( this.remeshing, this.remeshingEdgeLength, out this.edgeFlags, out var statistics );
+
+            remeshMarker.End( );
+
+            remeshing = statistics;
+        }
+
+        mesh = this.finish( mesh, true, reorderVertices );
+
+        return this.statisticsOf( stopwatch.Elapsed.TotalMilliseconds, null, mesh, remeshing );
+    }
+
+    // keeps a mesh of shared vertices for remesh, remeshes it as the settings say, and finishes what comes out. A mesh
+    // the GPU split or creased itself is shown as it is, and is not kept: it has no shared vertices to remesh. cellSize
+    // is that of the contour the mesh is of
+    private Mesh remeshAndFinish( Mesh mesh, bool shared, float cellSize, bool reorderVertices, out Remeshing.Statistics? remeshing ) {
+        remeshing = null;
+
+        this.remeshingInput = null;
+        this.edgeFlags      = null;
+
+        if( shared && mesh.vertexCount > 0 ) {
+            keepMarker.Begin( );
+
+            this.remeshingInput = Remeshing.of( mesh, cellSize );
+
+            keepMarker.End( );
+
+            if( this.remeshing != Remeshing.Technique.Off ) {
+                remeshMarker.Begin( );
+
+                var remeshed = this.remeshingInput.remesh( this.remeshing, this.remeshingEdgeLength, out this.edgeFlags, out var statistics );
+
+                remeshMarker.End( );
+
+                destroy( mesh );
+
+                mesh      = remeshed;
+                remeshing = statistics;
+            }
+        }
+
+        return this.finish( mesh, shared, reorderVertices );
     }
 
     // makes a mesh the contour that is shown, and gives it back: a mesh of shared vertices creased or split as the
@@ -451,17 +549,17 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         return mesh;
     }
 
-    private ContourStatistics statisticsOf( double milliseconds, double? simplificationMilliseconds, Mesh mesh ) {
+    private ContourStatistics statisticsOf( double milliseconds, double? simplificationMilliseconds, Mesh mesh, Remeshing.Statistics? remeshing ) {
         var triangleCount = 0;
         for( var subMeshIndex = 0; subMeshIndex < mesh.subMeshCount; ++subMeshIndex ) {
             triangleCount += ( int )mesh.GetIndexCount( subMeshIndex ) / 3;
         }
 
-        return new( milliseconds, mesh.vertexCount, triangleCount, this.simplification?.positions.Length, this.simplification?.triangles.Length, simplificationMilliseconds );
+        return new( milliseconds, mesh.vertexCount, triangleCount, this.simplification?.positions.Length, this.simplification?.triangles.Length, simplificationMilliseconds, remeshing );
     }
 
     // takes away what contour shows: the mesh in the mesh filter, whichever voxelizer made it, the mesh this voxelizer
-    // made last, what is kept of it for simplify, the drawing straight from the GPU and the debug data
+    // made last, what is kept of it for simplify and remesh, the drawing straight from the GPU and the debug data
     public void clear( ) {
         this.stopDrawingFromGPU( );
         this.show( null );
@@ -471,6 +569,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         }
         this.contourMesh    = null;
         this.simplification = null;
+        this.remeshingInput = null;
+        this.edgeFlags      = null;
 
         this.captureDebugInformation( Enumerable.Empty<SurfaceExtractor.Corner>( ), Enumerable.Empty<SurfaceExtractor.Edge>( ), Enumerable.Empty<SurfaceExtractor.Voxel>( ) );
     }
@@ -680,7 +780,7 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         // the list is filled in place, where Renderer.sharedMaterials would make a new array each time
         meshRenderer.GetSharedMaterials( this.wireframeMaterials );
 
-        this.wireframeDrawing.draw( camera, this.contourMesh, this.transform.localToWorldMatrix, this.gameObject.layer, style, this.wireframeMaterials );
+        this.wireframeDrawing.draw( camera, this.contourMesh, this.transform.localToWorldMatrix, this.gameObject.layer, style, this.wireframeMaterials, this.edgeFlags );
     }
 
     public override void DrawShapes( Camera camera ) {
@@ -814,12 +914,13 @@ public class VoxelizerEditor : Editor {
 
     // what the names of the voxelizer's settings under a header start with, which their labels leave out, as the header
     // already says it
-    private static readonly string[] sectionPrefixes = { "simplification", "wireframe", debugPrefix };
+    private static readonly string[] sectionPrefixes = { "simplification", "remeshing", "wireframe", debugPrefix };
 
     // the labels of the settings named after their section, which would have nothing left
     private static readonly Dictionary<string, string> sectionLabels = new( ) {
-        { "meshSimplification", "Enabled" },
-        { "wireframe",          "Look"    }
+        { "meshSimplification", "Enabled"   },
+        { "remeshing",          "Technique" },
+        { "wireframe",          "Look"      }
     };
 
     // the names of the settings Voxelizer declares, which tell them apart from those of the subclass. Only the fields that
