@@ -17,6 +17,7 @@ using QEFSolverType      = QEFSolver.Type;
 using Connectivity       = BurstMeshSimplifier.Connectivity;
 using Refusal            = BurstMeshSimplifier.Refusal;
 using Sharp              = BurstMeshSimplifier.Sharp;
+using FlipRefusal        = BurstMeshSimplifier.FlipRefusal;
 
 // the connectivity of BurstMeshSimplifier, which collapses are allowed, and what a collapse does, on meshes built by
 // hand and on contours. The meshes built by hand are made of boxes on a grid of whole numbers, of flat patches, and of
@@ -126,10 +127,19 @@ public class BurstMeshSimplifierTest : TopologyTest {
     }
 
     // something done to an edge, given by its two vertices: asking whether it may be collapsed with the new vertex at
-    // the position, or collapsing it there whatever the answer
+    // the position, or collapsing it there whatever the answer; splitting it at the position; asking whether it may be
+    // flipped, the two triangles it makes meeting at an angle whose cosine is the position's x, or flipping it if it may
     private struct Operation {
 
-        public bool    collapse;
+        public enum Act {
+            Check,
+            Collapse,
+            Split,
+            CheckFlip,
+            Flip
+        }
+
+        public Act     act;
         public int     a;
         public int     b;
         public double3 position;
@@ -152,9 +162,10 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
         public Connectivity mesh;
 
-        // for every operation: what check said, and the vertex a collapse kept
-        public NativeArray<Refusal> refusals;
-        public NativeArray<int>     kept;
+        // for every operation: what check or checkFlip said, the vertex a collapse kept and the vertex a split made
+        public NativeArray<Refusal>     refusals;
+        public NativeArray<FlipRefusal> flipRefusals;
+        public NativeArray<int>         kept;
 
         // how many edges the passes collapsed, and how often each refusal kept one from collapsing
         public NativeArray<int> collapsed;
@@ -176,8 +187,39 @@ public class BurstMeshSimplifierTest : TopologyTest {
                 var operation = this.operations[index];
                 var edge      = this.mesh.edgeBetween( operation.a, operation.b );
 
-                this.refusals[index] = this.mesh.check( edge, operation.position );
-                this.kept[index]     = operation.collapse ? this.mesh.collapse( edge, operation.position ) : -1;
+                this.kept[index] = -1;
+
+                // an edge that earlier operations took away
+                if( edge == -1 ) {
+                    this.kept[index] = -2;
+
+                    continue;
+                }
+
+                switch( operation.act ) {
+                    case Operation.Act.Check:
+                    case Operation.Act.Collapse: {
+                        this.refusals[index] = this.mesh.check( edge, operation.position );
+
+                        if( operation.act == Operation.Act.Collapse ) {
+                            this.kept[index] = this.mesh.collapse( edge, operation.position );
+                        }
+                        break;
+                    }
+                    case Operation.Act.Split: {
+                        this.kept[index] = this.mesh.split( edge, operation.position );
+                        break;
+                    }
+                    case Operation.Act.CheckFlip:
+                    case Operation.Act.Flip: {
+                        this.flipRefusals[index] = this.mesh.checkFlip( edge, operation.position.x );
+
+                        if( operation.act == Operation.Act.Flip && this.flipRefusals[index] == FlipRefusal.None ) {
+                            this.mesh.flip( edge );
+                        }
+                        break;
+                    }
+                }
             }
 
             for( var pass = 0; pass < this.passes; ++pass ) {
@@ -212,10 +254,11 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
         public Connectivity mesh;
 
-        public Refusal[] refusals;
-        public int[]     kept;
-        public int       collapsed;
-        public int[]     refused;
+        public Refusal[]     refusals;
+        public FlipRefusal[] flipRefusals;
+        public int[]         kept;
+        public int           collapsed;
+        public int[]         refused;
 
         public Vector3[]            writtenPositions;
         public Vector3[]            writtenNormals;
@@ -231,6 +274,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
             using var nativeTriangles  = new NativeArray<BurstMesh.Triangle>( triangles, Allocator.TempJob );
             using var nativeOperations = new NativeArray<Operation>( operations, Allocator.TempJob );
             using var refusals         = new NativeArray<Refusal>( operations.Length, Allocator.TempJob );
+            using var flipRefusals     = new NativeArray<FlipRefusal>( operations.Length, Allocator.TempJob );
             using var kept             = new NativeArray<int>( operations.Length, Allocator.TempJob );
             using var collapsed        = new NativeArray<int>( 1, Allocator.TempJob );
             using var refused          = new NativeArray<int>( Enum.GetValues( typeof( Refusal ) ).Length, Allocator.TempJob );
@@ -248,6 +292,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
                 lineWeight       = lineWeight,
                 mesh             = this.mesh,
                 refusals         = refusals,
+                flipRefusals     = flipRefusals,
                 kept             = kept,
                 collapsed        = collapsed,
                 refused          = refused,
@@ -260,6 +305,7 @@ public class BurstMeshSimplifierTest : TopologyTest {
             BurstTestSupport.assertRanUnderBurst( managed );
 
             this.refusals         = refusals.ToArray( );
+            this.flipRefusals     = flipRefusals.ToArray( );
             this.kept             = kept.ToArray( );
             this.collapsed        = collapsed[0];
             this.refused          = refused.ToArray( );
@@ -301,11 +347,24 @@ public class BurstMeshSimplifierTest : TopologyTest {
     }
 
     private static Operation check( int a, int b, Vector3 position ) {
-        return new Operation { collapse = false, a = a, b = b, position = new double3( position.x, position.y, position.z ) };
+        return new Operation { act = Operation.Act.Check, a = a, b = b, position = new double3( position.x, position.y, position.z ) };
     }
 
     private static Operation collapse( int a, int b, Vector3 position ) {
-        return new Operation { collapse = true, a = a, b = b, position = new double3( position.x, position.y, position.z ) };
+        return new Operation { act = Operation.Act.Collapse, a = a, b = b, position = new double3( position.x, position.y, position.z ) };
+    }
+
+    private static Operation split( int a, int b, Vector3 position ) {
+        return new Operation { act = Operation.Act.Split, a = a, b = b, position = new double3( position.x, position.y, position.z ) };
+    }
+
+    // the two triangles the flip makes may meet at up to the angle in degrees
+    private static Operation checkFlip( int a, int b, double angle = 180.0 ) {
+        return new Operation { act = Operation.Act.CheckFlip, a = a, b = b, position = new double3( math.cos( math.radians( angle ) ), 0.0, 0.0 ) };
+    }
+
+    private static Operation flip( int a, int b, double angle = 180.0 ) {
+        return new Operation { act = Operation.Act.Flip, a = a, b = b, position = new double3( math.cos( math.radians( angle ) ), 0.0, 0.0 ) };
     }
 
     // what check says about the edge between two vertices, with the new vertex halfway between them
@@ -1248,6 +1307,264 @@ public class BurstMeshSimplifierTest : TopologyTest {
         Assert.LessOrEqual( ( expected - run.writtenNormals[Math.Min( a, b )] ).magnitude, 1e-6f, "normal of the kept vertex" );
     }
 
+    // ---- a split and a flip ----
+
+    // the area of a sub-mesh, and the sum of its triangles' normals times their areas, which says which way it faces
+    private static ( double area, double3 facing ) areaOf( Vector3[] positions, IEnumerable<BurstMesh.Triangle> triangles, int subMesh ) {
+        var area   = 0.0;
+        var facing = double3.zero;
+
+        foreach( var triangle in triangles.Where( ( triangle ) => triangle.subMeshIndex == subMesh ) ) {
+            var a     = ( double3 )( float3 )positions[triangle.a];
+            var cross = math.cross( ( double3 )( float3 )positions[triangle.b] - a, ( double3 )( float3 )positions[triangle.c] - a );
+
+            area   += 0.5 * math.length( cross );
+            facing += 0.5 * cross;
+        }
+
+        return ( area, facing );
+    }
+
+    // how far a point is from the nearest triangle of a mesh
+    private static double distanceTo( Vector3[] positions, IEnumerable<BurstMesh.Triangle> triangles, double3 point ) {
+        return triangles.Min( ( triangle ) => math.distance( point, SurfaceGrid.nearestOnTriangle( point, ( float3 )positions[triangle.a], ( float3 )positions[triangle.b], ( float3 )positions[triangle.c] ) ) );
+    }
+
+    // the edge to split of each case, and the mesh it is in: an open edge, an edge between two materials, an edge
+    // inside a face, an edge of four triangles where two boxes meet, and an edge of two triangles on the same three
+    // vertices
+    private static ( Builder builder, int a, int b ) splitCase( string kind ) {
+        switch( kind ) {
+            case "open": {
+                var builder = new Builder( ).patch( 3, 3 );
+
+                return ( builder, builder.at( 1, 0, 0 ), builder.at( 2, 0, 0 ) );
+            }
+            case "between materials": {
+                var builder = new Builder( ).box( cells( 0, 0, 0 ), cells( 2, 2, 2 ), ( centre, axis, side ) => centre.x < 1 ? 1 : 0 );
+
+                return ( builder, builder.at( 1, 0, 2 ), builder.at( 1, 1, 2 ) );
+            }
+            case "inside": {
+                var builder = new Builder( ).box( cells( 0, 0, 0 ), cells( 2, 2, 2 ) );
+
+                return ( builder, builder.at( 0, 0, 2 ), builder.at( 1, 1, 2 ) );
+            }
+            case "of four triangles": {
+                var builder = boxesSharingAnEdge( 2 );
+
+                return ( builder, builder.at( 1, 1, 0 ), builder.at( 1, 1, 1 ) );
+            }
+            default: {
+                var builder = new Builder( ).box( cells( 0, 0, 0 ), cells( 2, 2, 2 ) );
+                var first   = new Vector3( 3, 2, 3 );
+                var second  = new Vector3( 2, 3, 3 );
+
+                builder.triangle( new Vector3( 2, 2, 2 ), first, second );
+                builder.triangle( second, first, new Vector3( 2, 2, 2 ) );
+
+                return ( builder, builder.vertex( first ), builder.vertex( second ) );
+            }
+        }
+    }
+
+    [Test]
+    public void aSplitGivesTheListsOfTheSplitMeshBuiltFromNothing( [Values( "open", "between materials", "inside", "of four triangles", "on the same three vertices" )] string kind ) {
+        var ( builder, a, b ) = splitCase( kind );
+
+        var middle = ( builder.positions[a] + builder.positions[b] ) / 2;
+
+        using var before = new Run( builder );
+        using var run    = new Run( builder, new[] { split( a, b, middle ) } );
+
+        var edgeBefore = before.edges( )[( Math.Min( a, b ), Math.Max( a, b ) )];
+        var vertex     = before.mesh.vertexCount;
+
+        Assert.AreEqual( vertex, run.kept[0], $"{kind}: the new vertex is the next" );
+        Assert.AreEqual( middle, ( Vector3 )( float3 )run.mesh.positions[vertex], $"{kind}: at the position" );
+
+        // one vertex more, a triangle more for each triangle of the edge, and an edge more for each third vertex and for
+        // the second half
+        Assert.AreEqual( before.verticesWithTriangles( ).Length + 1, run.verticesWithTriangles( ).Length, $"{kind}: vertices" );
+        Assert.AreEqual( before.triangleCount + edgeBefore.triangles, run.triangleCount,                   $"{kind}: triangles" );
+
+        var opposite = before.writtenTriangles.Where( ( triangle ) => new[] { triangle.a, triangle.b, triangle.c }.Contains( a ) && new[] { triangle.a, triangle.b, triangle.c }.Contains( b ) )
+                             .Select( ( triangle ) => triangle.a + triangle.b + triangle.c - a - b ).Distinct( ).Count( );
+
+        Assert.AreEqual( before.edges( ).Count + 1 + opposite, run.edges( ).Count, $"{kind}: edges" );
+
+        // the halves are what the edge was
+        Assert.AreEqual( edgeBefore, run.edges( )[( Math.Min( a, vertex ), Math.Max( a, vertex ) )], $"{kind}: the first half's triangles and sharpness" );
+        Assert.AreEqual( edgeBefore, run.edges( )[( Math.Min( b, vertex ), Math.Max( b, vertex ) )], $"{kind}: the second half's triangles and sharpness" );
+
+        assertMatchesRebuilt( run, $"{kind}: after the split" );
+
+        // the surface is the same, point for point, and every sub-mesh faces as it did
+        foreach( var subMesh in builder.triangles.Select( ( triangle ) => triangle.subMeshIndex ).Distinct( ) ) {
+            var was = areaOf( before.writtenPositions, before.writtenTriangles, subMesh );
+            var now = areaOf( run.writtenPositions, run.writtenTriangles, subMesh );
+
+            Assert.AreEqual( was.area, now.area, 1e-9, $"{kind}: area of sub-mesh {subMesh}" );
+            Assert.LessOrEqual( math.distance( was.facing, now.facing ), 1e-9, $"{kind}: facing of sub-mesh {subMesh}" );
+        }
+
+        foreach( var triangle in run.writtenTriangles ) {
+            var centre = ( ( double3 )( float3 )run.writtenPositions[triangle.a] + ( float3 )run.writtenPositions[triangle.b] + ( float3 )run.writtenPositions[triangle.c] ) / 3.0;
+
+            Assert.LessOrEqual( distanceTo( before.writtenPositions, before.writtenTriangles, centre ), 1e-6, $"{kind}: the middle of a new triangle is on the mesh as it was" );
+        }
+        foreach( var triangle in before.writtenTriangles ) {
+            var centre = ( ( double3 )( float3 )before.writtenPositions[triangle.a] + ( float3 )before.writtenPositions[triangle.b] + ( float3 )before.writtenPositions[triangle.c] ) / 3.0;
+
+            Assert.LessOrEqual( distanceTo( run.writtenPositions, run.writtenTriangles, centre ), 1e-6, $"{kind}: the middle of an old triangle is on the split mesh" );
+        }
+    }
+
+    [Test]
+    public void aFlipOfAFlatPairGivesTheOtherDiagonal( ) {
+        // the square at the origin of a patch is a b c and a c d, its diagonal from a to c
+        var builder = new Builder( ).patch( 2, 2 );
+        var a       = builder.at( 0, 0, 0 );
+        var b       = builder.at( 1, 0, 0 );
+        var c       = builder.at( 1, 1, 0 );
+        var d       = builder.at( 0, 1, 0 );
+
+        using var before = new Run( builder );
+        using var run    = new Run( builder, new[] { flip( a, c ) } );
+
+        Assert.AreEqual( FlipRefusal.None, run.flipRefusals[0], "the flip is allowed" );
+
+        Assert.IsFalse( run.edges( ).ContainsKey( ( Math.Min( a, c ), Math.Max( a, c ) ) ), "the old diagonal is gone" );
+        Assert.AreEqual( ( 2, Sharp.None ), run.edges( )[( Math.Min( b, d ), Math.Max( b, d ) )], "the new diagonal has the two triangles" );
+        Assert.AreEqual( before.edges( ).Count, run.edges( ).Count, "edges" );
+
+        // the square is the two triangles on the other diagonal, facing up as before
+        var square = run.writtenTriangles.Where( ( triangle ) => new[] { triangle.a, triangle.b, triangle.c }.All( ( vertex ) => new[] { a, b, c, d }.Contains( vertex ) ) ).ToArray( );
+
+        Assert.AreEqual( 2, square.Length, "triangles of the square" );
+
+        foreach( var triangle in square ) {
+            var corners = new[] { triangle.a, triangle.b, triangle.c };
+            var normal  = Vector3.Cross( run.writtenPositions[triangle.b] - run.writtenPositions[triangle.a], run.writtenPositions[triangle.c] - run.writtenPositions[triangle.a] );
+
+            Assert.IsTrue( corners.Contains( b ) && corners.Contains( d ), "on the new diagonal" );
+            Assert.AreEqual( 0.5f, normal.z / 2, 1e-6f, "facing up, with half the square's area" );
+        }
+
+        assertMatchesRebuilt( run, "after the flip" );
+    }
+
+    // two triangles across the edge from a to b, a b c and b a d
+    private static Builder pairOf( Vector3 a, Vector3 b, Vector3 c, Vector3 d ) {
+        var builder = new Builder( );
+
+        builder.triangle( a, b, c );
+        builder.triangle( b, a, d );
+
+        return builder;
+    }
+
+    private static FlipRefusal flipRefusalOf( Builder builder, Vector3 a, Vector3 b, double angle = 180.0 ) {
+        using var run = new Run( builder, new[] { checkFlip( builder.vertex( a ), builder.vertex( b ), angle ) } );
+
+        return run.flipRefusals[0];
+    }
+
+    [Test]
+    public void eachReasonAFlipIsRefusedHasAMeshThatGivesItAndOneThatFlips( ) {
+        // an open edge of a patch, and its diagonal
+        var patch = new Builder( ).patch( 2, 2 );
+
+        Assert.AreEqual( FlipRefusal.Triangles, flipRefusalOf( patch, new Vector3( 0, 0, 0 ), new Vector3( 1, 0, 0 ) ), "an open edge" );
+        Assert.AreEqual( FlipRefusal.None,      flipRefusalOf( patch, new Vector3( 0, 0, 0 ), new Vector3( 1, 1, 0 ) ), "the diagonal next to it" );
+
+        // an edge between the two materials of a patch whose columns alternate, and the diagonal of a square next to it
+        var materials = new Builder( ).patch( 2, 2, ( i, j ) => i );
+
+        Assert.AreEqual( FlipRefusal.Sharp, flipRefusalOf( materials, new Vector3( 1, 0, 0 ), new Vector3( 1, 1, 0 ) ), "an edge between materials" );
+        Assert.AreEqual( FlipRefusal.None,  flipRefusalOf( materials, new Vector3( 1, 0, 0 ), new Vector3( 2, 1, 0 ) ), "a diagonal within one material" );
+
+        // two triangles that face apart, and the same two facing alike
+        var apart = new Builder( );
+
+        apart.triangle( new Vector3( 0, 0, 0 ), new Vector3( 1, 0, 0 ), new Vector3( 1, 1, 0 ) );
+        apart.triangle( new Vector3( 0, 0, 0 ), new Vector3( 0, 1, 0 ), new Vector3( 1, 1, 0 ) );
+
+        Assert.AreEqual( FlipRefusal.Winding, flipRefusalOf( apart, new Vector3( 0, 0, 0 ), new Vector3( 1, 1, 0 ) ), "triangles that face apart" );
+        Assert.AreEqual( FlipRefusal.None,    flipRefusalOf( pairOf( new Vector3( 0, 0, 0 ), new Vector3( 1, 1, 0 ), new Vector3( 0, 1, 0 ), new Vector3( 1, 0, 0 ) ), new Vector3( 0, 0, 0 ), new Vector3( 1, 1, 0 ) ), "the same two facing alike" );
+
+        // every two vertices of a tetrahedron have an edge, and the corners of an octahedron opposite each other do not
+        var tetrahedron = new Builder( );
+        var o           = new Vector3( 0, 0, 0 );
+
+        tetrahedron.triangle( o, py, px );
+        tetrahedron.triangle( o, pz, py );
+        tetrahedron.triangle( o, px, pz );
+        tetrahedron.triangle( px, py, pz );
+
+        Assert.AreEqual( FlipRefusal.Exists, flipRefusalOf( tetrahedron, px, py ), "an edge of a tetrahedron" );
+        Assert.AreEqual( FlipRefusal.None,   flipRefusalOf( octahedron( ), px, py ), "an edge of an octahedron" );
+
+        // a quad that is not convex at a, where the other diagonal runs outside it, and one that is convex
+        var a = new Vector3( 0, 0, 0 );
+        var b = new Vector3( 2, 0, 0 );
+        var c = new Vector3( 1, 1, 0 );
+
+        Assert.AreEqual( FlipRefusal.Inversion, flipRefusalOf( pairOf( a, b, c, new Vector3( -1, -0.2f, 0 ) ), a, b ), "a quad that is not convex" );
+        Assert.AreEqual( FlipRefusal.None,      flipRefusalOf( pairOf( a, b, c, new Vector3( 1, -1, 0 ) ), a, b ),     "a convex quad" );
+
+        // a pair folded along its diagonal by 28 degrees, whose other diagonal is a fold of 53, and the same pair folded
+        // less, whose other diagonal is a fold of 28: at 40 degrees the first is refused and the second flips
+        Builder folded( float height ) {
+            return pairOf( new Vector3( 0, 0, height ), new Vector3( 2, 0, height ), new Vector3( 1, -2, 0 ), new Vector3( 1, 2, 0 ) );
+        }
+
+        Assert.AreEqual( FlipRefusal.Bend, flipRefusalOf( folded( 0.5f ), new Vector3( 0, 0, 0.5f ), new Vector3( 2, 0, 0.5f ), 40.0 ), "a flip that would fold by 53 degrees" );
+        Assert.AreEqual( FlipRefusal.None, flipRefusalOf( folded( 0.5f ), new Vector3( 0, 0, 0.5f ), new Vector3( 2, 0, 0.5f ), 60.0 ), "the same at 60 degrees" );
+        Assert.AreEqual( FlipRefusal.None, flipRefusalOf( folded( 0.25f ), new Vector3( 0, 0, 0.25f ), new Vector3( 2, 0, 0.25f ), 40.0 ), "a flip that would fold by 28 degrees" );
+    }
+
+    // every third edge split at its middle, every edge that may then flipped, and every edge that may then collapsed
+    // into its middle, going through the edges once: on a box of two materials, on two boxes that share an edge of
+    // four triangles, a line between materials running into it, and on two boxes that touch in a vertex of two fans
+    [Test]
+    public void aRunOfSplitsFlipsAndCollapsesKeepsTheListsAndTheShape( [Values( "a box of two materials", "two boxes that share an edge", "two boxes that touch" )] string kind ) {
+        var builder = kind switch {
+            "a box of two materials"       => new Builder( ).box( cells( 0, 0, 0 ), cells( 3, 3, 3 ), ( centre, axis, side ) => centre.x < 1 ? 1 : 0 ),
+            "two boxes that share an edge" => boxesSharingAnEdge( 3, ( centre, axis, side ) => centre.z < 1 ? 1 : 0 ),
+            _                              => new Builder( ).box( cells( 0, 0, 0 ), cells( 2, 2, 2 ) ).box( cells( 2, 2, 2 ), cells( 2, 2, 2 ) )
+        };
+
+        using var before = new Run( builder );
+
+        var edges      = before.edges( ).Keys.ToArray( );
+        var operations = new List<Operation>( );
+
+        for( var index = 0; index < edges.Length; index += 3 ) {
+            var ( a, b ) = edges[index];
+
+            operations.Add( split( a, b, ( builder.positions[a] + builder.positions[b] ) / 2 ) );
+        }
+        foreach( var ( a, b ) in edges ) {
+            operations.Add( flip( a, b ) );
+        }
+
+        using var run = new Run( builder, operations.ToArray( ), passes: 1 );
+
+        // a flip of an edge that the splits took away is not made
+        var splits = ( edges.Length + 2 ) / 3;
+        var flips  = Enumerable.Range( splits, operations.Count - splits ).Count( ( index ) => run.kept[index] != -2 && run.flipRefusals[index] == FlipRefusal.None );
+
+        Debug.Log( $"{kind}: {splits} splits, {flips} flips, {run.collapsed} collapses" );
+
+        Assert.Greater( flips,         0, $"{kind}: flips" );
+        Assert.Greater( run.collapsed, 0, $"{kind}: collapses" );
+
+        assertMatchesRebuilt( run, $"{kind}: after the splits, flips and collapses" );
+
+        Assert.AreEqual( shapeOf( before ).ToString( ), shapeOf( run ).ToString( ), $"{kind}: shape" );
+    }
+
     // ---- many collapses ----
 
     // what no allowed collapse changes about a mesh
@@ -1603,12 +1920,12 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
             new BurstMeshSimplifier.CostsJob {
                 limit       = error * error,
-                positions   = this.connectivity.positions,
-                planes      = this.connectivity.planes,
-                areas       = this.connectivity.areas,
-                sharpPlanes = this.connectivity.sharpPlanes,
-                sharpAreas  = this.connectivity.sharpAreas,
-                lines       = this.connectivity.lines,
+                positions   = this.connectivity.positions.AsArray( ),
+                planes      = this.connectivity.planes.AsArray( ),
+                areas       = this.connectivity.areas.AsArray( ),
+                sharpPlanes = this.connectivity.sharpPlanes.AsArray( ),
+                sharpAreas  = this.connectivity.sharpAreas.AsArray( ),
+                lines       = this.connectivity.lines.AsArray( ),
                 edges       = this.connectivity.edges.AsArray( ),
                 targets     = targets,
                 costs       = costs,
@@ -1876,12 +2193,12 @@ public class BurstMeshSimplifierTest : TopologyTest {
 
         new BurstMeshSimplifier.CostsJob {
             limit       = limit,
-            positions   = connectivity.positions,
-            planes      = connectivity.planes,
-            areas       = connectivity.areas,
-            sharpPlanes = connectivity.sharpPlanes,
-            sharpAreas  = connectivity.sharpAreas,
-            lines       = connectivity.lines,
+            positions   = connectivity.positions.AsArray( ),
+            planes      = connectivity.planes.AsArray( ),
+            areas       = connectivity.areas.AsArray( ),
+            sharpPlanes = connectivity.sharpPlanes.AsArray( ),
+            sharpAreas  = connectivity.sharpAreas.AsArray( ),
+            lines       = connectivity.lines.AsArray( ),
             edges       = connectivity.edges.AsArray( ),
             targets     = targets,
             costs       = costs,

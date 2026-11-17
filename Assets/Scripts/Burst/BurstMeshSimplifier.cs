@@ -56,33 +56,48 @@ public static class BurstMeshSimplifier {
         Inversion
     }
 
+    // why an edge is not flipped (Connectivity.checkFlip). The remesher, which flips edges, has a reason of its own
+    public enum FlipRefusal {
+        None,
+        Triangles, // the edge does not have exactly two triangles
+        Sharp,     // the edge is sharp: its two triangles are of different sub-meshes
+        Winding,   // its two triangles run along it the same way, so that they face apart
+        Exists,    // the edge across, between the two vertices opposite it, is there already, or they are one vertex
+        Inversion, // a triangle the flip makes would face away from the two it replaces, or have no area
+        Bend,      // the two triangles the flip makes would meet at more than the angle that is given
+        Feature    // the remesher's: the edge is a feature that the connectivity does not know of
+    }
+
     // a mesh as lists: for every vertex its triangles and its edges, for every edge its two vertices. That is how
     // Garland and Heckbert keep theirs (section 4.1), and it holds meshes that are not manifolds: an edge may have any
     // number of triangles and a vertex any number of fans of them.
     //
     // The lists are linked through arrays. A triangle has three corners, corner 3 t + k is vertex k of triangle t, and
     // the corners of a vertex follow each other through nextCorners. An edge has two ends, end 2 e + k is vertex k of
-    // edge e, and the ends at a vertex follow each other through nextEdges
+    // edge e, and the ends at a vertex follow each other through nextEdges.
+    //
+    // The arrays are native lists, so that a split may add vertices, triangles and edges to them from inside a job: a
+    // job works on a copy of this struct, and a list is the same list in every copy. Simplifying never adds any
     public struct Connectivity : IDisposable {
 
         // vertices. A vertex without triangles has no corners and no edges, and is passed over
-        public NativeArray<double3>      positions;
-        public NativeArray<double3>      normals;
-        public NativeArray<double>       areas;        // a third of the area of each triangle the vertex stands for
-        public NativeArray<BurstQuadric> planes;       // the planes of those triangles, each weighted by that third
-        public NativeArray<double>       sharpAreas;   // the same thirds, of the triangles of its sharp edges alone
-        public NativeArray<BurstQuadric> sharpPlanes;  // the planes that hold those sharp edges in place (QuadricsJob)
-        public NativeArray<BurstQuadric> lines;        // the lines of the vertices it stands for (QuadricsJob)
-        public NativeArray<int>          firstCorners;
-        public NativeArray<int>          firstEdges;
-        public NativeArray<byte>         orders;       // the order of Dey et al., section 3: 0, 1 or 2
-        public NativeArray<int>          sharpCounts;  // how many sharp edges the vertex has
-        public NativeArray<bool>         locked;
+        public NativeList<double3>      positions;
+        public NativeList<double3>      normals;
+        public NativeList<double>       areas;        // a third of the area of each triangle the vertex stands for
+        public NativeList<BurstQuadric> planes;       // the planes of those triangles, each weighted by that third
+        public NativeList<double>       sharpAreas;   // the same thirds, of the triangles of its sharp edges alone
+        public NativeList<BurstQuadric> sharpPlanes;  // the planes that hold those sharp edges in place (QuadricsJob)
+        public NativeList<BurstQuadric> lines;        // the lines of the vertices it stands for (QuadricsJob)
+        public NativeList<int>          firstCorners;
+        public NativeList<int>          firstEdges;
+        public NativeList<byte>         orders;       // the order of Dey et al., section 3: 0, 1 or 2
+        public NativeList<int>          sharpCounts;  // how many sharp edges the vertex has
+        public NativeList<bool>         locked;
 
         // triangles. A removed triangle has a sub-mesh of -1
-        public NativeArray<int3> triangles;
-        public NativeArray<int>  subMeshes;
-        public NativeArray<int>  nextCorners;
+        public NativeList<int3> triangles;
+        public NativeList<int>  subMeshes;
+        public NativeList<int>  nextCorners;
 
         // edges. A removed edge has vertices of -1
         public NativeList<int2>  edges;
@@ -96,43 +111,52 @@ public static class BurstMeshSimplifier {
         // notes on the vertices around the one being looked at. A note counts while its stamp is the current one. The
         // current stamp is kept where every copy of this struct finds it: a job works on a copy, and a stamp counted
         // up in the copy alone would start over in the next job, among the stamps the first one left
-        private NativeArray<int>  stamps;
-        private NativeArray<int>  notes;
-        private NativeArray<byte> marks;
-        private NativeList<int>   scratch;
-        private NativeList<int2>  pairs;
-        private NativeArray<int>  lastStamp;
+        private NativeList<int>  stamps;
+        private NativeList<int>  notes;
+        private NativeList<byte> marks;
+        private NativeList<int>  scratch;
+        private NativeList<int2> pairs;
+        private NativeArray<int> lastStamp;
 
         private const byte Opposite = 1;
         private const byte Common   = 2;
 
         public Connectivity( int vertexCount, int triangleCount, Allocator allocator ) {
-            this.positions     = new NativeArray<double3>      ( vertexCount, allocator );
-            this.normals       = new NativeArray<double3>      ( vertexCount, allocator );
-            this.areas         = new NativeArray<double>       ( vertexCount, allocator );
-            this.planes        = new NativeArray<BurstQuadric> ( vertexCount, allocator );
-            this.sharpAreas    = new NativeArray<double>       ( vertexCount, allocator );
-            this.sharpPlanes   = new NativeArray<BurstQuadric> ( vertexCount, allocator );
-            this.lines         = new NativeArray<BurstQuadric> ( vertexCount, allocator );
-            this.firstCorners  = new NativeArray<int>          ( vertexCount, allocator );
-            this.firstEdges    = new NativeArray<int>          ( vertexCount, allocator );
-            this.orders        = new NativeArray<byte>         ( vertexCount, allocator );
-            this.sharpCounts   = new NativeArray<int>          ( vertexCount, allocator );
-            this.locked        = new NativeArray<bool>         ( vertexCount, allocator );
-            this.triangles     = new NativeArray<int3>         ( triangleCount, allocator );
-            this.subMeshes     = new NativeArray<int>          ( triangleCount, allocator );
-            this.nextCorners   = new NativeArray<int>          ( triangleCount * 3, allocator );
-            this.edges         = new NativeList<int2>          ( triangleCount * 3 / 2, allocator );
-            this.nextEdges     = new NativeList<int>           ( triangleCount * 3, allocator );
-            this.edgeTriangles = new NativeList<int>           ( triangleCount * 3 / 2, allocator );
-            this.edgeSharp     = new NativeList<Sharp>         ( triangleCount * 3 / 2, allocator );
-            this.removedEdges  = new NativeList<int>           ( 16, allocator );
-            this.stamps        = new NativeArray<int>          ( vertexCount, allocator );
-            this.notes         = new NativeArray<int>          ( vertexCount, allocator );
-            this.marks         = new NativeArray<byte>         ( vertexCount, allocator );
-            this.scratch       = new NativeList<int>           ( 64, allocator );
-            this.pairs         = new NativeList<int2>          ( 64, allocator );
-            this.lastStamp     = new NativeArray<int>          ( 1, allocator );
+            this.positions     = listOf<double3>      ( vertexCount, allocator );
+            this.normals       = listOf<double3>      ( vertexCount, allocator );
+            this.areas         = listOf<double>       ( vertexCount, allocator );
+            this.planes        = listOf<BurstQuadric> ( vertexCount, allocator );
+            this.sharpAreas    = listOf<double>       ( vertexCount, allocator );
+            this.sharpPlanes   = listOf<BurstQuadric> ( vertexCount, allocator );
+            this.lines         = listOf<BurstQuadric> ( vertexCount, allocator );
+            this.firstCorners  = listOf<int>          ( vertexCount, allocator );
+            this.firstEdges    = listOf<int>          ( vertexCount, allocator );
+            this.orders        = listOf<byte>         ( vertexCount, allocator );
+            this.sharpCounts   = listOf<int>          ( vertexCount, allocator );
+            this.locked        = listOf<bool>         ( vertexCount, allocator );
+            this.triangles     = listOf<int3>         ( triangleCount, allocator );
+            this.subMeshes     = listOf<int>          ( triangleCount, allocator );
+            this.nextCorners   = listOf<int>          ( triangleCount * 3, allocator );
+            this.edges         = new NativeList<int2> ( triangleCount * 3 / 2, allocator );
+            this.nextEdges     = new NativeList<int>  ( triangleCount * 3, allocator );
+            this.edgeTriangles = new NativeList<int>  ( triangleCount * 3 / 2, allocator );
+            this.edgeSharp     = new NativeList<Sharp>( triangleCount * 3 / 2, allocator );
+            this.removedEdges  = new NativeList<int>  ( 16, allocator );
+            this.stamps        = listOf<int>          ( vertexCount, allocator );
+            this.notes         = listOf<int>          ( vertexCount, allocator );
+            this.marks         = listOf<byte>         ( vertexCount, allocator );
+            this.scratch       = new NativeList<int>  ( 64, allocator );
+            this.pairs         = new NativeList<int2> ( 64, allocator );
+            this.lastStamp     = new NativeArray<int> ( 1, allocator );
+        }
+
+        // a list of so many items, all of them zero
+        private static NativeList<T> listOf<T>( int length, Allocator allocator ) where T : unmanaged {
+            var list = new NativeList<T>( math.max( length, 1 ), allocator );
+
+            list.Resize( length, NativeArrayOptions.ClearMemory );
+
+            return list;
         }
 
         // a stamp that no note has yet
@@ -533,19 +557,19 @@ public static class BurstMeshSimplifier {
         public QuadricsJob quadricsJob( double lineWeight ) {
             return new QuadricsJob {
                 lineWeight   = lineWeight,
-                positions    = this.positions,
-                triangles    = this.triangles,
-                firstCorners = this.firstCorners,
-                nextCorners  = this.nextCorners,
-                firstEdges   = this.firstEdges,
+                positions    = this.positions.AsArray( ),
+                triangles    = this.triangles.AsArray( ),
+                firstCorners = this.firstCorners.AsArray( ),
+                nextCorners  = this.nextCorners.AsArray( ),
+                firstEdges   = this.firstEdges.AsArray( ),
                 nextEdges    = this.nextEdges.AsArray( ),
                 edges        = this.edges.AsArray( ),
                 edgeSharp    = this.edgeSharp.AsArray( ),
-                planes       = this.planes,
-                areas        = this.areas,
-                sharpPlanes  = this.sharpPlanes,
-                sharpAreas   = this.sharpAreas,
-                lines        = this.lines
+                planes       = this.planes.AsArray( ),
+                areas        = this.areas.AsArray( ),
+                sharpPlanes  = this.sharpPlanes.AsArray( ),
+                sharpAreas   = this.sharpAreas.AsArray( ),
+                lines        = this.lines.AsArray( )
             };
         }
 
@@ -652,7 +676,8 @@ public static class BurstMeshSimplifier {
                 return Refusal.SharpDart;
             }
 
-            // what neither paper tests: see Refusal.Points
+            // what neither paper tests: see Refusal.Points. The rule is isPoint's, written out: asking isPoint here made
+            // simplifying 5 to 9% slower at 128^3 (remeshing plan, step 2)
             var pointA = this.orders[a] == 2 || countA == 1 || countA >= 3;
             var pointB = this.orders[b] == 2 || countB == 1 || countB >= 3;
 
@@ -668,6 +693,11 @@ public static class BurstMeshSimplifier {
             }
 
             return Refusal.None;
+        }
+
+        // whether a vertex is a point of its own (Refusal.Points): of order 2, or where sharp lines end or meet
+        public readonly bool isPoint( int vertex ) {
+            return this.orders[vertex] == 2 || this.sharpCounts[vertex] == 1 || this.sharpCounts[vertex] >= 3;
         }
 
         // whether the triangle of a corner of a vertex stays when the edge to the other vertex is collapsed, with both
@@ -831,6 +861,262 @@ public static class BurstMeshSimplifier {
             }
 
             return kept;
+        }
+
+        // splits an edge at a position, as a remesh splits an edge that is too long (Botsch and Kobbelt, section 4). A
+        // new vertex goes between the two ends, at the position, and every triangle of the edge becomes two of its
+        // sub-mesh, one at each end, each wound as the triangle was. An edge of any number of triangles may be split.
+        // - The edge keeps its index and runs from its first end to the new vertex. The edge from the new vertex to the
+        //   second end is the first edge added, and the edges from the new vertex to the third vertex of each triangle
+        //   follow, in the order of the triangles at the first end, one for each third vertex.
+        // - The triangle at the first end keeps the triangle's index, and the one at the second end is added.
+        // - The new vertex has the mean of the two ends' normals, and stands for no area and no quadric, which only
+        //   simplifying has a use for. It is locked where the edge has two triangles on the same three vertices.
+        // Gives the new vertex
+        public int split( int edge, double3 position ) {
+            var a = this.edges[edge].x;
+            var b = this.edges[edge].y;
+
+            var normal = this.normals[a] + this.normals[b];
+            var length = math.length( normal );
+            var middle = this.addVertex( position, length > 0.0 ? normal / length : double3.zero );
+
+            // the edge runs to the new vertex, and a new one from there on
+            this.unlinkEdge( b, edge );
+
+            this.edges[edge]                = new int2( a, middle );
+            this.nextEdges[( edge * 2 ) + 1] = this.firstEdges[middle];
+            this.firstEdges[middle]          = ( edge * 2 ) + 1;
+
+            this.addEdge( middle, b );
+
+            // the triangles of the edge, found at its first end, whose corners split leaves where they are
+            this.scratch.Clear( );
+
+            for( var corner = this.firstCorners[a]; corner != -1; corner = this.nextCorners[corner] ) {
+                if( this.has( corner / 3, b ) ) {
+                    this.scratch.Add( corner / 3 );
+                }
+            }
+
+            var stamp = this.nextStamp( );
+
+            for( var index = 0; index < this.scratch.Length; ++index ) {
+                var triangle = this.scratch[index];
+                var corners  = this.triangles[triangle];
+                var atA      = corners.x == a ? 0 : corners.y == a ? 1 : 2;
+                var atB      = corners.x == b ? 0 : corners.y == b ? 1 : 2;
+                var c        = corners[3 - atA - atB];
+
+                // at the second end: the triangle with the new vertex in place of the first
+                var other = corners;
+
+                other[atA] = middle;
+
+                this.addTriangle( other, this.subMeshes[triangle] );
+
+                // at the first end: the triangle itself, with the new vertex in place of the second
+                this.unlinkCorner( b, ( triangle * 3 ) + atB );
+
+                corners[atB] = middle;
+
+                this.triangles[triangle]                 = corners;
+                this.nextCorners[( triangle * 3 ) + atB] = this.firstCorners[middle];
+                this.firstCorners[middle]                = ( triangle * 3 ) + atB;
+
+                // the edge across the triangle, once for each third vertex. Two triangles on the same third vertex
+                // are on the same three vertices, which the two halves are then too
+                if( this.stamps[c] != stamp ) {
+                    this.stamps[c] = stamp;
+
+                    this.addEdge( middle, c );
+                }
+                else {
+                    this.locked[middle] = true;
+                }
+            }
+
+            // what follows from the triangles, at the new vertex, which works it out for its edges too. The two ends keep
+            // as many triangles and sharp edges as they had, and as many fans of them. A third vertex gains an edge of
+            // two triangles, which only changes what it is where two triangles of the edge were on the same three
+            // vertices: the edge then has four
+            this.refresh( middle );
+
+            for( var end = this.firstEdges[middle]; end != -1; end = this.nextEdges[end] ) {
+                var neighbour = this.across( end >> 1, middle );
+
+                if( neighbour != a && neighbour != b ) {
+                    this.refresh( neighbour );
+                }
+            }
+
+            return middle;
+        }
+
+        // whether an edge may be flipped: replaced by the edge between the two vertices opposite it in its two
+        // triangles, as a remesh flips edges to even out how many edges its vertices have (Botsch and Kobbelt,
+        // section 4). The two triangles it makes may meet at no more than the angle whose cosine is given, which -1
+        // leaves free. The topology stays what it was: no vertex, edge or triangle comes or goes but the edge itself,
+        // and the new edge is not there yet
+        public readonly FlipRefusal checkFlip( int edge, double minimumCosine ) {
+            if( this.edgeTriangles[edge] != 2 ) {
+                return FlipRefusal.Triangles;
+            }
+            if( this.edgeSharp[edge] != Sharp.None ) {
+                return FlipRefusal.Sharp;
+            }
+            if( !this.quadOf( edge, out var a, out var b, out var c, out var d, out _, out _ ) ) {
+                return FlipRefusal.Winding;
+            }
+            if( c == d || this.edgeBetween( c, d ) != -1 ) {
+                return FlipRefusal.Exists;
+            }
+
+            var pa = this.positions[a];
+            var pb = this.positions[b];
+            var pc = this.positions[c];
+            var pd = this.positions[d];
+
+            // the triangles a b c and b a d, which face the way their sum does, become a d c and b c d
+            var facing = math.cross( pb - pa, pc - pa ) + math.cross( pa - pb, pd - pb );
+            var first  = math.cross( pd - pa, pc - pa );
+            var second = math.cross( pc - pb, pd - pb );
+
+            if( !( math.dot( first, facing ) > 0.0 ) || !( math.dot( second, facing ) > 0.0 ) ) {
+                return FlipRefusal.Inversion;
+            }
+            if( math.dot( first, second ) < minimumCosine * math.length( first ) * math.length( second ) ) {
+                return FlipRefusal.Bend;
+            }
+
+            return FlipRefusal.None;
+        }
+
+        // flips an edge that checkFlip allows. The edge keeps its index and runs between the two vertices that were
+        // opposite it, and the two triangles keep theirs. Nothing that follows from the triangles changes: the edge
+        // has two triangles before and after and is not sharp, the two are of one sub-mesh so that the edges they pass
+        // between them stay as they were, and every vertex of the two keeps as many fans
+        public void flip( int edge ) {
+            this.quadOf( edge, out var a, out var b, out var c, out var d, out var first, out var second );
+
+            // a b c becomes a d c: the corner at b goes to d
+            var corners = this.triangles[first];
+            var atB     = corners.x == b ? 0 : corners.y == b ? 1 : 2;
+
+            this.unlinkCorner( b, ( first * 3 ) + atB );
+
+            corners[atB] = d;
+
+            this.triangles[first]                 = corners;
+            this.nextCorners[( first * 3 ) + atB] = this.firstCorners[d];
+            this.firstCorners[d]                  = ( first * 3 ) + atB;
+
+            // and b a d becomes b c d: the corner at a goes to c
+            corners = this.triangles[second];
+
+            var atA = corners.x == a ? 0 : corners.y == a ? 1 : 2;
+
+            this.unlinkCorner( a, ( second * 3 ) + atA );
+
+            corners[atA] = c;
+
+            this.triangles[second]                 = corners;
+            this.nextCorners[( second * 3 ) + atA] = this.firstCorners[c];
+            this.firstCorners[c]                   = ( second * 3 ) + atA;
+
+            // the edge leaves its ends for the two others
+            this.unlinkEdge( a, edge );
+            this.unlinkEdge( b, edge );
+
+            this.edges[edge]                 = new int2( c, d );
+            this.nextEdges[edge * 2]         = this.firstEdges[c];
+            this.firstEdges[c]               = edge * 2;
+            this.nextEdges[( edge * 2 ) + 1] = this.firstEdges[d];
+            this.firstEdges[d]               = ( edge * 2 ) + 1;
+        }
+
+        // the two triangles of an edge of two, as a b c and b a d: the first runs along the edge from a to b, the second
+        // back. Gives whether they do run along it opposite ways
+        private readonly bool quadOf( int edge, out int a, out int b, out int c, out int d, out int first, out int second ) {
+            a      = this.edges[edge].x;
+            b      = this.edges[edge].y;
+            first  = -1;
+            second = -1;
+
+            for( var corner = this.firstCorners[a]; corner != -1; corner = this.nextCorners[corner] ) {
+                if( !this.has( corner / 3, b ) ) {
+                    continue;
+                }
+
+                // the corner after a's is b's where the triangle runs from a to b
+                if( this.triangles[corner / 3][( ( corner % 3 ) + 1 ) % 3] == b ) {
+                    first = first == -1 ? corner / 3 : -2;
+                }
+                else {
+                    second = second == -1 ? corner / 3 : -2;
+                }
+            }
+
+            c = first >= 0 ? this.third( first, a, b ) : -1;
+            d = second >= 0 ? this.third( second, a, b ) : -1;
+
+            return first >= 0 && second >= 0;
+        }
+
+        // a vertex at the end of the lists, without triangles or edges yet
+        private int addVertex( double3 position, double3 normal ) {
+            var vertex = this.positions.Length;
+
+            this.positions.Add( position );
+            this.normals.Add( normal );
+            this.areas.Add( 0.0 );
+            this.planes.Add( default );
+            this.sharpAreas.Add( 0.0 );
+            this.sharpPlanes.Add( default );
+            this.lines.Add( default );
+            this.firstCorners.Add( -1 );
+            this.firstEdges.Add( -1 );
+            this.orders.Add( 0 );
+            this.sharpCounts.Add( 0 );
+            this.locked.Add( false );
+            this.stamps.Add( 0 );
+            this.notes.Add( 0 );
+            this.marks.Add( 0 );
+
+            return vertex;
+        }
+
+        // a triangle at the end of the lists, its corners in the lists of its vertices
+        private int addTriangle( int3 corners, int subMesh ) {
+            var triangle = this.triangles.Length;
+
+            this.triangles.Add( corners );
+            this.subMeshes.Add( subMesh );
+
+            for( var corner = 0; corner < 3; ++corner ) {
+                this.nextCorners.Add( this.firstCorners[corners[corner]] );
+                this.firstCorners[corners[corner]] = ( triangle * 3 ) + corner;
+            }
+
+            return triangle;
+        }
+
+        // an edge at the end of the lists, its ends in the lists of its vertices. What follows from its triangles is for
+        // refresh to work out
+        private int addEdge( int vertex, int other ) {
+            var edge = this.edges.Length;
+
+            this.edges.Add( new int2( vertex, other ) );
+            this.edgeTriangles.Add( 0 );
+            this.edgeSharp.Add( Sharp.None );
+
+            this.nextEdges.Add( this.firstEdges[vertex] );
+            this.nextEdges.Add( this.firstEdges[other] );
+
+            this.firstEdges[vertex] = edge * 2;
+            this.firstEdges[other]  = ( edge * 2 ) + 1;
+
+            return edge;
         }
 
         private void unlinkCorner( int vertex, int corner ) {
@@ -1628,12 +1914,12 @@ public static class BurstMeshSimplifier {
         using( costsMarker.Auto( ) ) {
             new CostsJob {
                 limit       = error * error,
-                positions   = connectivity.positions,
-                planes      = connectivity.planes,
-                areas       = connectivity.areas,
-                sharpPlanes = connectivity.sharpPlanes,
-                sharpAreas  = connectivity.sharpAreas,
-                lines       = connectivity.lines,
+                positions   = connectivity.positions.AsArray( ),
+                planes      = connectivity.planes.AsArray( ),
+                areas       = connectivity.areas.AsArray( ),
+                sharpPlanes = connectivity.sharpPlanes.AsArray( ),
+                sharpAreas  = connectivity.sharpAreas.AsArray( ),
+                lines       = connectivity.lines.AsArray( ),
                 edges       = connectivity.edges.AsArray( ),
                 targets     = targets,
                 costs       = costs,
