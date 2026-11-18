@@ -4,19 +4,22 @@ using UnityEngine;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using QEFSolverType      = QEFSolver.Type;
 
-// the normal deviation reaches the probabilistic solver in every implementation on the CPU, and nothing else: with the
+// the normal deviation reaches the probabilistic solver in every implementation, and nothing else: with the
 // probabilistic solver the contour moves when the deviation changes, and with either other solver it stays the same to
-// the bit. Adaptive and Manifold Dual Contouring simplify, so that the QEFs of their larger nodes are solved with it too
+// the bit. On the GPU the simple solver is the SVD one. Adaptive and Manifold Dual Contouring simplify, so that the QEFs
+// of their larger nodes are solved with it too
 public class NormalDeviationTest : TopologyTest {
 
     public enum Variant {
         UniformManaged,
         UniformBurst,
+        UniformGPU,
         AdaptiveManaged,
         AdaptiveBurst,
         ManifoldManaged,
         ManifoldBurst,
-        OccupancyBurst
+        OccupancyBurst,
+        OccupancyGPU
     }
 
     // a cube turned about a diagonal, whose edges and corners lie anywhere in their cells, where the deviation moves the
@@ -29,8 +32,15 @@ public class NormalDeviationTest : TopologyTest {
     private Voxelizer create( Variant variant, QEFSolverType solver ) {
         switch( variant ) {
             case Variant.UniformManaged:
-            case Variant.UniformBurst: {
-                return this.createUniformVoxelizer( 4, variant == Variant.UniformManaged ? ImplementationType.Managed : ImplementationType.Burst, solver, turnedCube );
+            case Variant.UniformBurst:
+            case Variant.UniformGPU: {
+                var implementation = variant switch {
+                    Variant.UniformManaged => ImplementationType.Managed,
+                    Variant.UniformBurst   => ImplementationType.Burst,
+                    _                      => ImplementationType.GPU
+                };
+
+                return this.createUniformVoxelizer( 4, implementation, solver, turnedCube );
             }
             case Variant.AdaptiveManaged:
             case Variant.AdaptiveBurst: {
@@ -54,7 +64,7 @@ public class NormalDeviationTest : TopologyTest {
             default: {
                 var voxelizer = this.createVoxelizer<OccupancyDualContouring>( 4, solver, turnedCube );
 
-                voxelizer.implementationType = ImplementationType.Burst;
+                voxelizer.implementationType = variant == Variant.OccupancyGPU ? ImplementationType.GPU : ImplementationType.Burst;
 
                 return voxelizer;
             }
@@ -66,7 +76,8 @@ public class NormalDeviationTest : TopologyTest {
 
         voxelizer.normalDeviation = deviation;
 
-        return this.voxelize( voxelizer ).mesh.vertices;
+        // the GPU writes the vertices in the order its threads come to them, which differs from one contour to the next
+        return inOrder( this.voxelize( voxelizer ).mesh.vertices );
     }
 
     public enum Algorithm {

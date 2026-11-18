@@ -97,6 +97,8 @@ cbuffer Configuration {
     uint intersectionApproximation;
     uint vertexNormals;
     uint densityFunctionCount;
+    uint qefSolver;
+    float normalDeviation;
 }
 
 RWStructuredBuffer<Voxel>  voxels;
@@ -414,7 +416,7 @@ void calculateMinimizingVertices( uint3 dispatchThreadID : SV_DispatchThreadID )
             float3 vertex = float3( 0.0f, 0.0f, 0.0f );
             float  error  = 0.0f;
 
-            solveQEF( qef, vertex, error, minimizerIterations );
+            solveQEF( qef, vertex, error, qefSolver, minimizerIterations, normalDeviation );
 
             // Dual Contouring: The Secret Sauce, section 2.1: where separate pieces of the contour pass through the
             // voxel the minimizer of the QEF is a poor place for its one vertex, and the mass point is used instead.

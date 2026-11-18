@@ -1039,8 +1039,8 @@ public class VoxelizerEditor : Editor {
 
         var voxelizer = this.target as Voxelizer;
 
-        // only SVD solver is available for GPU implementation
-        if( voxelizer.implementationType == ImplementationType.GPU ) {
+        // the compute shaders have no simple solver
+        if( voxelizer.implementationType == ImplementationType.GPU && voxelizer.qefSolverType == QEFSolverType.Simple ) {
             voxelizer.qefSolverType = QEFSolverType.SVD;
         }
     }

@@ -27,6 +27,8 @@ cbuffer Configuration {
     uint splitQuads;
     uint keepVerticesInCells;
     uint densityFunctionCount;
+    uint qefSolver;
+    float normalDeviation;
 }
 
 StructuredBuffer<DensityFunction> densityFunctions;
@@ -616,7 +618,7 @@ void solveVertex( uint3 cell, uint solid, uint lookup, uint vertex, out float3 p
         float3 minimizer;
         float  error;
 
-        solveQEF( qef, minimizer, error, minimizerIterations );
+        solveQEF( qef, minimizer, error, qefSolver, minimizerIterations, normalDeviation );
 
         position = keepVerticesInCells != 0 ? intoCell( cell, lookup, vertex, average, minimizer ) : minimizer;
         normal   = normalizeOrZero( total );

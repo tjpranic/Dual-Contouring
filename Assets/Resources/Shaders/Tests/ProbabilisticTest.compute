@@ -1,0 +1,26 @@
+#include "../QEF.hlsl"
+
+#pragma kernel solveQEFTest
+
+// how a QEF is solved: the solver as the drivers give it (QEFSolver.shaderSolverOf), the sweeps of the SVD solver and
+// the deviation of the probabilistic one. ProbabilisticTest.Settings in C#, field for field
+struct Settings {
+    uint  qefSolver;
+    uint  minimizerIterations;
+    float normalDeviation;
+};
+
+StructuredBuffer<SVDQEF>   solveQEFTestParameter0;
+StructuredBuffer<Settings> solveQEFTestParameter1;
+RWStructuredBuffer<float4> solveQEFTestResult;
+
+// the vertex in xyz and the error in w
+[numthreads( 1, 1, 1 )]
+void solveQEFTest( uint3 dispatchThreadID : SV_DispatchThreadID ) {
+    float3 vertex;
+    float  error;
+
+    solveQEF( solveQEFTestParameter0[0], vertex, error, solveQEFTestParameter1[0].qefSolver, solveQEFTestParameter1[0].minimizerIterations, solveQEFTestParameter1[0].normalDeviation );
+
+    solveQEFTestResult[0] = float4( vertex, error );
+}

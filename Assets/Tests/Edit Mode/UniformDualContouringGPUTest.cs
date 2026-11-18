@@ -15,10 +15,11 @@ public class UniformDualContouringGPUTest : TopologyTest {
         return Vector3Int.FloorToInt( ( voxel.center + ( Vector3.one * 0.5f ) ) * ( 1 << resolution ) );
     }
 
-    // the compute shader is a port of the CPU implementation, so both should put the vertex of a cell in the same place
+    // the compute shader is a port of the CPU implementation, so both should put the vertex of a cell in the same place,
+    // with either of the solvers it has
     [Test]
-    public void verticesMatchCPU( [Values] Model model ) {
-        this.assertVerticesMatchCPU( shapesOf( model ) );
+    public void verticesMatchCPU( [Values] Model model, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        this.assertVerticesMatchCPU( shapesOf( model ), solver );
     }
 
     // where a cell holds two pieces of surface its vertex is not the minimizer of its QEF, on either side
@@ -34,8 +35,24 @@ public class UniformDualContouringGPUTest : TopologyTest {
     }
 
     [Test]
-    public void verticesMatchCPUOnTurnedShapes( ) {
-        this.assertVerticesMatchCPU( turnedShapes );
+    public void verticesMatchCPUOnTurnedShapes( [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        this.assertVerticesMatchCPU( turnedShapes, solver );
+    }
+
+    // the compute shader has no simple solver, and solves with SVD in its place. The shader writes the vertices in the order its
+    // threads come to them, which differs from one contour to the next, so they are compared in order of position
+    [Test]
+    public void simpleSolverContoursAsSVD( ) {
+        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.GPU, QEFSolverType.SVD, turnedShapes );
+
+        var svd = inOrder( this.voxelize( voxelizer ).mesh.vertices );
+
+        voxelizer.qefSolverType = QEFSolverType.Simple;
+
+        var simple = inOrder( this.voxelize( voxelizer ).mesh.vertices );
+
+        Assert.Greater( svd.Length, 0, "the mesh is empty" );
+        CollectionAssert.AreEqual( svd, simple );
     }
 
     [Test]
@@ -55,8 +72,8 @@ public class UniformDualContouringGPUTest : TopologyTest {
         Assert.AreEqual( shaderSize, Unity.Collections.LowLevel.Unsafe.UnsafeUtility.SizeOf<DensityFunction.Data>( ), "bytes copied" );
     }
 
-    private void assertVerticesMatchCPU( Shape[] shapes ) {
-        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.Managed, QEFSolverType.SVD, shapes );
+    private void assertVerticesMatchCPU( Shape[] shapes, QEFSolverType solver = QEFSolverType.SVD ) {
+        var voxelizer = this.createUniformVoxelizer( resolution, ImplementationType.Managed, solver, shapes );
 
         var expected = this.voxelize( voxelizer ).voxels.Where( ( voxel ) => voxel.hasFeaturePoint ).ToDictionary( indexOf );
 

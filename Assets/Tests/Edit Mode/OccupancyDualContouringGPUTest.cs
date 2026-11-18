@@ -21,8 +21,8 @@ public class OccupancyDualContouringGPUTest : TopologyTest {
         ).ToDictionary( ( cell ) => cell.Key, ( cell ) => cell.ToArray( ) );
     }
 
-    private void assertMatchesBurst( Shape[] shapes, bool keepVerticesInCells = true ) {
-        var voxelizer = this.createVoxelizer<OccupancyDualContouring>( resolution, QEFSolverType.SVD, shapes );
+    private void assertMatchesBurst( Shape[] shapes, bool keepVerticesInCells = true, QEFSolverType solver = QEFSolverType.SVD ) {
+        var voxelizer = this.createVoxelizer<OccupancyDualContouring>( resolution, solver, shapes );
 
         voxelizer.keepVerticesInCells = keepVerticesInCells;
         voxelizer.implementationType  = ImplementationType.Burst;
@@ -92,9 +92,10 @@ public class OccupancyDualContouringGPUTest : TopologyTest {
     private const float vertexTolerance       = 0.02f;
     private const float normalTolerance       = 0.5f;
 
+    // with either of the solvers the shader has
     [Test]
-    public void contourIsTheBurstOne( [Values] Model model ) {
-        this.assertMatchesBurst( shapesOf( model ) );
+    public void contourIsTheBurstOne( [Values] Model model, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        this.assertMatchesBurst( shapesOf( model ), true, solver );
     }
 
     [Test]
@@ -108,8 +109,26 @@ public class OccupancyDualContouringGPUTest : TopologyTest {
     }
 
     [Test]
-    public void contourIsTheBurstOneOnTurnedShapes( ) {
-        this.assertMatchesBurst( turnedShapes );
+    public void contourIsTheBurstOneOnTurnedShapes( [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        this.assertMatchesBurst( turnedShapes, true, solver );
+    }
+
+    // the shader has no simple solver, and solves with SVD in its place. The shader writes the vertices in the order its
+    // threads come to them, which differs from one contour to the next, so they are compared in order of position
+    [Test]
+    public void simpleSolverContoursAsSVD( ) {
+        var voxelizer = this.createVoxelizer<OccupancyDualContouring>( resolution, QEFSolverType.SVD, turnedShapes );
+
+        voxelizer.implementationType = ImplementationType.GPU;
+
+        var svd = inOrder( this.voxelize( voxelizer ).mesh.vertices );
+
+        voxelizer.qefSolverType = QEFSolverType.Simple;
+
+        var simple = inOrder( this.voxelize( voxelizer ).mesh.vertices );
+
+        Assert.Greater( svd.Length, 0, "the mesh is empty" );
+        CollectionAssert.AreEqual( svd, simple );
     }
 
     [Test]

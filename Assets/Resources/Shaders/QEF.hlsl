@@ -5,6 +5,11 @@
 // small is noise in the data rather than a feature of the surface
 #define PSEUDO_INVERSE_TOLERANCE 0.1f
 
+// QEFSolver.Type, as the drivers give it to the shaders. There is no simple solver here: the drivers give the SVD
+// solver in its place
+#define QEF_SOLVER_SVD           1
+#define QEF_SOLVER_PROBABILISTIC 2
+
 struct SymmetricMatrix3x3 {
     float m00, m01, m02, m11, m12, m22;
 };
@@ -331,11 +336,67 @@ void solveSVD( in SymmetricMatrix3x3 ATA, float3 ATB, out float3 vertex, uint mi
     vertex = multiplyVector( pseudoInverse( VTAV, V ), ATB );
 }
 
-void solveQEF( in SVDQEF qef, out float3 vertex, out float error, uint minimizerIterations ) {
+// ProbabilisticQEF.minimize, operation for operation: the solution d of ( AtA + pull I ) d = r, by the unrolled LDLT of
+// minimizer() in the authors' probabilistic-quadrics.hh (github.com/Philip-Trettner/probabilistic-quadrics, Copyright
+// (c) 2020 Philip Trettner, MIT License), without its fused multiply-adds
+float3 minimizeProbabilistic( in SymmetricMatrix3x3 ATA, float3 r, float pull ) {
+    float a00 = ATA.m00 + pull;
+    float a10 = ATA.m01;
+    float a20 = ATA.m02;
+    float a11 = ATA.m11 + pull;
+    float a21 = ATA.m12;
+    float a22 = ATA.m22 + pull;
+
+    float x0 = r.x;
+    float x1 = r.y;
+    float x2 = r.z;
+
+    float d0  = 1.0f / a00;
+    float l10 = a10 * -d0;
+    float l20 = a20 * -d0;
+
+    a11 = ( a10 * l10 ) + a11;
+    a21 = ( a20 * l10 ) + a21;
+    a22 = ( a20 * l20 ) + a22;
+
+    float d1  = 1.0f / a11;
+    float l21 = a21 * -d1;
+
+    a22 = ( a21 * l21 ) + a22;
+
+    float d2 = 1.0f / a22;
+
+    x1 = ( l10 * x0 ) + x1;
+    x2 = ( l20 * x0 ) + x2;
+    x2 = ( l21 * x1 ) + x2;
+
+    x0 *= d0;
+    x1 *= d1;
+    x2 *= d2;
+
+    x0 = ( l20 * x2 ) + x0;
+    x1 = ( l21 * x2 ) + x1;
+    x0 = ( l10 * x1 ) + x0;
+
+    return float3( x0, x1, x2 );
+}
+
+// the vertex of the QEF and the value of the QEF there, from the move away from the mass point of its samples. The SVD
+// solver moves as far as the samples pin the vertex down; the probabilistic solver (ProbabilisticQEF) solves for the
+// expected QEF under noise of the given deviation in the normals
+void solveQEF( in SVDQEF qef, out float3 vertex, out float error, uint qefSolver, uint minimizerIterations, float normalDeviation ) {
     if( qef.intersectionCount > 0 ) {
         float3 massPoint = qef.massPoint / qef.intersectionCount;
+        float3 r         = qef.ATB - multiplyVector( qef.ATA, massPoint );
 
-        solveSVD( qef.ATA, qef.ATB - multiplyVector( qef.ATA, massPoint ), vertex, minimizerIterations );
+        if( qefSolver == QEF_SOLVER_PROBABILISTIC ) {
+            float pull = qef.intersectionCount * normalDeviation * normalDeviation;
+
+            vertex = minimizeProbabilistic( qef.ATA, r, pull );
+        }
+        else {
+            solveSVD( qef.ATA, r, vertex, minimizerIterations );
+        }
 
         vertex += massPoint;
         error   = calculateError( qef.ATA, qef.ATB, qef.BTB, vertex );

@@ -194,6 +194,12 @@ public abstract class TopologyTest : ContouringTest {
         return a + ( ab * ( vb * denominator ) ) + ( ac * ( vc * denominator ) );
     }
 
+    // the vertices in order of position, by x, then y, then z. The GPU implementations write them in the order their
+    // threads come to them, which differs from one contour to the next
+    protected static Vector3[] inOrder( Vector3[] vertices ) {
+        return vertices.OrderBy( ( vertex ) => vertex.x ).ThenBy( ( vertex ) => vertex.y ).ThenBy( ( vertex ) => vertex.z ).ToArray( );
+    }
+
     protected static float distanceToMesh( Vector3 point, Vector3[] vertices, int[] triangles ) {
         var nearest = float.PositiveInfinity;
 

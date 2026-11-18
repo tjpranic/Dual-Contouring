@@ -2,7 +2,7 @@
 
 Plan written 2026-11-18 for adding the QEF solve of *Fast and Robust QEF Minimization using Probabilistic Quadrics* (Trettner and Kobbelt, 2020; `Documents/Papers/Fast and Robust QEF Minimization using Probabilistic Quadrics.md`) as a third QEF solver, beside Simple and SVD, in the managed, Burst and GPU implementations.
 
-**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver, and the GPU does not yet. Step 3 waits for review and for the questions under "Asked after step 2". The user decided four things on 2026-11-18:
+**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver. Step 3, the GPU, was done the same day: every implementation has the solver now. Step 4 waits for review, and it needs the user's go-ahead for the scenes. The user decided four things on 2026-11-18:
 1. **A third solver,** not a replacement for SVD.
 2. **Managed, Burst and GPU.**
 3. **The default noise level is mine to choose.** It is 0.05 (finding 5).
@@ -234,9 +234,30 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - On single shapes at 32³, 0.05 is the lowest deviation that leaves no more vertices outside their cells than SVD does, within a quarter: 2.8% against 2.6%. At 0.03 it is 4.1%, at 0.02 6.9%, on the curved shapes.
      - Corners and edges are off by a few thousandths of a cell more than with SVD. The most is 0.035 cells at the turned pyramid's tip, where four faces meet, against SVD's 0.017.
      - The worst vertex off a shape is nearer than with SVD: 0.10 cells against 0.18, at the cone.
-     - **Where this solver was expected to win, these shapes give it no chance.** Their normals are exact, without noise, and at every edge of them the normals of the two faces are at least 60° apart, the hexagonal prism's being the closest. The shallow ridges of the feasibility study are not among them. `QEF.hlsl`, both shaders' configurations and drivers, the inspector's rule, the GPU tests.
+     - **Where this solver was expected to win, these shapes give it no chance.** Their normals are exact, without noise, and at every edge of them the normals of the two faces are at least 60° apart, the hexagonal prism's being the closest. The shallow ridges of the feasibility study are not among them.
    - **Suites:** edit mode 4087 of 4087 in 432 s, play mode 21 of 21. That is 264 tests more than step 1 and 27 s longer. No test came near two minutes.
    - **`Start` hashes:** 704 lines, the 480 of step 0 identical, and 224 for the probabilistic solver: Uniform, Adaptive and Manifold in Managed and Burst, and Occupancy in Burst. They are the reference for steps 3 to 5, in `probabilistic-quadrics-step2/hashes_step2.txt` in the probes folder.
+3. **GPU (medium).** `QEF.hlsl`, both shaders' configurations and drivers, the inspector's rule, the GPU tests. **Done 2026-11-18:**
+   - **Built:**
+     - `QEF.hlsl`: `minimizeProbabilistic`, the same LDLᵀ as the managed and Burst solves, credited. `solveQEF` takes the solver, the SVD sweeps and the deviation, and chooses between the two solves on the move from the mass point.
+     - **Both shaders:** `qefSolver` and `normalDeviation` at the end of `Configuration`, on both sides, field for field.
+     - **Drivers:** Uniform's driver passes them on. Occupancy's driver is given the solver and the deviation for the first time.
+     - **Simple on the GPU:** `QEFSolver.shaderSolverOf`, in a new `GPU/QEFSolver.GPU.cs`, gives the shaders SVD for it. The inspector turns only Simple into SVD on the GPU now.
+   - **Tests:**
+     - **`ProbabilisticTest`,** new, in play mode beside `SVDTest`, 5 cases. A kernel solves the sums of a QEF, laid out as `SVDQEF.Data`, through `solveQEF`, for 200 sets of samples each: the probabilistic solver against `ProbabilisticQEF` at 0.02, 0.05, 0.25 and 1, and the SVD solver against `SVDQEF`.
+       - **Measured:** the GPU's vertices are about 2e-8 / σ² from the managed ones, the most 4.9e-5 at 0.02, a little closer than Burst's. The SVD solver's are within 1.6e-7.
+       - **Tolerances:** those of `BurstQEFTest`, 1e-5 + 5e-8 / σ².
+     - **`UniformDualContouringGPUTest`:** the vertices match the CPU's for both solvers, on the test models and the turned shapes. New: `simpleSolverContoursAsSVD`.
+     - **`OccupancyDualContouringGPUTest`:** the contour is Burst's for both solvers, on the test models and the turned shapes. New: `simpleSolverContoursAsSVD`.
+     - **`NormalDeviationTest`** has Uniform and Occupancy on the GPU too, 30 cases.
+     - **The GPU writes its vertices in the order its threads come to them,** which differs from one contour to the next. My first versions of the new tests compared two GPU contours index by index, and failed for that alone. They compare the vertices in order of position now, with `TopologyTest.inOrder`.
+     - **The `Start` hash probe** hashes the new solver on the GPU too.
+   - **Deliberate mistakes:**
+     - **In C#, 6, all caught** (`probabilistic-quadrics-step3/mutations_cs.txt` in the probes folder): each driver giving SVD or a fixed deviation, the Occupancy component passing a fixed deviation, and `shaderSolverOf` always giving SVD. One I did not run: `shaderSolverOf` giving Simple its own number would change nothing, since the shaders take anything but the probabilistic solver as SVD.
+     - **In the shaders, none:** skipped at the user's decision, "Skip the shader mistakes pass." The first of them, `if( false )` in place of the solver's branch in `solveQEF`, stopped the editor twice before the test run so much as started. Both times the guard took it for a hang and killed and relaunched the editor, at 20:35 and 20:47, while the user was working in it. Why that mistake stalls the editor was not looked into.
+     - **What covers the shaders instead:** their solve is the arithmetic of the Burst solve, whose mistakes were all caught, and the GPU tests hold it to the managed solve and the contours to the CPU's.
+   - **Suites:** edit mode 4105 of 4105 in 425 s, play mode 26 of 26.
+   - **`Start` hashes:** 768 lines, in `probabilistic-quadrics-step3/hashes_step3.txt`. The 480 of step 0 and the 224 of step 2 are identical, and 64 are new, for the probabilistic solver on the GPU. Uniform and Occupancy on the GPU run twice each, and their two runs agree.
 4. **Interactive editor and scenes (small).** `select`, the signature, the editor tests. The six scenes, with the user's go-ahead.
 5. **Timings and documentation (small).** Burst and GPU timings of the three solvers at 64³ and 128³, with Unity in front. README: the solver in the implementations section, what it is good and bad at (findings 4, 6 and 7), the setting, the paper and the MIT credit. `AGENTS.md`: the paper among the algorithms.
 
@@ -397,7 +418,7 @@ Answered 2026-11-18. Decisions 2 to 6 as recommended.
 
 ### Asked after step 2
 
-Put to the user on 2026-11-18.
+Put to the user on 2026-11-18, and answered the same day: "1. Keep as is 2. Not needed Continue with step 3." The rotated cube's corners and edges stay tested without simplification for the new solver, and the inspector gets no warning.
 
 - **The default,** if the project's models disagree with 0.05. They do not (step 2, Measured), so it stays, and nothing is asked.
 - **Tests that do not hold for this solver as written** (finding 13): which get a tolerance of their own and which leave the solver out.

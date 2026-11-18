@@ -26,6 +26,8 @@ public partial class UniformDualContouring {
             [FieldOffset( 4 * 4 )] public int intersectionApproximation;
             [FieldOffset( 5 * 4 )] public int vertexNormals;
             [FieldOffset( 6 * 4 )] public int densityFunctionCount;
+            [FieldOffset( 7 * 4 )] public int qefSolver;
+            [FieldOffset( 8 * 4 )] public float normalDeviation;
 
             public Configuration(
                 int                       resolution,
@@ -34,7 +36,9 @@ public partial class UniformDualContouring {
                 int                       surfaceCorrectionIterations,
                 IntersectionApproximation intersectionApproximation,
                 ContourVertices           contourVertices,
-                int                       densityFunctionCount
+                int                       densityFunctionCount,
+                QEFSolverType             qefSolverType,
+                float                     normalDeviation
             ) {
                 this.resolution                  = resolution;
                 this.minimizerIterations         = minimizerIterations;
@@ -44,6 +48,8 @@ public partial class UniformDualContouring {
                 // creased vertices are made from shared ones
                 this.vertexNormals               = ( int )( contourVertices == ContourVertices.Split ? ContourVertices.Split : ContourVertices.Shared );
                 this.densityFunctionCount        = densityFunctionCount;
+                this.qefSolver                   = QEFSolver.shaderSolverOf( qefSolverType );
+                this.normalDeviation             = normalDeviation;
             }
         }
 
@@ -102,6 +108,8 @@ public partial class UniformDualContouring {
                 minimizerIterations,
                 binarySearchIterations,
                 surfaceCorrectionIterations,
+                qefSolverType,
+                normalDeviation,
                 intersectionApproximation,
                 contourVertices
             );
@@ -195,6 +203,8 @@ public partial class UniformDualContouring {
             int                          minimizerIterations,
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
+            QEFSolverType                qefSolverType,
+            float                        normalDeviation,
             IntersectionApproximation    intersectionApproximation,
             ContourVertices              contourVertices
         ) {
@@ -207,7 +217,9 @@ public partial class UniformDualContouring {
                 surfaceCorrectionIterations,
                 intersectionApproximation,
                 contourVertices,
-                densityFunctionData.Length
+                densityFunctionData.Length,
+                qefSolverType,
+                normalDeviation
             );
 
             if( this.configurationBuffer == null ) {

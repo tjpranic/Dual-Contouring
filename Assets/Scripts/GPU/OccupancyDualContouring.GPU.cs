@@ -11,6 +11,7 @@ using CPUVoxelization = SurfaceExtractor.Implementation.CPU.Voxelization;
 using GPUVoxelization = SurfaceExtractor.Implementation.GPU.Voxelization;
 using ContourVertices = SurfaceExtractor.ContourVertices;
 using SmoothNormals   = SurfaceExtractor.SmoothNormals;
+using QEFSolverType   = QEFSolver.Type;
 
 public partial class OccupancyDualContouring {
 
@@ -31,6 +32,8 @@ public partial class OccupancyDualContouring {
             [FieldOffset( 5 * 4 )] public int splitQuads;
             [FieldOffset( 6 * 4 )] public int keepVerticesInCells;
             [FieldOffset( 7 * 4 )] public int densityFunctionCount;
+            [FieldOffset( 8 * 4 )] public int qefSolver;
+            [FieldOffset( 9 * 4 )] public float normalDeviation;
         }
 
         private readonly ComputeShader shader;
@@ -167,6 +170,8 @@ public partial class OccupancyDualContouring {
             IEnumerable<DensityFunction> densityFunctions,
             int                          resolution,
             int                          minimizerIterations,
+            QEFSolverType                qefSolverType,
+            float                        normalDeviation,
             int                          edgeSearchIterations,
             int                          faceSearchSamples,
             int                          faceSearchIterations,
@@ -186,7 +191,9 @@ public partial class OccupancyDualContouring {
                 faceSearchIterations = faceSearchIterations,
                 splitQuads           = splitQuads ? 1 : 0,
                 keepVerticesInCells  = keepVerticesInCells ? 1 : 0,
-                densityFunctionCount = densityFunctionData.Length
+                densityFunctionCount = densityFunctionData.Length,
+                qefSolver            = QEFSolver.shaderSolverOf( qefSolverType ),
+                normalDeviation      = normalDeviation
             };
 
             if( this.configurationBuffer == null ) {
@@ -383,6 +390,8 @@ public partial class OccupancyDualContouring {
             densityFunctions,
             1 << this.resolution,
             this.minimizerIterations,
+            this.qefSolverType,
+            this.normalDeviation,
             this.edgeSearchIterations,
             this.faceSearchSamples,
             this.faceSearchIterations,
