@@ -188,6 +188,7 @@ public class InteractiveEditorTest {
         uniform.surfaceCorrectionIterations = 2;
         uniform.implementationType          = ImplementationType.Burst;
         uniform.qefSolverType               = QEFSolverType.Simple;
+        uniform.normalDeviation             = 0.3f;
         uniform.intersectionApproximation   = Approximation.LinearInterpolation;
         uniform.vertexNormals               = VertexNormals.Split;
         uniform.creaseAngle                 = 25.0f;
@@ -219,6 +220,7 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 2,                                              octree.surfaceCorrectionIterations );
         Assert.AreEqual( ImplementationType.Burst,                       octree.implementationType );
         Assert.AreEqual( QEFSolverType.Simple,                           octree.qefSolverType );
+        Assert.AreEqual( 0.3f,                                           octree.normalDeviation );
         Assert.AreEqual( Approximation.LinearInterpolation,              octree.intersectionApproximation );
         Assert.AreEqual( VertexNormals.Split,                            octree.vertexNormals );
         Assert.AreEqual( 25.0f,                                          octree.creaseAngle );
@@ -271,6 +273,7 @@ public class InteractiveEditorTest {
         other.surfaceCorrectionIterations = 2;
         other.implementationType          = ImplementationType.Burst;
         other.qefSolverType               = QEFSolverType.Simple;
+        other.normalDeviation             = 0.3f;
         other.intersectionApproximation   = Approximation.LinearInterpolation;
         other.vertexNormals               = VertexNormals.Split;
         other.creaseAngle                 = 25.0f;
@@ -294,6 +297,7 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 3,                                              occupancy.minimizerIterations );
         Assert.AreEqual( ImplementationType.Burst,                       occupancy.implementationType );
         Assert.AreEqual( QEFSolverType.Simple,                           occupancy.qefSolverType );
+        Assert.AreEqual( 0.3f,                                           occupancy.normalDeviation );
         Assert.AreEqual( VertexNormals.Split,                            occupancy.vertexNormals );
         Assert.AreEqual( 25.0f,                                          occupancy.creaseAngle );
         Assert.AreEqual( SmoothNormals.Faces,                            occupancy.smoothNormals );
@@ -1037,6 +1041,8 @@ public class InteractiveEditorTest {
         ["surface correction"]      = ( null, ( p ) => p.editor.voxelizer.surfaceCorrectionIterations += 1 ),
         ["implementation"]          = ( null, ( p ) => p.editor.voxelizer.implementationType          = ImplementationType.Burst ),
         ["solver"]                  = ( null, ( p ) => p.editor.voxelizer.qefSolverType               = QEFSolverType.Simple ),
+        ["probabilistic solver"]    = ( null, ( p ) => p.editor.voxelizer.qefSolverType               = QEFSolverType.Probabilistic ),
+        ["normal deviation"]        = ( ( p ) => p.editor.voxelizer.qefSolverType = QEFSolverType.Probabilistic, ( p ) => p.editor.voxelizer.normalDeviation = 0.3f ),
         ["intersection"]            = ( null, ( p ) => p.editor.voxelizer.intersectionApproximation   = Approximation.LinearInterpolation ),
         ["vertex normals"]          = ( null, ( p ) => p.editor.voxelizer.vertexNormals               = VertexNormals.Split ),
         ["crease angle"]            = ( null, ( p ) => p.editor.voxelizer.creaseAngle                 = 25.0f ),
@@ -1057,6 +1063,7 @@ public class InteractiveEditorTest {
         ["occupancy resolution"]    = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.resolution    += 1 ),
         ["occupancy implementation"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.implementationType = ImplementationType.GPU ),
         ["occupancy solver"]        = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.qefSolverType = QEFSolverType.Simple ),
+        ["occupancy normal deviation"] = ( ( p ) => { selected<OccupancyDualContouring>( p, Algorithm.Occupancy ); p.editor.voxelizer.qefSolverType = QEFSolverType.Probabilistic; }, ( p ) => p.editor.voxelizer.normalDeviation = 0.3f ),
         ["occupancy vertex normals"]= ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split ),
         ["occupancy crease angle"]  = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => p.editor.voxelizer.creaseAngle   = 25.0f )
     };
@@ -1076,6 +1083,10 @@ public class InteractiveEditorTest {
         ["wireframe"]                    = ( null, ( p ) => p.editor.voxelizer.wireframe          = Wireframe.Look.LinesOnly ),
         ["wireframe line width"]         = ( null, ( p ) => p.editor.voxelizer.wireframeLineWidth = 3.0f ),
         ["wireframe colours"]            = ( null, ( p ) => { p.editor.voxelizer.wireframeLineColor = Color.red; p.editor.voxelizer.wireframeFillColor = Color.blue; } ),
+
+        // the deviation means nothing to the SVD solver, and the sweeps nothing to the probabilistic one
+        ["normal deviation, SVD solver"]           = ( null, ( p ) => p.editor.voxelizer.normalDeviation = 0.3f ),
+        ["minimizer iterations, probabilistic solver"] = ( ( p ) => p.editor.voxelizer.qefSolverType = QEFSolverType.Probabilistic, ( p ) => p.editor.voxelizer.minimizerIterations += 1 ),
 
         // how creased normals break says nothing about split ones
         ["crease angle, split normals"]   = ( ( p ) => p.editor.voxelizer.vertexNormals = VertexNormals.Split, ( p ) => p.editor.voxelizer.creaseAngle   = 25.0f ),

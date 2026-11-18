@@ -2,7 +2,7 @@
 
 Plan written 2026-11-18 for adding the QEF solve of *Fast and Robust QEF Minimization using Probabilistic Quadrics* (Trettner and Kobbelt, 2020; `Documents/Papers/Fast and Robust QEF Minimization using Probabilistic Quadrics.md`) as a third QEF solver, beside Simple and SVD, in the managed, Burst and GPU implementations.
 
-**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver. Step 3, the GPU, was done the same day: every implementation has the solver now. Step 4 waits for review, and it needs the user's go-ahead for the scenes. The user decided four things on 2026-11-18:
+**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver. Step 3, the GPU, and step 4, the interactive editor and six scenes, were done the same day: every implementation has the solver. Step 5, timings and documentation, waits for review. The user decided four things on 2026-11-18:
 1. **A third solver,** not a replacement for SVD.
 2. **Managed, Burst and GPU.**
 3. **The default noise level is mine to choose.** It is 0.05 (finding 5).
@@ -258,7 +258,21 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - **What covers the shaders instead:** their solve is the arithmetic of the Burst solve, whose mistakes were all caught, and the GPU tests hold it to the managed solve and the contours to the CPU's.
    - **Suites:** edit mode 4105 of 4105 in 425 s, play mode 26 of 26.
    - **`Start` hashes:** 768 lines, in `probabilistic-quadrics-step3/hashes_step3.txt`. The 480 of step 0 and the 224 of step 2 are identical, and 64 are new, for the probabilistic solver on the GPU. Uniform and Occupancy on the GPU run twice each, and their two runs agree.
-4. **Interactive editor and scenes (small).** `select`, the signature, the editor tests. The six scenes, with the user's go-ahead.
+4. **Interactive editor and scenes (small).** `select`, the signature, the editor tests. The six scenes, with the user's go-ahead. **Done 2026-11-18,** with the go-ahead for the scenes ("Continue with step 4, scenes included."):
+   - **Editor:**
+     - `select` carries Normal Deviation over with the solver.
+     - **The signature** has the deviation under the probabilistic solver and Minimizer Iterations under the other two. The plan had only the first half. Each setting means nothing to the other solvers, so neither should make the editor contour again, as the crease angle does not under split normals.
+   - **Tests:** in `InteractiveEditorTest`, 305 cases:
+     - both carry-over tests carry the deviation;
+     - the signature changes with the probabilistic solver, with the deviation under it, and with the deviation of Occupancy-Based Dual Contouring;
+     - it stays the same with the deviation under SVD, and with Minimizer Iterations under the probabilistic solver.
+     - **Deliberate mistakes:** 3, all caught (`probabilistic-quadrics-step4/mutations.txt` in the probes folder): `select` leaving the deviation behind, and the signature always having the sweeps, or always the deviation.
+   - **Scenes:**
+     - Six `Probabilistic Solve.unity` scenes beside the `SVD Solve.unity` ones: Uniform, Adaptive and Manifold, Managed and Burst. Each is its SVD scene with the solver changed to Probabilistic and Normal Deviation saved at 0.05, two lines of text. Unity gave them their own meta files and GUIDs. Like the SVD scenes, none is in the build settings.
+     - **Checked by opening each beside its SVD scene as preview scenes,** so nothing open was changed: each loads the solver and the deviation and contours.
+       - **Vertex counts** are those of the SVD scenes. The model is the test model "cubes and sphere", the Manifold scenes cluster at 2e-4, and the curved parts cluster alike under both solvers (Measurements, Step 2, Vertex counts).
+       - **Vertices** move from SVD's by 0.04 cells on average in Uniform and Adaptive, and 0.08 in Manifold, a quarter of a cell at most. Managed and Burst agree.
+   - **Suites:** edit mode 4110 of 4110 in 435 s, play mode 26 of 26. The 768 `Start` hashes are identical to step 3's.
 5. **Timings and documentation (small).** Burst and GPU timings of the three solvers at 64³ and 128³, with Unity in front. README: the solver in the implementations section, what it is good and bad at (findings 4, 6 and 7), the setting, the paper and the MIT credit. `AGENTS.md`: the paper among the algorithms.
 
 ## Measurements

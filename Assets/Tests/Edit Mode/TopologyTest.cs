@@ -88,7 +88,7 @@ public abstract class TopologyTest : ContouringTest {
                 sphere( new Vector3(  0.2f, 0.0f, 0.0f ), 0.3f ),
                 sphere( new Vector3(  0.0f, 0.2f, 0.0f ), 0.3f )
             },
-            // the "SVD Solve" scenes
+            // the "SVD Solve" and "Probabilistic Solve" scenes
             Model.CubesAndSphere => new[] {
                 cube   ( new Vector3( -0.2f, 0.0f, 0.0f ), 0.2f ),
                 sphere ( Vector3.zero,                     0.3f ),

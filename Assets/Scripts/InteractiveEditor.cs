@@ -9,6 +9,7 @@ using MaterialIndex      = SurfaceExtractor.MaterialIndex;
 using ImplementationType = SurfaceExtractor.Implementation.Type;
 using Combination        = DensityFunction.Combination;
 using VertexNormals      = SurfaceExtractor.VertexNormals;
+using QEFSolverType      = QEFSolver.Type;
 
 // contours the shapes below it in edit mode, with one of its four voxelizers at a time. Each voxelizer keeps its own
 // settings, and only the selected one shows in the inspector. Shapes are read off their transforms as Unity shows
@@ -236,6 +237,7 @@ public class InteractiveEditor : MonoBehaviour {
             to.binarySearchIterations      = from.binarySearchIterations;
             to.surfaceCorrectionIterations = from.surfaceCorrectionIterations;
             to.qefSolverType               = from.qefSolverType;
+            to.normalDeviation             = from.normalDeviation;
             to.intersectionApproximation   = from.intersectionApproximation;
             to.vertexNormals               = from.vertexNormals;
             to.creaseAngle                 = from.creaseAngle;
@@ -545,7 +547,16 @@ public class InteractiveEditor : MonoBehaviour {
 
         append( this._algorithm );
         append( voxelizer.resolution );
-        append( voxelizer.minimizerIterations );
+
+        // the setting of the solver: the sweeps of the SVD and simple solvers, or the deviation of the probabilistic one,
+        // which neither means anything to the other
+        if( voxelizer.qefSolverType == QEFSolverType.Probabilistic ) {
+            append( voxelizer.normalDeviation );
+        }
+        else {
+            append( voxelizer.minimizerIterations );
+        }
+
         append( voxelizer.implementationType );
         append( voxelizer.qefSolverType );
         append( voxelizer.vertexNormals );

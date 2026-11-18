@@ -464,7 +464,7 @@ MonoBehaviour:
   _resolution: 8
   _minimizerIterations: 3
   _binarySearchIterations: 6
-  _surfaceCorrectionIterations: 0
+  _surfaceCorrectionIterations: 2
   _implementation: 2
   _qefSolver: 2
   _normalDeviation: 0.05
@@ -524,7 +524,7 @@ MonoBehaviour:
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
-  smoothNormals: 1
+  smoothNormals: 0
   meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
@@ -578,7 +578,7 @@ MonoBehaviour:
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
-  smoothNormals: 1
+  smoothNormals: 0
   meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
@@ -706,13 +706,13 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 0
   _implementation: 2
-  _qefSolver: 1
+  _qefSolver: 2
   _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
-  smoothNormals: 1
-  meshSimplification: 0
+  smoothNormals: 0
+  meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
@@ -722,7 +722,7 @@ MonoBehaviour:
   remeshingIterations: 5
   remeshingAreaIterations: 5
   remeshingNormals: 0
-  wireframe: 1
+  wireframe: 0
   wireframeLineWidth: 1
   wireframeLineColor: {r: 0, g: 0, b: 0, a: 1}
   wireframeFillColor: {r: 0, g: 0, b: 0, a: 1}
@@ -742,8 +742,8 @@ MonoBehaviour:
   edgeSearchIterations: 10
   faceSearchSamples: 3
   faceSearchIterations: 10
-  keepVerticesInCells: 0
-  splitQuads: 1
+  keepVerticesInCells: 1
+  splitQuads: 0
 --- !u!1 &1118812346
 GameObject:
   m_ObjectHideFlags: 0
