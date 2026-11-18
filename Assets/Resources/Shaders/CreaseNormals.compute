@@ -197,23 +197,26 @@ bool before( uint corner, uint other ) {
     float weight      = weightsRead[corner];
     float otherWeight = weightsRead[other];
 
+    bool earlier = corner < other;
+
     if( weight != otherWeight ) {
-        return weight > otherWeight;
+        earlier = weight > otherWeight;
     }
+    else {
+        float3 face      = facesRead[corner / 3];
+        float3 otherFace = facesRead[other / 3];
 
-    float3 face      = facesRead[corner / 3];
-    float3 otherFace = facesRead[other / 3];
-
-    if( face.x != otherFace.x ) {
-        return face.x < otherFace.x;
+        if( face.x != otherFace.x ) {
+            earlier = face.x < otherFace.x;
+        }
+        else if( face.y != otherFace.y ) {
+            earlier = face.y < otherFace.y;
+        }
+        else if( face.z != otherFace.z ) {
+            earlier = face.z < otherFace.z;
+        }
     }
-    if( face.y != otherFace.y ) {
-        return face.y < otherFace.y;
-    }
-    if( face.z != otherFace.z ) {
-        return face.z < otherFace.z;
-    }
-    return corner < other;
+    return earlier;
 }
 
 // the corners of a group of a vertex that have area
@@ -232,24 +235,21 @@ uint membersOf( uint start, uint end, uint group ) {
 
 // whether the contour's normal of a vertex of one group may stay: within the angle of every triangle with area at it
 bool contourNormalFits( uint vertex, uint start, uint end ) {
-    if( cosine < -1.0f ) {
-        return true;
-    }
+    bool fits = true;
 
-    float3 contour = unit( normals[vertex] );
+    if( cosine >= -1.0f ) {
+        float3 contour = unit( normals[vertex] );
 
-    for( uint slot = start; slot < end; ++slot ) {
-        float3 face = facesRead[runs[slot] / 3];
+        for( uint slot = start; slot < end; ++slot ) {
+            float3 face = facesRead[runs[slot] / 3];
 
-        if( !hasArea( face ) ) {
-            continue;
-        }
-
-        if( !hasArea( contour ) || dot( contour, face ) < cosine ) {
-            return false;
+            if( hasArea( face ) && ( !hasArea( contour ) || dot( contour, face ) < cosine ) ) {
+                fits = false;
+                break;
+            }
         }
     }
-    return true;
+    return fits;
 }
 
 [numthreads( 64, 1, 1 )]
@@ -382,6 +382,7 @@ void rewrite( uint3 id : SV_DispatchThreadID ) {
 
     Quad quad = quads[index];
 
+    [unroll]
     for( uint corner = 0; corner < 6; ++corner ) {
         quad.indices[corner] = bases[quad.indices[corner]] + groupOfCorners[( index * 6 ) + corner];
     }
