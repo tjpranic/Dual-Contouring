@@ -26,6 +26,12 @@ Based off *Surface Simplification Using Quadric Error Metrics*: edge collapses i
 
 It has no managed or GPU implementation, so its tests hold it to answers known in closed form and to what a simplification may not change about a mesh. Where it departs from the papers, `Documents/Plans/Mesh Simplification.md` says how and why.
 
+## Probabilistic Quadrics
+Based off *Fast and Robust QEF Minimization using Probabilistic Quadrics*: a third QEF solver beside Simple and SVD, in every algorithm and implementation (`ProbabilisticQEF`, `BurstQEF`, `QEF.hlsl`). The vertex minimizes the expected QEF when the normals are uncertain by the voxelizer's Normal Deviation, a 3 × 3 linear solve. Where it departs from the paper, and what it was measured to do, is in `Documents/Plans/Fast and Robust QEF Minimization using Probabilistic Quadrics.md`.
+- **Tests:** they hold the managed solve to answers known in closed form, and Burst and the GPU to the managed one. The solve divides by the number of samples times the deviation squared, so Burst and the GPU are held within 1e-5 + 5e-8 / σ² of it.
+
+The authors' code (github.com/Philip-Trettner/probabilistic-quadrics) is MIT, as this project is. Its `minimizer()` is ported, and credited in the code and, with its licence, in the README.
+
 ## Creased Normals
 Vertex normals are creased by angle on the finished mesh of any algorithm and implementation: around each vertex, triangles are grouped by their normals, and each group becomes a vertex. There is no paper. The rule and its choices are in `Documents/Plans/Creased Normals.md`. It has a Burst implementation (`BurstCreases`) and a GPU one (`GPUCreases`, `CreaseNormals.compute`), and no managed one.
 - **Tests:** they hold the Burst pass to answers known in closed form, and the GPU to Burst: the same groups, and normals within a tolerance, since Metal has no doubles.

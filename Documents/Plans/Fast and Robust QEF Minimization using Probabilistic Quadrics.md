@@ -2,7 +2,7 @@
 
 Plan written 2026-11-18 for adding the QEF solve of *Fast and Robust QEF Minimization using Probabilistic Quadrics* (Trettner and Kobbelt, 2020; `Documents/Papers/Fast and Robust QEF Minimization using Probabilistic Quadrics.md`) as a third QEF solver, beside Simple and SVD, in the managed, Burst and GPU implementations.
 
-**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver. Step 3, the GPU, and step 4, the interactive editor and six scenes, were done the same day: every implementation has the solver. Step 5, timings and documentation, waits for review. The user decided four things on 2026-11-18:
+**Status:** complete. Steps 0 to 5 were done on 2026-11-18. Every algorithm and implementation, managed, Burst and GPU, has the probabilistic solver, and so does the interactive editor. Six scenes show it, and the README describes it. The user committed steps 0 to 4 (cd07688, b81cca2, 8f3aafd); step 5, the timings and documentation, was uncommitted when the plan was finished. The user decided four things on 2026-11-18:
 1. **A third solver,** not a replacement for SVD.
 2. **Managed, Burst and GPU.**
 3. **The default noise level is mine to choose.** It is 0.05 (finding 5).
@@ -273,7 +273,16 @@ Each step compiles, passes every test, and is reviewed before the next one start
        - **Vertex counts** are those of the SVD scenes. The model is the test model "cubes and sphere", the Manifold scenes cluster at 2e-4, and the curved parts cluster alike under both solvers (Measurements, Step 2, Vertex counts).
        - **Vertices** move from SVD's by 0.04 cells on average in Uniform and Adaptive, and 0.08 in Manifold, a quarter of a cell at most. Managed and Burst agree.
    - **Suites:** edit mode 4110 of 4110 in 435 s, play mode 26 of 26. The 768 `Start` hashes are identical to step 3's.
-5. **Timings and documentation (small).** Burst and GPU timings of the three solvers at 64³ and 128³, with Unity in front. README: the solver in the implementations section, what it is good and bad at (findings 4, 6 and 7), the setting, the paper and the MIT credit. `AGENTS.md`: the paper among the algorithms.
+5. **Timings and documentation (small).** Burst and GPU timings of the three solvers at 64³ and 128³, with Unity in front. README: the solver in the implementations section, what it is good and bad at (findings 4, 6 and 7), the setting, the paper and the MIT credit. `AGENTS.md`: the paper among the algorithms. **Done 2026-11-18:**
+   - **Timings:** under Measurements, Step 5. All three solvers take the same time within a few percent, in every algorithm and on Burst and the GPU, as finding 10 expected.
+   - **README:** a section on the QEF solvers:
+     - their settings;
+     - how the probabilistic solver works and where it does;
+     - how it compares with SVD, with the numbers of steps 2 and 5;
+     - the new scenes.
+
+     Also: the Burst and GPU lines of the implementations list, the code layout, the paper among the papers, and the authors' licence for the ported solve.
+   - **AGENTS.md:** the solver among the algorithms, with the licence of the authors' code.
 
 ## Measurements
 
@@ -293,6 +302,22 @@ A whole contour of the three balls, read back from the GPU, without mesh simplif
 | Occupancy | GPU | plain | 7.1 | | 24.4 | |
 
 Uniform Burst with Simple at 128³ had one slow run of 64 ms among its seven; its fastest was 37.2 ms.
+
+### Step 5 (2026-11-18)
+
+The timings of step 0, again, with the probabilistic solver at 0.05. Median of 9 runs after one to warm up, in ms, with Unity in front for every call. The three balls, read back from the GPU, without mesh simplification or remeshing; "simplified" is Adaptive's simplification and Manifold's clustering at 2e-4.
+
+| Algorithm | Implementation | Contour | 64³ SVD | 64³ Simple | 64³ Probabilistic | 128³ SVD | 128³ Simple | 128³ Probabilistic |
+|---|---|---|---|---|---|---|---|---|
+| Uniform | Burst | plain | 7.8 | 7.7 | 7.8 | 38.4 | 37.0 | 36.6 |
+| Occupancy | Burst | plain | 16.0 | 14.8 | 14.7 | 63.3 | 64.9 | 63.3 |
+| Adaptive | Burst | simplified | 6.9 | 7.0 | 6.7 | 35.3 | 34.5 | 34.6 |
+| Manifold | Burst | simplified | 7.9 | 7.8 | 7.7 | 35.7 | 34.7 | 34.1 |
+| Uniform | GPU | plain | 20.5 | | 20.4 | 123.6 | | 122.7 |
+| Occupancy | GPU | plain | 10.6 | | 6.9 | 21.4 | | 21.7 |
+
+- **Differences** are within the spread of the runs. One slow run of Occupancy on the GPU with SVD at 64³, 42 ms among nine of about 6.5, moved its median.
+- **Vertex counts** of the simplified contours are those of SVD within a few, 2587 against 2586 and 2363 against 2359 at 128³. The three balls are curved all over (Step 2, Vertex counts).
 
 ### Step 2 (2026-11-18)
 

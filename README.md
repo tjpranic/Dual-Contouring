@@ -22,8 +22,8 @@ Each voxelizer component has an **Implementation** setting that selects how it c
 | Occupancy-Based Dual Contouring | No | Yes | Yes |
 
 - **Managed** is plain C#, written to follow the papers. It is the reference the other two are tested against, and it is slow: a grid of 128³ cells takes most of a minute.
-- **Burst** runs the same algorithm as jobs compiled by the Burst compiler, on all cores. It contours 128³ cells in about 28 to 33 ms in the editor, which is over a thousand times faster than Managed, and supports both QEF solvers. Occupancy-Based Dual Contouring samples the volumes several times as often and takes about 52 ms.
-- **GPU** runs Uniform or Occupancy-Based Dual Contouring in a compute shader, with the SVD solver only. Contouring 128³ cells and reading the mesh back takes about 133 ms for Uniform and 32 ms for Occupancy-Based Dual Contouring, whose searches suit a GPU and whose shader keeps far less for each cell.
+- **Burst** runs the same algorithm as jobs compiled by the Burst compiler, on all cores. It contours 128³ cells in about 28 to 33 ms in the editor, which is over a thousand times faster than Managed, and has all three QEF solvers. Occupancy-Based Dual Contouring samples the volumes several times as often and takes about 52 ms.
+- **GPU** runs Uniform or Occupancy-Based Dual Contouring in a compute shader, with the SVD and probabilistic QEF solvers. Contouring 128³ cells and reading the mesh back takes about 133 ms for Uniform and 32 ms for Occupancy-Based Dual Contouring, whose searches suit a GPU and whose shader keeps far less for each cell.
 
 Burst gives the same mesh as Managed, triangle for triangle, with vertices that differ in the last bits of their coordinates. Where octree simplification or vertex clustering decides right at the error threshold, the two can collapse different nodes.
 
@@ -55,6 +55,34 @@ The seven shapes after the ellipsoid come from Inigo Quilez's [distance function
 Knowing the new shapes makes the Burst and GPU implementations slower over cuboids and ellipsoids: about 8 to 15% for Burst and 11% for the GPU.
 
 Example scenes for each implementation are in `Assets/Scenes/<Algorithm>/Managed` and `Assets/Scenes/<Algorithm>/Burst`. For Uniform Dual Contouring those two folders are under `CPU`, next to `GPU`. Occupancy-Based Dual Contouring has `Burst` and `GPU`.
+
+## QEF Solvers
+The vertex of a cell goes where the QEF of its hermite samples is least: the sum of the squared distances to their planes. Every voxelizer has a **QEF Solver** setting that picks how that point is found:
+
+| Setting | Default | What it does |
+|---|---|---|
+| QEF Solver | SVD | **Simple:** steps from the centre of the cell toward the planes. **SVD:** the point of least error nearest the mass point of the samples, as in *Dual Contouring: The Secret Sauce*. Directions the samples hardly pin down, with singular values under 0.1, stay at the mass point. **Probabilistic:** the point of least expected error when the normals are uncertain, as in *Fast and Robust QEF Minimization using Probabilistic Quadrics* (Trettner and Kobbelt, 2020). |
+| Minimizer Iterations | 6 | The simple solver's steps and the SVD solver's sweeps. Not shown under Probabilistic, which has nothing to iterate. |
+| Normal Deviation | 0.05 | From 0.02 to 1, and only shown under Probabilistic: how uncertain the normals are taken to be, as a standard deviation in each of their components. Lower keeps shallow creases; higher pulls vertices toward the average of their samples. |
+
+**How the probabilistic solver works:** to the plane of each sample it adds a pull toward the sample's own point, weighted by the deviation squared. The QEF then has exactly one point of least error, found with a 3 × 3 linear solve, with nothing to truncate. The error that simplification and clustering compare with their thresholds is the same for all three solvers: the QEF at the vertex.
+
+**Where it works:** every algorithm and implementation. The GPU's shaders have no simple solver and solve with SVD in its place, and the inspector turns a GPU voxelizer's Simple into SVD.
+
+**How it compares with SVD,** at 0.05:
+- **Shallow creases:** it keeps them where SVD flattens them. Where the faces of a crease are less than about 20° apart, a cell's few samples give singular values under 0.1, and SVD leaves the vertex at the mass point across the crease. On a ridge whose faces are 10° apart, at 64³ cells, its vertices are 0.10 of a cell from the ridge on average, against 0.32 with SVD.
+- **The project's shapes:** about the same, since their normals are exact and their edges sharp. On the nine shapes at 32³ cells, upright and turned:
+  - corners and edges are a few thousandths of a cell farther from the mesh than with SVD, at most 0.035 of a cell, at the pyramid's tip;
+  - the worst vertex off a shape is nearer, 0.10 of a cell against 0.18.
+- **Noise:** Normal Deviation should be about as large as the noise in the normals. Below it, vertices wander along curved surfaces and out of their cells. With the project's exact normals, 0.03 already does that: on the torus 78 to 108 vertices of about 1,200 are outside their cells, against 13 to 16 with SVD and 31 to 34 at 0.05.
+- **Simplification:** Adaptive and Manifold Dual Contouring add up the QEFs of many cells, and the pull weighs every sample alike, so a feature that few of them see gives way to the many that do not. Only the error threshold holds such a cluster's vertex to its corner or edge, and fewer clusters pass it.
+  - **Turned cube:** turned about a diagonal, it keeps 251 vertices in Manifold Dual Contouring at 32³ cells and 2e-4, against SVD's 104. At 16³ one of its corners was 0.14 of a cell from the nearest vertex.
+  - **Curved models** simplify as far as with SVD.
+  - Where simplification matters, SVD is the better choice.
+- **Time:** the same within a few percent, in every algorithm and implementation: at 128³ cells Burst contours the three balls in 36.6 ms with it and 38.4 ms with SVD. The solve is a small part of a contour.
+- **Precision:** the solve divides by the number of samples times the deviation squared, which magnifies the rounding of the QEF's sums. Below 0.02 the solve loses its precision in floats, which is why the setting stops there.
+
+The `Probabilistic Solve` scenes sit beside each `SVD Solve` scene, for Uniform, Adaptive and Manifold Dual Contouring, Managed and Burst.
 
 ## Vertex Normals
 Every voxelizer has a **Vertex Normals** setting, with two more after it:
@@ -243,7 +271,7 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 | `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
 | `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. So is the pass that creases the normals of the managed and Burst implementations' meshes, `BurstCreases.cs`. |
-| `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share and the layout they upload density functions in. The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl`. Both crease their normals with `GPUCreases.cs` and its shader, `CreaseNormals.compute`. |
+| `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share, the layout they upload density functions in and the number the shaders know each QEF solver by (`QEFSolver.GPU.cs`). The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl` and the QEF solves in `QEF.hlsl`. Both crease their normals with `GPUCreases.cs` and its shader, `CreaseNormals.compute`. |
 
 Code that only one implementation uses goes in that implementation's folder; code that several of them use stays in `Assets/Scripts`. `SurfaceExtractor`, `QEFSolver` and `DensityFunction` are partial interfaces for the same reason: their managed and GPU members sit in those folders, and their shared members sit in `Assets/Scripts`.
 
@@ -278,3 +306,16 @@ This project implements academic algorithms for dual contouring. Refer to the or
 - *Progressive Meshes* by Hoppe.
 - *Topology Preserving Edge Contraction* by Dey, Edelsbrunner, Guha and Nekhayev.
 - *Occupancy-Based Dual Contouring* by Hwang and Sung.
+- *Fast and Robust QEF Minimization using Probabilistic Quadrics* by Trettner and Kobbelt.
+
+The linear solve of the probabilistic QEF solver (`ProbabilisticQEF.minimize`, `BurstQEF.minimizeProbabilistic` and `minimizeProbabilistic` in `QEF.hlsl`) is ported from `minimizer()` in the authors' [probabilistic-quadrics](https://github.com/Philip-Trettner/probabilistic-quadrics), under this licence:
+
+> MIT License
+>
+> Copyright (c) 2020 Philip Trettner
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
