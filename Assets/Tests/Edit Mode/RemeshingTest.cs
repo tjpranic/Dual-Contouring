@@ -665,18 +665,46 @@ public class RemeshingTest : TopologyTest {
         Assert.LessOrEqual( furthest, 1e-5, "the furthest vertex from the mesh, in cells" );
     }
 
-    // a box turned about an axis, simplified down to its eight corners, keeps its twelve edges as lines and its eight
-    // corners, by every algorithm, as the plan measured it at 32^3 and 64^3 (step 3). Contoured, and turned about a
-    // diagonal, its edges keep the steps of the grid, whose lines come and go (finding 19)
-    [Test]
-    public void aSimplifiedBoxTurnedAboutAnAxisKeepsItsTwelveLinesAndEightCorners( [Values] Algorithm algorithm ) {
-        var shapes = new[] { cube( new Vector3( 0.013f, -0.021f, 0.017f ), 0.25f ).rotated( Quaternion.AngleAxis( 45.0f, Vector3.up ) ) };
+    // a box turned about an axis or a diagonal, whose contour's edges cross the grid with the noise of findings 17 and
+    // 19, keeps its twelve edges as lines and its eight corners when remeshed, with no other feature, read at the
+    // scale the remesh finds its features at (step 3b): every algorithm, contoured and simplified, at 32^3 and 64^3,
+    // turned about an axis; and turned about a diagonal by Manifold, and by Occupancy simplified at 64^3, which are
+    // where it holds (Measurements). The others keep the points where their sheets touch, which are hard, and Occupancy's
+    // contours strips that bridge the creases wider than half a cell. The lines are within a cell of the box's edges,
+    // and the corners of its corners, which Occupancy's simplified box turned about a diagonal only holds to at 64^3:
+    // at 32^3 two of its corners are 1.1 and 1.7 cells off. Simplified, the box turned about an axis is its twelve lines and eight corners
+    // by each edge's own angle too, before and after, as at step 3
+    public enum Turn {
+        AboutAnAxis,
+        AboutADiagonal
+    }
+
+    private static IEnumerable<TestCaseData> turnedBoxes( ) {
+        foreach( var cellsExponent in new[] { 5, 6 } )
+        foreach( var simplified in new[] { false, true } ) {
+            foreach( var algorithm in Enum.GetValues( typeof( Algorithm ) ).Cast<Algorithm>( ) ) {
+                yield return new TestCaseData( Turn.AboutAnAxis, algorithm, simplified, cellsExponent );
+            }
+
+            yield return new TestCaseData( Turn.AboutADiagonal, Algorithm.Manifold, simplified, cellsExponent );
+
+            if( simplified && cellsExponent == 6 ) {
+                yield return new TestCaseData( Turn.AboutADiagonal, Algorithm.Occupancy, simplified, cellsExponent );
+            }
+        }
+    }
+
+    [TestCaseSource( nameof( turnedBoxes ) )]
+    public void aTurnedBoxKeepsItsTwelveLinesAndEightCorners( Turn turn, Algorithm algorithm, bool simplified, int cellsExponent ) {
+        var centre   = new Vector3( 0.013f, -0.021f, 0.017f );
+        var rotation = turn == Turn.AboutAnAxis ? Quaternion.AngleAxis( 45.0f, Vector3.up ) : Quaternion.AngleAxis( 45.0f, Vector3.one );
+        var shapes   = new[] { cube( centre, 0.25f ).rotated( rotation ) };
 
         Voxelizer voxelizer = algorithm switch {
-            Algorithm.Uniform   => this.createVoxelizer<UniformDualContouring>  ( 5, QEFSolverType.SVD, shapes ),
-            Algorithm.Adaptive  => this.createVoxelizer<AdaptiveDualContouring> ( 6, QEFSolverType.SVD, shapes ),
-            Algorithm.Manifold  => this.createVoxelizer<ManifoldDualContouring> ( 6, QEFSolverType.SVD, shapes ),
-            Algorithm.Occupancy => this.createVoxelizer<OccupancyDualContouring>( 5, QEFSolverType.SVD, shapes ),
+            Algorithm.Uniform   => this.createVoxelizer<UniformDualContouring>  ( cellsExponent,     QEFSolverType.SVD, shapes ),
+            Algorithm.Adaptive  => this.createVoxelizer<AdaptiveDualContouring> ( cellsExponent + 1, QEFSolverType.SVD, shapes ),
+            Algorithm.Manifold  => this.createVoxelizer<ManifoldDualContouring> ( cellsExponent + 1, QEFSolverType.SVD, shapes ),
+            Algorithm.Occupancy => this.createVoxelizer<OccupancyDualContouring>( cellsExponent,     QEFSolverType.SVD, shapes ),
             _                   => throw new ArgumentException( algorithm.ToString( ) )
         };
 
@@ -690,22 +718,94 @@ public class RemeshingTest : TopologyTest {
 
         voxelizer.implementationType   = ImplementationType.Burst;
         voxelizer.keepDebugInformation = false;
-        voxelizer.meshSimplification   = true;
+        voxelizer.meshSimplification   = simplified;
 
         var ( input, output, statistics ) = this.isotropicOf( voxelizer );
 
         Assert.IsNull( statistics.gaveUp, "gave up" );
 
-        foreach( var ( mesh, which ) in new[] { ( input, "simplified" ), ( output, "remeshed" ) } ) {
+        // the box's corners, and its edges as their two ends
+        var corners = Enumerable.Range( 0, 8 ).Select( ( k ) => ( double3 )( float3 )( centre + ( rotation * new Vector3( ( k & 1 ) != 0 ? 0.25f : -0.25f, ( k & 2 ) != 0 ? 0.25f : -0.25f, ( k & 4 ) != 0 ? 0.25f : -0.25f ) ) ) ).ToArray( );
+        var edges   = Enumerable.Range( 0, 8 ).SelectMany( ( k ) => Enumerable.Range( 0, 3 ).Where( ( bit ) => ( k & ( 1 << bit ) ) == 0 ).Select( ( bit ) => ( corners[k], corners[k | ( 1 << bit )] ) ) ).ToArray( );
+        var cell    = ( double )voxelizer.cellSize;
+
+        double offTheEdges( double3 point ) {
+            return edges.Min( ( edge ) => {
+                var along = math.clamp( math.dot( point - edge.Item1, edge.Item2 - edge.Item1 ) / math.lengthsq( edge.Item2 - edge.Item1 ), 0.0, 1.0 );
+
+                return math.distance( point, edge.Item1 + ( ( edge.Item2 - edge.Item1 ) * along ) );
+            } );
+        }
+
+        // the scale the remesh found its features at
+        var featureLength = math.min( statistics.edgeLength, 1.0 ) * cell;
+
+        var readings = new List<( Mesh mesh, string which, double length )> { ( output, "remeshed", featureLength ) };
+
+        if( turn == Turn.AboutAnAxis ) {
+            readings.Add( ( input, "as given", featureLength ) );
+        }
+        if( turn == Turn.AboutAnAxis && simplified ) {
+            readings.Add( ( input, "as given, by each edge's own angle", 0.0 ) );
+            readings.Add( ( output, "remeshed, by each edge's own angle", 0.0 ) );
+        }
+
+        foreach( var ( mesh, which, length ) in readings ) {
             var built = new HandBuiltMesh( );
 
             built.positions.AddRange( mesh.vertices );
             built.triangles.AddRange( trianglesWithSubMeshesOf( mesh ) );
 
-            using var features = new FeatureMeshRun( built, 40.0 );
+            using var features = new FeatureMeshRun( built, 40.0, length );
 
-            Assert.AreEqual( ( 12, 8 ), ( features.lineCount, features.kinds.Count( ( kind ) => kind == BurstIsotropic.Kind.Corner ) ), $"lines and corners, {which}, of {mesh.vertexCount} vertices" );
+            var found = features.cornerVertices( );
+
+            Assert.AreEqual( ( 12, 8 ), ( features.lineCount, found.Length ), $"lines and corners, {which}, of {mesh.vertexCount} vertices" );
+
+            foreach( var corner in found ) {
+                Assert.Less( corners.Min( ( c ) => math.distance( c, features.positionOf( corner ) ) ), cell, $"{which}: corner {corner} at {features.positionOf( corner )} is at a corner of the box" );
+            }
+
+            foreach( var edge in features.edges( ).Where( ( edge ) => features.mesh.edgeLines[edge.edge] != -1 ) ) {
+                Assert.Less( math.max( offTheEdges( features.positionOf( edge.a ) ), offTheEdges( features.positionOf( edge.b ) ) ), cell, $"{which}: feature edge {edge.a}-{edge.b} is along an edge of the box" );
+            }
         }
+    }
+
+    // a remesh finds the features by angle of a simplified model of flat faces as each edge's own angle has them: at
+    // the scale of its edge length, but of no more than a cell (decision 12). The slab's sides are 6 cells wide at 32^3,
+    // and the simplified slab is remeshed at edges of 12, at which they would be merged into its top and bottom
+    [Test]
+    public void aRemeshFindsTheFeaturesOfASimplifiedSlabAtNoMoreThanACell( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm ) {
+        Voxelizer voxelizer = algorithm == Algorithm.Uniform
+            ? this.createVoxelizer<UniformDualContouring>( 5, QEFSolverType.SVD, slabWithBand )
+            : this.createVoxelizer<OccupancyDualContouring>( 5, QEFSolverType.SVD, slabWithBand );
+
+        voxelizer.implementationType   = ImplementationType.Burst;
+        voxelizer.keepDebugInformation = false;
+        voxelizer.meshSimplification   = true;
+
+        var ( input, _, statistics ) = this.isotropicOf( voxelizer );
+
+        Assert.Greater( statistics.edgeLength, 8.0, "the edge length, in cells" );
+
+        var kept   = Remeshing.of( input, voxelizer.cellSize );
+        var length = kept.lengthOf( Remeshing.Technique.Isotropic, 1.0f );
+
+        Assert.AreEqual( voxelizer.cellSize, kept.featureLengthOf( length ), 1e-6, "the length the features are found at" );
+        Assert.AreEqual( 0.5 * voxelizer.cellSize, kept.featureLengthOf( 0.5 * voxelizer.cellSize ), 1e-9, "a length under a cell, as it is" );
+
+        var built = new HandBuiltMesh( );
+
+        built.positions.AddRange( input.vertices );
+        built.triangles.AddRange( trianglesWithSubMeshesOf( input ) );
+
+        using var each    = new FeatureMeshRun( built, 40.0 );
+        using var atScale = new FeatureMeshRun( built, 40.0, kept.featureLengthOf( length ) );
+
+        Assert.AreEqual( each.lineCount, atScale.lineCount, "lines" );
+        Assert.AreEqual( each.featureEdgeCount, atScale.featureEdgeCount, "feature edges" );
+        CollectionAssert.AreEqual( each.kinds, atScale.kinds, "what every vertex is" );
     }
 
     // a box along the grid shades flat on its faces when remeshed, contoured or simplified, with either kind of normals

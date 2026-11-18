@@ -66,6 +66,7 @@ internal class FeatureMeshRun : IDisposable {
         [ReadOnly] public NativeArray<FeatureOperation>   operations;
 
         public double      cosine;
+        public double      length;
         public FeatureMesh mesh;
 
         public NativeArray<int> lineCount;
@@ -90,6 +91,7 @@ internal class FeatureMeshRun : IDisposable {
 
             new BurstFeatures.SkeletonJob {
                 cosine    = this.cosine,
+                length    = this.length,
                 mesh      = this.mesh.mesh,
                 edgeLines = this.mesh.edgeLines,
                 corners   = this.mesh.corners,
@@ -172,7 +174,11 @@ internal class FeatureMeshRun : IDisposable {
     public readonly double3[]     placed;
     public readonly Kind[]        kinds;
 
-    public FeatureMeshRun( HandBuiltMesh built, double angle, params FeatureOperation[] operations ) {
+    public FeatureMeshRun( HandBuiltMesh built, double angle, params FeatureOperation[] operations ) : this( built, angle, 0.0, operations ) {
+    }
+
+    // with the features by angle found at the scale of a length (BurstFeatures)
+    public FeatureMeshRun( HandBuiltMesh built, double angle, double length, params FeatureOperation[] operations ) {
         this.mesh = new FeatureMesh( built.positions.Count, built.triangles.Count, Allocator.TempJob );
 
         using var positions     = built.nativePositions( );
@@ -195,6 +201,7 @@ internal class FeatureMeshRun : IDisposable {
             triangles  = triangles,
             operations = nativeActs,
             cosine     = math.cos( math.radians( angle ) ),
+            length     = length,
             mesh       = this.mesh,
             lineCount  = lineCount,
             vertices   = vertices,

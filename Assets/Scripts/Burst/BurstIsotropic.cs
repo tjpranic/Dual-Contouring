@@ -325,6 +325,7 @@ public static class BurstIsotropic {
 
         public double length;        // l, the length the edges are to have
         public double featureCosine; // of the Feature Angle (BurstFeatures)
+        public double featureLength; // the length the features by angle are found at (BurstFeatures), or 0 for each edge's own
         public int    iterations;    // of the loop
         public int    areaRounds;    // of the smoothing that equalizes areas, after the loop
         public double damping;       // the paper's lambda, for that smoothing
@@ -1303,7 +1304,7 @@ public static class BurstIsotropic {
         using( buildMarker.Auto( ) ) {
             new BurstMeshSimplifier.BuildJob { positions = positions, normals = normals, triangles = triangles, mesh = mesh.mesh }.Run( );
 
-            new BurstFeatures.SkeletonJob { cosine = settings.featureCosine, mesh = mesh.mesh, edgeLines = mesh.edgeLines, corners = mesh.corners, lineCount = lineCount }.Run( );
+            new BurstFeatures.SkeletonJob { cosine = settings.featureCosine, length = settings.featureLength, mesh = mesh.mesh, edgeLines = mesh.edgeLines, corners = mesh.corners, lineCount = lineCount }.Run( );
             new ConstraintsJob { mesh = mesh }.Run( );
 
             var total = 0.0;

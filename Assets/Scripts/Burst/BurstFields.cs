@@ -1432,6 +1432,7 @@ public static class BurstFields {
         public Symmetry symmetry;
         public double   length;        // rho, the edge length of the lattice
         public double   featureCosine; // of the Feature Angle (BurstFeatures)
+        public double   featureLength; // the length the features by angle are found at (BurstFeatures), or 0 for each edge's own
         public bool     creases;       // vertices of feature edges by angle take a triangle's normal (section 3.5)
         public bool     smallerRatio;  // the hierarchy scored by the smaller ratio of two areas, as the paper writes it
         public int      iterations;    // of the smoothing, a level
@@ -1549,6 +1550,7 @@ public static class BurstFields {
 
             new BurstFeatures.SkeletonJob {
                 cosine    = settings.featureCosine,
+                length    = settings.featureLength,
                 mesh      = fields.mesh.mesh,
                 edgeLines = fields.mesh.edgeLines,
                 corners   = fields.mesh.corners,

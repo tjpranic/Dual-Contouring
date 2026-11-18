@@ -242,6 +242,7 @@ public class Remeshing {
                     new BurstIsotropic.Settings {
                         length        = length,
                         featureCosine = math.cos( math.radians( ( double )settings.featureAngle ) ),
+                        featureLength = featureLengthOf( length ),
                         iterations    = settings.iterations,
                         areaRounds    = settings.areaIterations,
                         damping       = BurstIsotropic.damping
@@ -310,6 +311,14 @@ public class Remeshing {
         );
 
         return mesh;
+    }
+
+    // the length the features by angle of the mesh are found at, for a remesh at a length (BurstFeatures; step 3b,
+    // decision 12): the length, but no more than a cell of the contour. The noise that features by angle are found
+    // at the scale of a length to clear is of the contour's cells, whatever the length, and a simplified mesh is
+    // remeshed at lengths of many cells, which would take its features smaller than that with it
+    public double featureLengthOf( double length ) {
+        return Math.Min( length, this.cellSize );
     }
 
     // why a remesh at a length gives up before it starts: the mesh has no area, or the length would make more

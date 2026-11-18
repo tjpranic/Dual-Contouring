@@ -470,6 +470,48 @@ public class BurstFieldsTest : TopologyTest {
     }
 
     [Test]
+    public void theFeaturesOfTheMeshTheFieldsAreOnAreFoundAtTheFeatureLength( ) {
+        // a strip 0.42 wide that bridges a right angle between two faces, along x: two creases by each edge's own angle,
+        // and at a length of 1 one, which is the strip merged into a face (BurstFeatures)
+        var built = new HandBuiltMesh( );
+
+        for( var x = 0; x < 6; ++x ) {
+            for( var row = 0; row < 6; ++row ) {
+                var from = row == 0 ? 0.3f : row;
+
+                built.quad( new Vector3( x, from, 0 ), new Vector3( x + 1, from, 0 ), new Vector3( x + 1, row + 1, 0 ), new Vector3( x, row + 1, 0 ) );
+                built.quad( new Vector3( x, 0, from ), new Vector3( x, 0, row + 1 ), new Vector3( x + 1, 0, row + 1 ), new Vector3( x + 1, 0, from ) );
+            }
+
+            built.quad( new Vector3( x, 0, 0.3f ), new Vector3( x + 1, 0, 0.3f ), new Vector3( x + 1, 0.3f, 0 ), new Vector3( x, 0.3f, 0 ) );
+        }
+
+        using var positions = built.nativePositions( );
+        using var normals   = built.nativeNormals( );
+        using var triangles = built.nativeTriangles( );
+
+        foreach( var ( featureLength, expected ) in new[] { ( 0.0, 2 ), ( 1.0, 1 ) } ) {
+            var settings = settingsOf( Symmetry.Quads, 4.0 );
+
+            settings.featureLength = featureLength;
+
+            var report = new BurstFields.Report( );
+
+            using var fields = BurstFields.prepare( positions, normals, triangles, settings, Allocator.TempJob, ref report );
+
+            var lines = new HashSet<int>( );
+
+            for( var edge = 0; edge < fields.mesh.mesh.edgeCount; ++edge ) {
+                if( fields.mesh.mesh.edges[edge].x != -1 && fields.mesh.edgeLines[edge] != -1 && fields.mesh.mesh.edgeSharp[edge] == BurstMeshSimplifier.Sharp.None ) {
+                    lines.Add( fields.mesh.edgeLines[edge] );
+                }
+            }
+
+            Assert.AreEqual( expected, lines.Count, $"lines by angle at a feature length of {featureLength}" );
+        }
+    }
+
+    [Test]
     public void levelZeroOfAFlatPatchHasItsNormalsItsAreasAndItsRimHeld( ) {
         // at a length of 4 no edge is split: the longest is a diagonal
         var built = new HandBuiltMesh( ).patch( 4, 4 );

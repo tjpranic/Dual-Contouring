@@ -2,18 +2,19 @@
 
 Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mesh simplification, with three techniques to choose between: evenly shaped triangles from a loop of edge splits, collapses, flips and smoothing; triangles or quads that follow an orientation field; and quads with few irregular vertices.
 
-**Status:** steps 0 to 2 done on 2026-11-17. Step 3 is implemented and under correctness review; its turned-box acceptance requirement is still outstanding (finding 19). Step 4, the fields of Field Aligned, done on 2026-11-18. Step 3b has not been built.
+**Status:** steps 0 to 2 done on 2026-11-17. Step 3, the isotropic loop, done; its turned-box acceptance (finding 19) holds since step 3b, where the test now asks it to. Step 4, the fields of Field Aligned, done on 2026-11-18. Step 3b, features by angle at the scale of the edge length, done on 2026-11-18 after step 4.
 - **Step 0,** on the user's "Alright, begin on step 0.": the baseline, and a measure of what the pass will meet.
 - **Step 1,** on "Start step 1.": the frame, with a stand-in technique.
 - **Step 2,** on "Looks good so far, continue.": Isotropic's skeleton, operations and search, committed as 7caab82.
 - **Step 3,** on "Alright, continue with step 3.", and after a pause on "Just do whatever is easiest to fix the long test, then proceed with step 3 of the plan.": the loop, with Isotropic wired in as a technique. Committed as 0454939.
   - On 2026-11-18, "Add those fixes in.": preserve hard-polyline breakpoints and validate face orientation against the immutable input. Scale-aware angle-feature cleanup remains separate.
-- **Step 4,** on "Let's continue implementing the resmeshing plan. We are on step 4 now.": the sheets, and the two fields with their hierarchy. Nothing is wired in yet, which is step 5's. Uncommitted.
-  - **Step 3b was passed over** by that go-ahead. Step 4 does not need it: the fields are held to open edges and lines between materials, which 3b leaves alone. What 3b would change in step 4 is which vertices count as on a crease (Measurements).
+- **Step 4,** on "Let's continue implementing the resmeshing plan. We are on step 4 now.": the sheets, and the two fields with their hierarchy. Nothing is wired in yet, which is step 5's. Committed as e7e5769.
+  - **Step 3b was passed over** by that go-ahead, and done after it. The fields are held to open edges and lines between materials, which 3b leaves alone; what it changes for them is which vertices count as on a crease. Step 4's measurements were made before it.
+- **Step 3b,** on "Let's do step 3b first.": the skeleton at the scale of the edge length, in `BurstFeatures`, for Isotropic now and the fields at step 5. Uncommitted.
 
-**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting. Step 4 raised none, and made two choices the user has not seen yet: the code's score for the hierarchy in place of the paper's (finding 22), and two departures from the code in how the fields are held to lines (finding 23).
+**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting. Step 4 raised none, and made two choices the user has not seen yet: the code's score for the hierarchy in place of the paper's (finding 22), and two departures from the code in how the fields are held to lines (finding 23). Step 3b raised a twelfth: the scale of the features of a simplified mesh, which 3b builds at no more than a cell, short of decision 10's *l* (finding 26). The user answered it on 2026-11-18, as recommended: no more than a cell.
 
-**Next:** step 5, Field Aligned's mesh, or step 3b, which is still open. Either waits for the go-ahead.
+**Next:** step 5, Field Aligned's mesh, which waits for the go-ahead.
 
 **Papers,** all in `Documents/Papers/`:
 - *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): the technique called **Isotropic** below. It is its section 4.
@@ -242,6 +243,7 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
     - **Not clean** on contours whose edges cross the grid. At 64³ Uniform's contour of the cube turned about a diagonal has 359 lines and Occupancy's 259, and the remesh leaves 242 and 109. Simplified, Occupancy's comes out with 15 lines and Uniform's with 131; Manifold's came out with 12 in a run before the last changes to the loop.
     - **Why:** where an edge crosses the grid, the contour's triangles bridge the crease, and each side of the bridge meets its face at about half the crease's angle. At a Feature Angle of 40° both sides of a right angle's bridge are features, which makes the crease two lines with a strip between them. Their corners are further apart than 4/5 *l*, so the rule of finding 9 that merges corners keeps them.
     - **What would clear it** is a skeleton found at the scale of *l*, which all three techniques share. Decision 10 chose that, and step 3b builds it.
+    - **Since step 3b** (Measurements): read at the scale the remesh finds its features at, the cube turned about an axis comes out as its 12 lines and 8 corners from every algorithm at every grid, contoured and simplified, and so does the cube turned about a diagonal by Manifold and by Occupancy simplified, within a cell of the true ones. A test holds them at 32³ and 64³. Uniform's and Adaptive's cube turned about a diagonal keep the points where their sheets touch, which are hard. Occupancy's contours of it keep strips that bridge the creases wider than half a cell, and come out with 29, 34 and 89 lines at the three grids, where they had 62, 109 and 228. The cause turned out to be more than finding 19 says (finding 25).
 
 20. **Contours and simplified meshes fold in places, and a remesh keeps their folds.** Uniform's contour of the turned shapes has a sliver lying in a flat face the other way up, and its simplified mesh has places crumpled within a cell. Every operation of the loop keeps a triangle facing as it did, so what is folded stays folded. The tests hold the remesh to adding no fold where the input faces one way.
 
@@ -274,6 +276,19 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
     - **What it costs** is in the Measurements. A simplified mesh has few vertices to begin with, so twelve times as many is still fewer than the contour had. A contour at 128³ is given fields on a mesh of over a million vertices.
     - **The reference code never meets this:** its default asks for a sixteenth of the input's vertices, at which nothing is split.
     - **Not changed here.** Whether a looser limit than half the edge length gives fields as good is step 8's to measure.
+
+25. **The noise of finding 17 is of four kinds, and lies on the crease more often than beside it** (step 3b, Measurements). Step 3b measured every feature edge of the two turned cubes against their true edges, which are known exactly.
+    - **Slivers along the crease.** On the cube turned about an axis every one of the contour's feature edges lies on a true edge, within a fiftieth of a cell, and the contour's vertices on each edge are joined one to the next, yet Uniform's contour at 32³ has 66 lines and 38 corners. Its slivers are 10⁻⁵ cells high, their three corners on the crease, many folded flat over it: the long edge and the two short ones both draw the crease, and both ends get three feature edges.
+    - **Triangles without area.** Some slivers are exactly flat. Their normal is nothing, they bend against no triangle, and found by angle they join the two sides of a crease into one patch.
+    - **Strips that bridge the crease,** as finding 19 says. Occupancy's at 40.7° to 43° against each face, just over the Feature Angle.
+    - **Creases spread over two or three edges** of 30° to 45° each, of which only some are over the angle, which breaks the crease into pieces with loose ends between them. Manifold's contours and Occupancy's.
+    - **Folds:** Uniform's contour has triangles turned back by 150° to 165° beside the crease, and edges of four triangles on it (finding 18).
+    - **What clears them** is the rule of step 3b (Design): thin patches merged into their neighbours, and creases cut by the band across them.
+
+26. **At the scale of *l*, a simplified mesh of flat faces loses features the simplifier kept** (step 3b, Measurements). The edge length goes by the mesh the pass is given (decision 9), and on simplified flat models it is 15 to 48 cells (finding 16). At that scale the sides of the slab with a band, 6 cells wide at 32³, are thin patches, and merge into its top and bottom.
+    - **What is lost,** at 64³: the slab with a band's feature edges by angle go from 461 cells long to 218 by Uniform and 123 by Occupancy, the hollows across faces' lines from 84 to 12, and the slab across the bounds' from 274 cells to 137. A remesh would round off what the simplifier kept sharp.
+    - **The noise is of the contour's cells,** whatever the edge length: a sliver is no wider at 128³ than at 32³, and a bridge is never wider than a cell.
+    - **What is built** (decision 12, answered as recommended): features by angle found at the edge length, but at no more than a cell (`Remeshing.featureLengthOf`). Every simplified flat model then keeps its skeleton exactly, and the noise is still more than halved. At the edge length uncapped, the simplified round and turned shapes would have somewhat fewer lines still (Measurements).
 
 ## Design
 
@@ -314,6 +329,13 @@ On `Voxelizer`, under a **Remeshing** header after Mesh Simplification, carried 
 In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and `BurstMesh.Triangle`:
 
 - **The feature skeleton** (finding 6): the kind of every edge, the corners, and the lines as runs of edges between corners or closed loops (`BurstFeatures`). An edge is hard where the simplifier's lists count it sharp, and by angle otherwise (finding 9). The simplifier's lists keep their three kinds of sharp edge: the angle kind is the remesher's own, kept beside them, and `check` never sees it (finding 17). What is a corner goes by the feature edges a vertex has at the time, with the turns and tips found on the input carried along (step 2).
+  - **Features by angle at a scale** (step 3b, findings 25 and 26), the edge length but no more than a cell:
+    - **Patches:** the triangles are joined across every edge that is not hard and does not bend at that scale. An edge of up to half the Feature Angle does not. One of more than the angle does. One in between does where the band of triangles within the length of it, on either side of it, bends by more than the angle, or where one side of the band weighs less than a tenth of the other, as beside a sliver. In the band a triangle's normal is weighted by its area, but by no more than the band's along the edge. A triangle without area joins nothing.
+    - **Thin patches,** of twice their area over their perimeter under half the length, are merged into the neighbour across edges that are not hard that they lie best against, by the length between them and how near their normals are, thinnest first, again where a merge leaves one thin.
+    - **Feature edges by angle** are the edges between two patches, and the edges that bend at that scale inside a patch as it was found that was not merged away, which is a crease that fades out.
+    - **Loose lines** by angle shorter than the length are taken out.
+    - **Turns:** a line by angle turns where it turns by more than the angle over the length on either side. A **tip** is where its triangles' normals, weighted by area, add up to less than the cosine of the angle times their sum.
+    - **At a length of 0,** each edge's own angle, as before. Hard features are as they were at every length.
 - **Splitting long edges:** the first operation of Isotropic's loop. Field Aligned and QuadriFlow prepare their input with it (finding 3).
 - **Sheets** (decision 4; `BurstSheets`, step 4): the mesh split along its edges of four triangles and at its vertices of several fans, so that what is left is a manifold. Field Aligned and QuadriFlow work on the sheets. Isotropic does not need them.
   - **The pairing round an edge of four triangles,** as step 0's probe found it (finding 18): across the wedges inside the solid where the windings alternate round the edge; else each triangle with its neighbour of opposite winding.
@@ -560,6 +582,31 @@ Each step compiles, passes every test, and is reviewed before the next one start
    Hard features (open edges, edges of more than two triangles, edges between materials) are not touched.
    - **Measured here:** the lines and corners of the two turned cubes against their own 12 and 8, contoured and simplified, by every algorithm from 32³ to 128³ (finding 19); the skeletons of the 15 models before and after; what it changes in Isotropic's measures and time.
    - **Tested here:** the test of the simplified box turned about an axis widens to the contours and the box turned about a diagonal, wherever they then hold.
+   - **Done 2026-11-18,** on the user's "Let's do step 3b first.", after step 4.
+     - **Built:**
+       - `BurstFeatures.SkeletonJob` takes a length (`length`), and at more than 0 finds the features by angle at its scale (Design): patches, thin patches merged, the band, loose lines taken out, turns and tips at the scale. At 0 it is the edge's own angle, as before, which the step checked on all 48 meshes of the turned cubes: identical.
+       - `BurstIsotropic.Settings.featureLength` and `BurstFields.Settings.featureLength`: the length each technique finds its features at, or 0. `Remeshing.featureLengthOf`, the edge length but no more than a cell, which `Remeshing` gives Isotropic. The fields are given it at step 5, when they are wired in; until then they find features by each edge's own angle.
+       - The test helper `FeatureMeshRun` takes a length.
+     - **Settled while building**, each from the probe against the turned cubes' true edges (finding 25):
+       - **Patches before bands.** A rule by the band alone cannot draw a crease once: two lines either side of a bridge bend alike across the band. Patches of the edges that do not bend, with the thin ones merged away, can only meet along one line.
+       - **A triangle without area joins nothing.** Through such triangles the faces either side of every crease of the cube turned about an axis were one patch, and the creases were left only as creases inside it.
+       - **An edge over the angle is always cut.** A first rule joined it where its band was flat, for folds on flat faces, which a merge of thin patches takes care of anyway. It also joined slivers to the face either side of them, which joined the faces of a crease.
+       - **The band is round the edge,** taking in triangles within the length of it along the line too. A band kept to the edge's own stretch found spread creases less often on contours: Occupancy's diagonal cube remeshed with 56 lines at 64³ where the round band gives 34. The cost is that a crease is carried up to a length past where it stops bending by the angle, through edges that still bend by more than half of it.
+       - **A triangle's weight in the band** is capped at the band's area along the edge. Uncapped, a cube face's triangle 14 cells high outweighed a ball's 2 cells high, and the crease between them was lost.
+       - **The thin limit is half the length.** At one length the faces of the simplified cubes were thin, since *l* there is about a face's size.
+       - **Tips by area.** By any one triangle, a vertex whose sliver was merged away kept a tip, as the sliver faced the other way.
+       - **Turns over the length.** By each edge, the zigzag of a merged bridge turns at every vertex: the cubes with a ball at 64³ have 72 lines read so, and 24 at scale.
+       - **The scale is no more than a cell** (finding 26, decision 12).
+     - **Measured** (Measurements): the turned cubes' skeletons and their remeshes against their true edges, by every algorithm from 32³ to 128³; the skeletons of the 15 models before and after; the scale at *l* against at a cell; what it changes in Isotropic's measures and time. It gave findings 25 and 26, and decision 12.
+     - **Tests:** 47 more, where one test of 4 cases was replaced: 43 more in all.
+       - **`BurstFeaturesTest`, 23,** on meshes built by hand with the noise of finding 25, each at a length of 0 and at a length: each edge's own angle at 0, on six meshes; a sliver without area, and a sliver folded over, on a crease; a strip that bridges a crease, thinner and wider than half the length; a crease spread over three edges of 30°, and a round whose edges of 30° bend by less across the band; a bend of 30° beside a triangle 40 high; a crease that fades out, shorter and longer than the length; a cone's tip; hard features at every length; a box at every length; a strip merged into the face it lies nearest, never across a line between materials, and again where it was merged into another thin strip; a crease inside a strip that is merged away; a sliver among triangles of 10; a crease that zigzags.
+       - **`RemeshingTest`, 23:** the turned boxes, 21 cases, replace the test of the simplified box turned about an axis; and the simplified slab with a band keeps its features at the remesh's scale, by Uniform and Occupancy.
+       - **`BurstFieldsTest`, 1:** the mesh the fields are on finds its features at their feature length.
+     - **Deliberate mistakes:** 31 were tried, 27 in the skeleton and 4 where the scale is passed on. 30 failed a test.
+       - **13 passed the new unit tests at first.** Six of them failed the turned boxes, and six more tests were added for the rest, each on a mesh built to need what it tests.
+       - **The one that passes** is the guard that keeps a hard line from being taken out as a loose one. A vertex never has exactly one hard feature edge: open edges come in pairs at a vertex, and so do lines between materials. It is kept.
+       - **Two tests needed a second try at their meshes,** and are worth knowing about: within a length of a crease, an edge that bends by more than half the angle is cut by the band, so a mesh whose strip twists by more than that a column, or whose faces twist, has features of its own.
+     - **Baselines after step 3b:** edit mode 3781 of 3781 in 416 s, play mode 21 of 21, Unity in front; the 480 `Start` hashes are step 0's, byte for byte.
 
 4. **Field Aligned: the fields (large).** Sheets, the preparation, graph, normals, areas, hierarchy, colouring, both fields, for quads and triangles. **Measured here:** the energies by level, the irregular points of both fields against the edge length, time by stage from 32³ to 128³; what is left of finding 18 after the sheets; the hierarchy scored by min against max, and normals at creases against none (findings 11 and 17).
    - **Done 2026-11-18,** on the user's "Let's continue implementing the resmeshing plan. We are on step 4 now.", with step 3b not built.
@@ -895,6 +942,109 @@ Past five iterations, little changes but the time, so the default is the paper's
 - **Triangles** take a third to four fifths longer than quads: their search for lattice steps is over 36 pairs, each lattice's six found among sixteen.
 - **The split and the hierarchy** are by one worker, and take a third to a half of a contour's time between them.
 
+### Features at the scale of the edge length (step 3b, 2026-11-18)
+
+**Setup:**
+- **The turned cubes:** step 3's two, by every algorithm (Burst) at 32³, 64³ and 128³, contoured and simplified at the voxelizer's defaults. Their 12 edges and 8 corners are known exactly. A feature edge is **on** a true edge where both its ends are within a fiftieth of a cell of it, **beside** where within a cell, and **far** otherwise.
+- **The skeletons:** the 15 models, by every algorithm at the three grids, contoured and simplified: 360 meshes.
+- **The scale:** the edge length a remesh at 1 has, but no more than a cell, as `Remeshing.featureLengthOf` gives it, unless a table says otherwise. The Feature Angle is 40°.
+- **The probe:** `SkeletonProbe.cs` in the probes folder, with `run_step3b_measures.sh`, and `IsotropicProbe.cs` with `run_isotropic_3b.sh`. Unity was in front throughout, and the runs were on the final code.
+
+**The turned cubes as given,** by each edge's own angle / at scale: lines, corners (of them within a cell of a true corner), feature edges beside and far. Adaptive is Uniform's to the edge:
+
+| Cube | Algorithm | Grid | Contour | Simplified |
+|---|---|---|---|---|
+| about an axis | Uniform, Manifold | 32³ | 66, 38 (8) / 12, 8 (8) | 12, 8 / 12, 8 |
+| | | 64³ | 122, 73 (12) / 12, 8 (8) | 12, 8 / 12, 8 |
+| | | 128³ | 190, 136 (8) / 12, 8 (8) | 12, 8 / 12, 8 |
+| | Occupancy | 32³ | 12, 8 / 12, 8 | 12, 8 / 12, 8 |
+| | | 64³ | 32, 25 (8) / 12, 8 (8) | 12, 8 / 12, 8 |
+| | | 128³ | 24, 16 (8) / 12, 8 (8) | 12, 8 / 12, 8 |
+| about a diagonal | Uniform | 32³ | 167, 114, 36 beside, 7 far / 27, 24, 6, 0 | 62, 36, 12, 19 / 26, 21, 1, 2 |
+| | | 64³ | 359, 238, 111, 10 / 54, 50, 17, 0 | 144, 81, 24, 49 / 64, 50, 6, 9 |
+| | | 128³ | 699, 471, 212, 29 / 102, 100, 39, 0 | 282, 165, 41, 117 / 101, 86, 4, 16 |
+| | Manifold | 32³ | 118, 83 / 12, 8 | 12, 8 / 12, 8 |
+| | | 64³ | 247, 169 / 17, 12 | 12, 8 / 12, 8 |
+| | | 128³ | 475, 333 / 24, 20 | 12, 8 / 12, 8 |
+| | Occupancy | 32³ | 127, 101, 165, 14 / 62, 59, 136, 4 | 69, 46, 57, 15 / 24, 22, 41, 2 |
+| | | 64³ | 259, 214, 376, 22 / 107, 102, 301, 16 | 85, 60, 87, 14 / 27, 25, 62, 4 |
+| | | 128³ | 487, 406, 725, 65 / 212, 208, 588, 39 | 166, 119, 112, 41 / 68, 64, 90, 14 |
+
+- **Uniform's cube turned about a diagonal** keeps 12, 34 and 68 points where its sheets touch, which are hard, at the three grids.
+- **Occupancy's** keeps strips that bridge its creases wider than half a cell: the feature edges beside the true ones are four in ten of its contour's at scale.
+
+**The turned cubes remeshed** by Isotropic at the defaults, read at the remesh's own scale: lines and corners, with the features found the old way / at scale:
+
+| Cube | Algorithm | 32³ contour | simplified | 64³ contour | simplified | 128³ contour | simplified |
+|---|---|---|---|---|---|---|---|
+| about an axis | Uniform, Adaptive, Manifold | 12, 8 | 12, 8 | 12, 8 | 12, 8 | 12, 8 | 12, 8 |
+| | Occupancy | 12, 8 | 12, 8 | 12, 8 | 12, 8 | 12, 8 | 12, 8 |
+| about a diagonal | Uniform | 28, 28 | 26, 20 | 52, 54 | 65, 50 | 101, 109 | 104, 86 |
+| | Manifold | 12, 8 | 12, 8 | 12, 8 | 12, 8 | 20, 16 | 12, 8 |
+| | Occupancy | 29, 25 | 12, 8 | 34, 31 | 12, 8 | 89, 85 | 24, 19 |
+
+- **Read by each edge's own angle,** as step 3's test read them, the remeshes before 3b had 66, 122 and 189 lines on Uniform's axis cube, 63, 121 and 189 on Manifold's diagonal one, and 62, 109 and 228 on Occupancy's diagonal contours. Read so after 3b, the axis cube by Uniform keeps 32, 43 and 62 lines, every one of them on a true edge: slivers of the remesh along its creases, a matter of its triangles and not of its features.
+- **Corners:** every one is within a cell of a true corner, but two of Occupancy's simplified diagonal cube at 32³, at 1.1 and 1.7 cells.
+- **Far edges,** more than a cell off any true edge, read at scale: none on the contours but 1 and 3 of Occupancy's at 32³ and 128³; 4, 12 and 20 on Uniform's simplified diagonal cube and 5 on Occupancy's at 128³. Before 3b, read by each edge, there were 22, 57 and 122 on Uniform's.
+
+**The skeletons of the 15 models,** every algorithm, lines / corners / length of the feature edges by angle in cells, by each edge's own angle → at scale:
+
+| Grid | Contour | Simplified |
+|---|---|---|
+| 32³ | 6,384 / 4,301 / 12,638 → 2,702 / 2,462 / 9,708 | 3,435 / 2,317 / 10,946 → 2,381 / 1,924 / 9,779 |
+| 64³ | 12,295 / 8,153 / 25,616 → 4,044 / 3,907 / 19,794 | 6,195 / 4,003 / 23,303 → 3,358 / 2,930 / 19,689 |
+| 128³ | 23,572 / 15,689 / 51,535 → 6,574 / 6,799 / 39,669 | 11,077 / 7,056 / 47,314 → 5,208 / 5,069 / 39,456 |
+
+- **The flat models,** the cube, both slabs, the plate, the hollows across faces, the two balls and the ball, have the same skeleton at scale as by each edge, on every mesh.
+- **More lines or corners at scale** on one mesh: Occupancy's simplified cut-away ball at 32³, 3 lines and 10 corners → 13 and 16, where the band finds a crease spread over its edges.
+- **Most of the length taken out** is the noise of finding 25: at 64³ the turned and the new shapes lose a fifth (Occupancy) to a half (Uniform) of theirs, the three balls by Uniform three fifths, and the cubes with a ball by Uniform, where the ball meets the cubes, a sixth.
+
+**The scale on simplified meshes** (finding 26, decision 12): the 15 models at 64³ by every algorithm, simplified: lines / corners / length by angle, by each edge → at no more than a cell → at the edge length:
+
+| Model | By each edge | At a cell | At the edge length |
+|---|---|---|---|
+| ThreeBalls | 483 / 276 / 1,066 | 105 / 114 / 702 | 98 / 96 / 772 |
+| CubesAndSphere | 105 / 71 / 2,442 | 98 / 67 / 2,428 | 99 / 68 / 2,424 |
+| SphereCutaway | 83 / 73 / 836 | 34 / 28 / 862 | 18 / 12 / 825 |
+| SlabWithBand | 112 / 64 / 1,843 | 112 / 64 / 1,843 | 64 / 64 / 776 |
+| TurnedShapes | 2,334 / 1,425 / 4,704 | 1,030 / 1,036 / 2,963 | 690 / 905 / 2,463 |
+| NewShapes | 1,732 / 1,127 / 3,623 | 851 / 751 / 2,613 | 602 / 599 / 2,339 |
+| HollowsAcrossFaces | 336 / 224 / 3,189 | 336 / 224 / 3,189 | 48 / 224 / 2,458 |
+| SlabAcrossBounds | 161 / 97 / 1,094 | 161 / 97 / 1,094 | 131 / 97 / 593 |
+| TurnedCubeDiagonal | 385 / 230 / 2,201 | 167 / 133 / 1,691 | 122 / 113 / 1,552 |
+| All 15 | 6,195 / 4,003 / 23,303 | 3,358 / 2,930 / 19,689 | 2,336 / 2,594 / 16,506 |
+
+The cube, the cube turned about an axis, the plate, the ball across the bounds and the two balls are the same in all three.
+
+**What it changes in Isotropic,** at the defaults, the 15 models at 64³ by Uniform and Occupancy: the medians over the 30 meshes of each kind of step 3's measures, with the features found the old way → at scale (contour / simplified):
+
+| Measure | Contour | Simplified |
+|---|---|---|
+| Edges within the paper's limits | 0.987 → 0.987 | 0.818 → 0.813 |
+| Inner vertices of six edges | 0.870 → 0.872 | 0.678 → 0.689 |
+| Smallest angle, mean | 52.9° → 52.9° | 45.9° → 46.0° |
+| Spread of vertex areas | 0.085 → 0.084 | 0.140 → 0.137 |
+| Vertices against the input | 1.01 → 1.01 | 1.16 → 1.17 |
+| Distance to the shapes, mean, in cells | 0.0049 → 0.0049 | 0.018 → 0.018 |
+
+- **Slivers:** summed over the 30 contours, the share of triangles under 30° falls from 0.19 to 0.14, and under 10° from 0.057 to 0.017. The simplified meshes are as they were.
+- **Lines of the remesh,** read by each edge's own angle: on contours 4,739 → 3,668 over the 30, the turned and the new shapes a sixth fewer and the cubes with a ball by Uniform 141 → 39. On simplified meshes 2,492 → 2,514, most of the gain on Occupancy's turned shapes, 264 → 316, whose remesh is also a fifth further from the shapes, 0.018 → 0.021 cells.
+- **The flat models** remesh the same, line for line.
+
+**Time:** the remesh alone with the features found the old way (A) and at scale (B), in turns A, B, A, B, the median of three after one of each to warm up, and of one at 128³ contoured; every algorithm and the 15 models; Unity in front, but for Uniform's contours at 64³, which ran with another app in front and count only for the ratio. In ms:
+
+| Grid | Mesh | A | B | B against A, median (least to most) | Lists, features and grid, of B |
+|---|---|---|---|---|---|
+| 32³ | contour | 145 | 145 | 1.00 (0.99 to 1.04) | 2.4% |
+| 32³ | simplified | 18.2 | 18.2 | 1.00 (0.90 to 1.34) | 2.8% |
+| 64³ | contour | 522 | 520 | 1.00 (0.97 to 1.04) | 2.5% |
+| 64³ | simplified | 35.0 | 35.0 | 1.00 (0.95 to 1.34) | 2.4% |
+| 128³ | contour | 2,055 | 2,063 | 1.00 (0.99 to 1.02) | 2.5% |
+| 128³ | simplified | 63.7 | 63.8 | 1.00 (0.90 to 1.31) | 2.5% |
+
+- **The skeleton at scale costs nothing that shows:** it is a part of the build stage, which is a fortieth of the remesh.
+- **Not comparable with step 3's timings:** these ran about four and a half times slower than those, as the normals' measurement after step 3 did, with Normals at Faces here. The reason is still not known; A and B ran alike.
+
 ## Out of scope
 
 - **A managed or a GPU remesher** (decision 8).
@@ -947,4 +1097,14 @@ The first eight were answered on 2026-11-17, before step 0. The first: "I've add
     - each vertex's own triangles' normal.
 
     **Answered on 2026-11-18: both, as a setting,** in the user's words "Implement both options so I can experiment with both." Input is the default.
+
+### Asked after step 3b
+
+12. **What scale are the features of a simplified mesh found at?** Finding 26. The edge length of a simplified mesh of flat faces is many cells, and at that scale its narrow faces are thin, and merge into their neighbours.
+    - **At the edge length, as decision 10 has it:** the simplified round and turned shapes come out with somewhat fewer lines, and the simplified flat models lose features the simplifier kept: the slab with a band's sides, the hollows across faces. A remesh rounds those off.
+    - **At the edge length, but no more than a cell:** the noise of the contour's cells is cleared as well on contours, where the two are the same, and somewhat less on simplified meshes, and every simplified flat model keeps its skeleton exactly.
+
+    Recommended, and what 3b builds: no more than a cell. The noise 3b clears is of the cells, and what a simplified mesh keeps beyond a cell is the shape. It is one line, `Remeshing.featureLengthOf`, to change.
+
+    **Answered on 2026-11-18: as recommended,** in the user's words "For decision 12, go with your recommendation." Features by angle are found at the edge length, but at no more than a cell.
 
