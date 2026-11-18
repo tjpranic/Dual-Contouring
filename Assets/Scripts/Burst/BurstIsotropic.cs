@@ -461,7 +461,7 @@ public static class BurstIsotropic {
 
     // edges by their length, the longest at the top or the shortest, and of two of one length the lower, so that the
     // same mesh is always worked in the same order (finding 9)
-    private struct EdgeHeap : IDisposable {
+    internal struct EdgeHeap : IDisposable {
 
         private struct Item {
 

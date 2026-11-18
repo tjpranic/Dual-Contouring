@@ -2,16 +2,18 @@
 
 Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mesh simplification, with three techniques to choose between: evenly shaped triangles from a loop of edge splits, collapses, flips and smoothing; triangles or quads that follow an orientation field; and quads with few irregular vertices.
 
-**Status:** steps 0 to 2 done on 2026-11-17. Step 3 is implemented and under correctness review; its turned-box acceptance requirement is still outstanding (finding 19).
+**Status:** steps 0 to 2 done on 2026-11-17. Step 3 is implemented and under correctness review; its turned-box acceptance requirement is still outstanding (finding 19). Step 4, the fields of Field Aligned, done on 2026-11-18. Step 3b has not been built.
 - **Step 0,** on the user's "Alright, begin on step 0.": the baseline, and a measure of what the pass will meet.
 - **Step 1,** on "Start step 1.": the frame, with a stand-in technique.
 - **Step 2,** on "Looks good so far, continue.": Isotropic's skeleton, operations and search, committed as 7caab82.
-- **Step 3,** on "Alright, continue with step 3.", and after a pause on "Just do whatever is easiest to fix the long test, then proceed with step 3 of the plan.": the loop, with Isotropic wired in as a technique. Uncommitted.
+- **Step 3,** on "Alright, continue with step 3.", and after a pause on "Just do whatever is easiest to fix the long test, then proceed with step 3 of the plan.": the loop, with Isotropic wired in as a technique. Committed as 0454939.
   - On 2026-11-18, "Add those fixes in.": preserve hard-polyline breakpoints and validate face orientation against the immutable input. Scale-aware angle-feature cleanup remains separate.
+- **Step 4,** on "Let's continue implementing the resmeshing plan. We are on step 4 now.": the sheets, and the two fields with their hierarchy. Nothing is wired in yet, which is step 5's. Uncommitted.
+  - **Step 3b was passed over** by that go-ahead. Step 4 does not need it: the fields are held to open edges and lines between materials, which 3b leaves alone. What 3b would change in step 4 is which vertices count as on a crease (Measurements).
 
-**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting.
+**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting. Step 4 raised none, and made two choices the user has not seen yet: the code's score for the hierarchy in place of the paper's (finding 22), and two departures from the code in how the fields are held to lines (finding 23).
 
-**Next:** step 3b, features by angle at the scale of the edge length, which waits for the go-ahead.
+**Next:** step 5, Field Aligned's mesh, or step 3b, which is still open. Either waits for the go-ahead.
 
 **Papers,** all in `Documents/Papers/`:
 - *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): the technique called **Isotropic** below. It is its section 4.
@@ -233,6 +235,7 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
     - **Where that has no answer:** up to nine edges in a mesh, where the windings do not alternate round the edge (→, ←, ←, →). Two sheets pass through each other there. Of those, the probe paired each triangle with its neighbour of opposite winding.
     - **What came out:** no open edge and no pinched vertex anywhere. The three balls stay one surface of a ball's topology, and the turned and new shapes come apart into their pieces. But 16 meshes at 64³ and 128³ keep one to three edges of four triangles. Five of the six looked at were paired by the fallback. Their two pairs still meet at both ends, since the sheets go on through each other there.
     - **What the build has to do instead:** choose, at such an edge, between the two pairings that suit the windings by what the fans round its two ends become, so that each is a disk. Step 4 does that and counts what is left.
+    - **Step 4 built it, and nothing is left** (Measurements): on 360 meshes, 44 of them with such edges, 28 edges in 16 meshes took their other pairing, and no mesh keeps an edge of more than two triangles, a pinched vertex or an open edge it did not have.
 
 19. **Isotropic keeps the noise of finding 17 on contours** (step 3, Measurements). A cube turned about an axis or a diagonal, remeshed at the defaults:
     - **Clean** where the input is: simplified, the cube turned about an axis comes out with its own 12 lines and 8 corners from every algorithm at 32³ and 64³, which a test now holds. So does Occupancy's contour at 32³, but not at 64³, where its 32 lines become 26.
@@ -251,6 +254,26 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
       - **Faces:** each vertex's own triangles' normal.
       - The two measure within a point of each other. On contours they are as close to the true normals as remeshing off is, and on simplified meshes of flat faces they are closer.
     - **Field Aligned and QuadriFlow** take their normals out the same way (What the three share).
+
+22. **The paper's score for the hierarchy stops it short; the code's does not** (step 4, Measurements). The paper scores two neighbours by the dot product of their normals times the *smaller* of the two ratios of their areas, and its code by the *larger* (finding 11).
+    - **With the smaller ratio,** vertices of equal area merge first. A vertex that is passed over once stays small while its neighbours double, has the worst score at every level after, and is passed over again. The levels stop halving after four or five and then lose a few vertices each: the three balls, simplified at 64³, go 15,839, 9,298, 5,888, 4,129, 3,197 and are still at 1,907 at the limit of 32 levels.
+    - **With the larger ratio,** a small vertex is the first to be merged into a large neighbour: 15,839, 9,026, 4,882, 2,653 and so on down to one vertex at level 16.
+    - **The paper's own account is the code's:** "each iteration reduces the number of vertices approximately by half", down to one vertex for every piece. Its formula does not do that, so the formula is taken for a slip.
+    - **What is built:** the larger ratio. The smaller is kept as a switch of the fields' settings, for the measurement only (`Settings.smallerRatio`).
+
+23. **Holding the fields to lines needed two departures from the code** (step 4). The paper has one sentence on it (section 3.7), so the code decided (finding 11), and on flat shapes whose fields are known in closed form the code's way did not give them.
+    - **A triangular lattice was moved across its line by the wrong amount.** The code moves a held vertex's lattice by however far its lattice point is from the line. For squares any such move gives the same lattice. For triangles it does not: the rows of a triangular lattice are half a step along from each other, so a move of an odd number of rows shifts the lattice half a step along the line. The vertices of a line then never agree. A flat triangle of nine edges a side at a length of three came out with 14 irregular points of the lattice where it should have none, at six iterations a level and at six hundred.
+      - **Built:** the lattice is moved by the least that puts one of its lines on the held line (`BurstFields.ontoHeldLine`). The same triangle comes out exact, as do a rhombus and larger triangles.
+    - **Two held vertices that merge were given a line neither has.** The code mixes their two directions and their two points. For two vertices of one straight line that is the line. For two vertices of different lines, as at every corner of a rim, the mix is a third line. For sixth turns it is not even one of the two directions.
+      - **Built:** a merged vertex keeps the line of the one of its two with the larger area. That is always a line the mesh really has.
+      - **Measured** on flat squares and triangles with the lattice move already mended: with the code's mix the lattice's energy at level 0 is 4 × 10⁻⁷ to 3 × 10⁻³ and one triangle keeps two irregular points; keeping one line, it is under 10⁻¹² on every one and none has an irregular point.
+    - **Which edge a vertex is held along** is not in the paper, and in the code it is whichever open edge comes last. Here it is the vertex's hard edge that lies flattest in its tangent plane, and of two as flat the lower: where a line between materials goes over a crease, the vertex has the normal of one side, and the line's edge on the other side stands up out of its plane.
+
+24. **At an edge length of 1 the fields need a mesh of twelve times the input's vertices** (step 4, Measurements). The fields live on the input's vertices, which have to be closer than half the edge length (finding 3). At 1, the edge length is about the input's own, so every edge is split twice over.
+    - **How many:** 11.9 times the input's vertices on a contour and 12.9 times on a simplified mesh, at the median, for quads, and 47 and 51 times at an edge length of 0.5. At 2 it is 3 times.
+    - **What it costs** is in the Measurements. A simplified mesh has few vertices to begin with, so twelve times as many is still fewer than the contour had. A contour at 128³ is given fields on a mesh of over a million vertices.
+    - **The reference code never meets this:** its default asks for a sixteenth of the input's vertices, at which nothing is split.
+    - **Not changed here.** Whether a looser limit than half the edge length gives fields as good is step 8's to measure.
 
 ## Design
 
@@ -292,10 +315,11 @@ In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and 
 
 - **The feature skeleton** (finding 6): the kind of every edge, the corners, and the lines as runs of edges between corners or closed loops (`BurstFeatures`). An edge is hard where the simplifier's lists count it sharp, and by angle otherwise (finding 9). The simplifier's lists keep their three kinds of sharp edge: the angle kind is the remesher's own, kept beside them, and `check` never sees it (finding 17). What is a corner goes by the feature edges a vertex has at the time, with the turns and tips found on the input carried along (step 2).
 - **Splitting long edges:** the first operation of Isotropic's loop. Field Aligned and QuadriFlow prepare their input with it (finding 3).
-- **Sheets** (decision 4): the mesh split along its edges of four triangles and at its vertices of several fans, so that what is left is a manifold. Field Aligned and QuadriFlow work on the sheets. Isotropic does not need them.
+- **Sheets** (decision 4; `BurstSheets`, step 4): the mesh split along its edges of four triangles and at its vertices of several fans, so that what is left is a manifold. Field Aligned and QuadriFlow work on the sheets. Isotropic does not need them.
   - **The pairing round an edge of four triangles,** as step 0's probe found it (finding 18): across the wedges inside the solid where the windings alternate round the edge; else each triangle with its neighbour of opposite winding.
   - **Then the ends,** which step 0 found the pairing alone leaves wrong where sheets pass through each other: where the two pairs of an edge still meet at both its ends, the other pairing that suits the windings is tried, and kept if it leaves each fan a disk.
   - **What still cannot be paired** is left as open edges, counted, and shown as finding 7 has it.
+  - **A vertex keeps its index** for the first of its fans, and the others are added after the mesh's vertices, so a manifold comes back as it was.
 - **Polygons out,** for the two field techniques: each polygon as triangles with the flags of finding 8. A quad is split along the diagonal that leaves its two triangles flatter.
 - **Normals out** (finding 21): the normals at the corners of the input's triangles as the input would show them creased (`BurstRemeshing.cornerNormalsOf`), which a new vertex takes mixed where it lies; or, under Faces, each vertex's own triangles'.
 - **Materials out,** for the two field techniques: an output face takes the sub-mesh that most of the input's area mapped into it has.
@@ -316,10 +340,18 @@ In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and 
 
 ### Field Aligned
 
-1. **Preparation:** the sheets, and every edge longer than min(ρ/2, 2 × the mean edge) split, longest first, at its midpoint (findings 3 and 11).
-2. **The graph:** the vertices with the mesh's edges between them, uniform weights, and a normal and a Voronoi area for each. A vertex on a feature edge takes the normal of one of its faces, as section 3.5 has it; step 4 compares that with no creases (finding 17).
-3. **The hierarchy** of section 3.5, scored by the paper's min of the two areas' ratios, with the code's max measured beside it at step 4 (finding 11), and a colouring of every level so that vertices of one colour share no edge and can be visited in parallel.
-4. **The orientation field,** then **the position field,** six iterations a level from the coarsest level down, from a fixed random start. Before the positions, the coarse orientations are made again from the finest, as the code does. Along open edges and lines between materials both fields are held, hard: the direction to the line's, and the lattice to pass through it (section 3.7). The search for lattice shifts takes the paper's 16 pairs for quads and 36 for triangles.
+Steps 1 to 4 are built (`BurstFields`, step 4), and are what QuadriFlow starts from too.
+
+1. **Preparation:** the sheets, and every edge longer than min(ρ/2, 2 × the mean edge) split, longest first, at its midpoint (findings 3 and 11). The features are found on the sheets before the splits, and the splits carry them. At an edge length of 1 this makes about twelve times the input's vertices (finding 24).
+2. **The graph:** the vertices with the mesh's edges between them, uniform weights, and a normal and a Voronoi area for each.
+   - **Normals:** the mean of a vertex's triangles' normals, weighted by their angles at it. A vertex on a feature edge by angle takes the normal of one of its faces, the largest, as section 3.5 has it. Step 4 compared that with no creases and kept it (Measurements).
+   - **Left out:** a vertex of an edge of more than two triangles that the sheets left, or without triangles or area. The sheets leave none on the models measured.
+3. **The hierarchy** of section 3.5, scored by the larger of the two areas' ratios, as the code has it: with the paper's smaller ratio the levels stop halving (finding 22). Every level is coloured so that vertices of one colour share no edge and can be visited in parallel. Levels of under 4,096 vertices are smoothed by one worker, which gives the same fields.
+4. **The orientation field,** then **the position field,** six iterations a level from the top level down, from a random start at the top level with a fixed seed. Before the positions, the coarse orientations are made again from the finest, as the code does.
+   - **Held:** along open edges and lines between materials both fields are held, hard: the direction to the line's, and the lattice to have a line on it (section 3.7). A vertex is held along the one of its hard edges that lies flattest in its tangent plane. The lattice is moved onto the line by the least that does it, and a merged vertex keeps the line of the larger of its two, both of which depart from the code (finding 23).
+   - **The searches:** the paper's 16 pairs for quads and 36 for triangles. The paper's "immediate neighbors" of the point between two vertices are taken to be, for triangles, the six lattice points nearest it.
+   - **The sum of the directions** keeps its own length from one neighbour to the next, as equation 3 has it. The code keeps it at the number of neighbours added.
+   - **Rounding** goes to the nearest lattice point, which is what the paper says it does. Its appendix's formula for triangles rounds the two steps one by one, which is not always the nearest.
 5. **Extraction** as section 3.8 has it, with what the code adds where the paper is silent (finding 11): merging in order of distance, leaving out vertices too few inputs agree on, snapping within 0.3 ρ, taking out the diagonals of quads, walking the faces of three to eight sides, filling holes of up to six.
 6. **Faces:**
    - **Triangles:** sixth turns and a triangular lattice.
@@ -530,6 +562,60 @@ Each step compiles, passes every test, and is reviewed before the next one start
    - **Tested here:** the test of the simplified box turned about an axis widens to the contours and the box turned about a diagonal, wherever they then hold.
 
 4. **Field Aligned: the fields (large).** Sheets, the preparation, graph, normals, areas, hierarchy, colouring, both fields, for quads and triangles. **Measured here:** the energies by level, the irregular points of both fields against the edge length, time by stage from 32³ to 128³; what is left of finding 18 after the sheets; the hierarchy scored by min against max, and normals at creases against none (findings 11 and 17).
+   - **Done 2026-11-18,** on the user's "Let's continue implementing the resmeshing plan. We are on step 4 now.", with step 3b not built.
+     - **Built:**
+       - `Assets/Scripts/Burst/BurstSheets.cs`: a mesh split into sheets (`SplitJob`, `split`), and what the split did (`Report`).
+       - `Assets/Scripts/Burst/BurstFields.cs`, which Field Aligned and QuadriFlow share:
+         - the operators: a turn (`turned`), the turns and the lattice steps that bring two vertices nearest (`matchOrientations`, `matchPositions`), the point between two tangent planes (`middle`), rounding to a lattice (`roundSteps`), and the move of a held lattice onto its line (`ontoHeldLine`);
+         - the mesh the fields are on (`prepare`, `PrepareJob`) and level 0 of its graph (`graph`, `VerticesJob`, `LinksJob`);
+         - the hierarchy with its colours (`Hierarchy`, `HierarchyJob`);
+         - the smoothing: `StartJob` for the random start, `ColourJob` for one colour by every worker, `LevelsJob` for the small levels by one, `HandDownJob`, and `HandUpJob` for the directions made again from level 0;
+         - what the fields are like: `EnergyJob` for the paper's two energies and `SingularitiesJob` for the irregular points;
+         - `solve`, which does all of it and reports the time by stage, with profiler markers `Remeshing.Fields.*`.
+       - `BurstIsotropic.EdgeHeap` is now internal, so that the split before the fields takes edges in Isotropic's order.
+       - **Not wired in:** no technique, no setting, and nothing in `Voxelizer` or the editor has changed. A mesh comes out at step 5.
+     - **Settled while building:**
+       - **The sheets** keep, for every side of every triangle, the side across the edge that it is paired with. The triangles of a vertex then fall into rows and rings, and each is a vertex of the sheets. An edge keeps its four triangles only where one ring passes through it twice at both its ends, which is what the look at the ends tests for and mends.
+       - **Creases** are the feature edges by angle of the shared skeleton, at the Feature Angle. Open edges and lines between materials are not creases: on a flat face a line between materials has one normal on both sides.
+       - **Held** are the vertices of open edges and of lines between materials, and no others. Field Aligned snaps to creases by itself, which is the paper's point.
+       - **The paper against its code,** where they differ and step 4 had to choose: the score of the hierarchy (finding 22), the lines the fields are held to (finding 23), and three smaller ones that follow the paper: the sum of the directions, the search of 36 pairs for triangles, and rounding to the nearest lattice point (Design).
+       - **Irregular points of the directions** are every triangle whose turns do not add up to a whole turn, as the paper has it. The code counts only those a step off.
+       - **A direction handed down** is made unit length again in the tangent plane it lands in. The code leaves it short.
+       - **The hierarchy stops at 32 levels.** With the larger ratio the largest mesh measured, of a million vertices, has 24, and none has more than 30.
+       - **Floats** for the fields, as the plan has it, and doubles for the mesh they are on.
+     - **Measured** (Measurements): the sheets on 360 meshes; the fields of 15 models by two algorithms at 64³, contoured and simplified, at three edge lengths, with and without creases, and with the paper's score; the levels of four meshes; the time by stage for every algorithm from 32³ to 128³. It gave findings 22 to 24.
+       - **Creases stay on.** They give a fifth to a quarter fewer irregular points of the directions for quads, and leave the lattice's as they are. The noise of finding 17 does not show in these counts: the cube turned about an axis has its eight and no more.
+       - **The larger ratio** gives fields as regular as the paper's score in half the time.
+     - **Tests:** 73 more. The operators are run in a job compiled by Burst, and everything else through the jobs themselves.
+       - **`BurstSheetsTest`, 18:**
+         - a manifold comes back as it was; a triangle that uses a vertex twice is left out;
+         - two boxes that share an edge, and two that touch in a vertex, come apart into two closed boxes;
+         - two flat sheets that cross along a line come apart into two;
+         - two that cross at one edge are taken straight through it, which needs the look at the ends: with both sheets going on past the edge, and with either one ending at it, so that the other pair is found from a triangle's partner;
+         - two that meet round one end of an edge only are left as they were paired;
+         - an edge of three triangles is counted and its odd triangle left open;
+         - Uniform's contours of the turned and the new shapes at 32³ and 64³, contoured and simplified, come apart with nothing left over.
+       - **`BurstFieldsTest`, 55:**
+         - the operators on 2,000 pairs of vertices each, against a search over everything they choose from: turns, the point between two planes, rounding, lattice steps; and the move of a held lattice onto its line;
+         - the mesh the fields are on: every edge short enough, the same surface, the same areas for every sub-mesh;
+         - level 0: normals, Voronoi areas, neighbours, what is held and along what, what is left out, creases on and off;
+         - the hierarchy: every level about half the one below, a merged vertex the sum of its two, its neighbours those of its two, the line it is held to, and no two neighbours of one colour; and that the paper's score stops short;
+         - the fields in closed form: a flat square and a flat triangle with their lattices exact, a box with its eight irregular points and its lattice on its edges, held vertices on their lines;
+         - one vertex smoothed once against six neighbours set by hand, for the directions and for the lattice; a field handed down to both of a vertex's two; the directions made again from below;
+         - the energies and the irregular points on a triangle set by hand;
+         - the same fields twice, measured or not, other fields from another seed, and the random start at the top level; an empty mesh; and the contours of the turned shapes by Uniform and Occupancy.
+     - **Deliberate mistakes:** 83 were tried: 17 in the sheets, 16 in the operators, 14 in the mesh and level 0, 13 in the hierarchy, 16 in the smoothing and 7 in the measures. 81 failed a test.
+       - **Seven passed at first,** and five tests were added and two sharpened for five of them: the sheet that ends at the crossed edge, both ways round; the edge met round one end only; the field handed down; the start at the top level; and a mean that its last neighbour no longer happens to equal.
+       - **One of the seven was nearly no mistake.** Going round a vertex by the wrong side of each triangle goes round the edge's other end instead, and both ends are asked. It differs only where a triangle's own way round comes to a rim, which no test had.
+       - **The two that pass** are lines no mesh reaches. Putting an edge's first pairing back when its other one mends nothing: on every mesh tried the other one mends it. And the count of edges the sheets leave with more than two triangles: they leave none. They are kept.
+       - **A mistake that never ends was not tried:** an edge split off its middle stays a third as long as it is far from the origin, and is split for ever. An edge split off the surface stands in for it.
+     - **Seen and recorded, not changed:**
+       - **Triangles** have more irregular points than quads on every model with flat faces at right angles, as sixth turns must.
+       - **A handful of vertices are left out** on one model at an edge length of 0.5: 4 to 6 of 405,000 on the cube turned about an axis, whose triangles there have no area.
+       - **The fields of a contour at 128³ take over two seconds** (finding 24).
+       - **The plan's test of a box along the axes** asks for rows of faces, which is step 5's. Step 4 holds the box's directions to its edges and its lattice to whole lengths from them.
+     - **Baselines after step 4:** edit mode 3738 of 3738 in 405 s, play mode 21 of 21, Unity in front; the 480 `Start` hashes are step 0's, byte for byte.
+
 5. **Field Aligned: the mesh (large).** Extraction, faces, holes, the split into quads, polygons, materials and normals out. Wired in. **Measured here:** everything under Tests' last point, and what the constraints do for lines between materials.
 6. **QuadriFlow: offsets and flow (large).** Offsets, the network, the flow solver with its tests, long offsets. **Measured here:** the size of the flow and the time it takes against the edge length; whether the paper's hierarchy of networks is needed.
 7. **QuadriFlow: the mesh (large).** Conjugate gradients, the greedy pass, the positions, extraction. Wired in. **Measured here:** turned triangles left after the greedy pass, which is what decision 6 waits for; vertices of other than four edges and holes, which say whether the code's work after extraction is wanted (finding 11); the rest as for step 5.
@@ -723,6 +809,91 @@ Past five iterations, little changes but the time, so the default is the paper's
   - **The measurement:** at 128³, the 15 models by Uniform and Occupancy, the median of five after one to warm up, Unity in front.
   - **The result:** Input takes 1.4% longer than Faces on a contour at the median (−2.8% to 1.9%), and 4.8% longer on a simplified mesh (0.6% to 17%). It creases the input before the remesh and searches the input for every vertex's normal, where Faces only sums each vertex's triangles. A remesh's own spread from run to run was under 2%.
   - **Not comparable with the step's timings above:** both ran four to four and a half times slower than those, measured the night before. The reason was not found. That morning the editor had been restarted, its Profiler was recording, and it used about one core while idle.
+
+### The fields (step 4, 2026-11-18)
+
+**Setup:**
+- **Models:** step 3's 15.
+- **The sheets:** every algorithm (Burst) at 32³, 64³ and 128³, contoured and simplified at the voxelizer's defaults: 360 meshes.
+- **The fields:** at 64³, by Uniform and Occupancy, contoured and simplified: 60 meshes, 30 of each kind, each solved nine ways. The Feature Angle is 40°, and the edge length goes by the mesh, as decision 9 has it.
+- **Measures:**
+  - **irregular points:** the triangles of the mesh the fields are on round which the directions, or the lattice, do not come back to where they started (section 3.6). Each becomes an irregular vertex or face of the mesh read off the fields;
+  - **energies:** the paper's two (equations 4 and 6), as the mean over the edges of a level: the angle between two directions squared, in degrees, and the distance between two lattice points squared, in edge lengths.
+- **The probe:** `FieldsProbe.cs` in the probes folder, with `run_fields_sweep.sh`, `run_fields_times.sh` and `summarize_fields.py`. Unity was in front throughout, and the runs were on the final code.
+
+**The sheets** (finding 18). Of the 360 meshes, 44 have edges of more than two triangles, 2,196 edges between them, every one of four: Uniform's and Adaptive's of the three balls, the turned shapes, the new shapes and the cube turned about a diagonal.
+- **Paired:** 2,037 across the solid and 159 by winding. 28 edges in 16 meshes took their other pairing after the look at their ends.
+- **Left:** no edge of more than two triangles, no pinched vertex where the meshes had 276, no new open edge, and no edge whose two triangles run the same way where they had 4,392.
+- **What comes apart:** the three balls and the cube turned about a diagonal stay one piece. The turned shapes come apart into 6, 9 and 27 pieces at the three grids, and the new shapes into 2, 3 and 10.
+- **Time:** 60 ms at the most, at 128³.
+
+**The fields nine ways,** the 30 meshes of each kind together (contour / simplified). The energies are medians:
+
+| Faces | Edge length | Vertices against the input's | Levels | Irregular points of the directions | of the lattice | Energy of the directions | of the lattice |
+|---|---|---|---|---|---|---|---|
+| Quads | 1 | 11.9 / 12.9 | 21 / 14 | 1,957 / 926 | 5,233 / 1,170 | 0.71 / 5.8 | 0.0006 / 0.0015 |
+| Quads, no creases | 1 | 11.9 / 12.9 | 20 / 14 | 2,351 / 1,238 | 5,233 / 1,139 | 1.02 / 19.4 | 0.0006 / 0.0016 |
+| Quads, the paper's score | 1 | 11.9 / 12.9 | 32 / 32 | 1,974 / 933 | 5,590 / 1,142 | 0.69 / 5.6 | 0.0007 / 0.0016 |
+| Quads | 0.5 | 47 / 51 | 23 / 16.5 | 2,346 / 1,322 | 12,088 / 2,881 | 0.34 / 2.1 | 0.0004 / 0.0012 |
+| Quads | 2 | 3.0 / 3.3 | 18 / 12 | 1,438 / 727 | 2,103 / 481 | 2.0 / 15.5 | 0.0010 / 0.0037 |
+| Triangles | 1 | 10.8 / 12.1 | 20 / 14 | 3,090 / 1,310 | 7,050 / 806 | 1.14 / 14.1 | 0.0009 / 0.0020 |
+| Triangles, no creases | 1 | 10.8 / 12.1 | 20 / 14 | 3,784 / 1,823 | 6,122 / 717 | 1.20 / 16.6 | 0.0008 / 0.0022 |
+| Triangles | 0.5 | 43 / 45 | 22.5 / 16 | 3,621 / 1,939 | 16,254 / 2,177 | 0.36 / 6.4 | 0.0005 / 0.0016 |
+| Triangles | 2 | 2.7 / 3.3 | 18 / 12 | 2,269 / 1,057 | 3,194 / 346 | 3.5 / 32 | 0.0014 / 0.0036 |
+
+- **Against the vertices the edge length asks for,** which are the input's 270,637 and 13,568 at 1: quads have an irregular point for every 38 vertices of a contour's remesh and every 6.5 of a simplified mesh's. The simplified meshes have 8 to 1,553 vertices, mostly of flat faces and sharp corners, and every corner of a box is an irregular point.
+- **By edge length:** half the length gives 2.3 to 2.7 times the irregular points of the lattice, and a fifth to a half more of the directions. The paper says the lattice's grow with the resolution and the directions' do not (section 3.6). It also gives four times the vertices, so the mesh is the more regular.
+- **Creases:** with them, quads have 17% fewer irregular points of the directions on contours and 25% fewer on simplified meshes, and as many of the lattice. Triangles have 18% and 28% fewer of the directions, and 15% and 12% more of the lattice.
+- **The paper's score** (finding 22): within 1% on the directions and 7% on the lattice, at 32 levels where the larger ratio has 21 and 14, and twice the time: 2.1 s against 1.1 s on a contour at the median, measured with the energies.
+
+**By model,** quads at an edge length of 1 with creases: irregular points of the directions / of the lattice:
+
+| Model | Uniform, contour | Uniform, simplified | Occupancy, contour |
+|---|---|---|---|
+| Sphere | 8 / 173 | 8 / 38 | 8 / 160 |
+| ThreeBalls | 91 / 362 | 14 / 82 | 8 / 278 |
+| CubesAndSphere | 30 / 205 | 8 / 10 | 8 / 148 |
+| SphereCutaway | 8 / 327 | 8 / 65 | 8 / 340 |
+| CubeAtOrigin | 8 / 4 | 8 / 0 | 8 / 0 |
+| TwoSpheres | 16 / 87 | 16 / 38 | 16 / 88 |
+| SlabWithBand | 8 / 2 | 8 / 2 | 8 / 0 |
+| TurnedShapes | 487 / 576 | 136 / 93 | 310 / 449 |
+| NewShapes | 378 / 809 | 222 / 219 | 207 / 694 |
+| HollowsAcrossFaces | 56 / 16 | 17 / 9 | 56 / 6 |
+| BallAcrossBounds | 21 / 215 | 19 / 43 | 23 / 222 |
+| SlabAcrossBounds | 8 / 9 | 8 / 0 | 8 / 14 |
+| PlateAcrossBounds | 0 / 0 | 0 / 0 | 0 / 0 |
+| TurnedCubeAxis | 8 / 10 | 8 / 0 | 8 / 2 |
+| TurnedCubeDiagonal | 101 / 22 | 12 / 0 | 53 / 15 |
+
+- **Eight is the least a closed surface without handles can have:** each is a quarter turn, and they have to add up to two whole turns. A ball, a box and the cube turned about an axis have their eight. Two balls have sixteen, and the plate, which is open, none.
+- **The shapes that cross the grid at angles** have the most, and Uniform more than Occupancy, as its contours have the edges of four triangles and the folds of finding 20.
+
+**By level,** the three balls by Uniform, simplified, quads at 1: 17 levels of 15,839, 9,026, 4,882, 2,653, 1,450, 786, 425, 229, 127, 69, 38, 20, 11, 6, 3, 2 and 1 vertices, in 5 to 6 colours each.
+- **The energy of the directions** when a level is handed down falls from 600 at 11 vertices to 270 at 127, 43 at 1,450 and 6.6 at level 0.
+- **The energy of the lattice** falls from 0.08 at 20 vertices to 0.05 at 127, 0.011 at 1,450 and 0.0018 at level 0.
+- **With the paper's score** the same mesh has 32 levels of 15,839, 9,298, 5,888, 4,129, 3,197, 2,719 and then 2,464 down to 1,907: from the sixth level on, each loses under a tenth of its vertices (finding 22).
+
+**Time,** the fields alone at an edge length of 1, with no mesh read off them yet. Every algorithm (Burst) and the 15 models for quads, and Uniform for triangles; the median of three after one to warm up, and of one at 128³ contoured; Unity in front; in ms:
+
+| Grid | Mesh | Faces | Vertices of the fields | Median | Most | Sheets | Lists and split | Level 0 | Hierarchy | Directions | Lattice |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 32³ | contour | Quads | 29,200 | 181 | 276 | 1% | 20% | 2% | 14% | 24% | 40% |
+| 32³ | simplified | Quads | 2,610 | 43 | 100 | 0% | 9% | 2% | 5% | 30% | 54% |
+| 64³ | contour | Quads | 119,000 | 565 | 1,030 | 1% | 26% | 2% | 18% | 20% | 33% |
+| 64³ | simplified | Quads | 5,170 | 62 | 157 | 0% | 11% | 2% | 8% | 29% | 51% |
+| 128³ | contour | Quads | 483,000 | 2,260 | 4,660 | 1% | 30% | 3% | 19% | 17% | 30% |
+| 128³ | simplified | Quads | 10,500 | 94 | 262 | 1% | 15% | 2% | 10% | 27% | 45% |
+| 64³ | contour | Triangles | 101,000 | 807 | 1,420 | 1% | 15% | 2% | 11% | 14% | 58% |
+| 64³ | simplified | Triangles | 4,790 | 111 | 234 | 0% | 6% | 1% | 4% | 17% | 73% |
+| 128³ | contour | Triangles | 408,000 | 2,970 | 5,830 | 1% | 18% | 2% | 12% | 13% | 55% |
+| 128³ | simplified | Triangles | 8,520 | 141 | 344 | 0% | 9% | 1% | 6% | 16% | 68% |
+
+- **The four algorithms** are within 8% of each other at every grid.
+- **Against Isotropic** (step 3), which is a whole remesh: after simplification the fields take 62 ms where it took 8 at 64³, and 94 ms where it took 12 at 128³. On a contour they take 565 ms and 2.3 s where it took 114 ms and 435 ms.
+- **Against the contour:** the three balls by Uniform at 128³ take 37 ms to contour and 239 ms to contour and simplify (step 0). Their fields take 181 ms simplified, and 3.3 s on the contour's 52,224 vertices, which become 613,372.
+- **Triangles** take a third to four fifths longer than quads: their search for lattice steps is over 36 pairs, each lattice's six found among sixteen.
+- **The split and the hierarchy** are by one worker, and take a third to a half of a contour's time between them.
 
 ## Out of scope
 
