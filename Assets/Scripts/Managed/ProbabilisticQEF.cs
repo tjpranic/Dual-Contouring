@@ -32,6 +32,9 @@ public class ProbabilisticQEF : QEFSolver {
     private Vector3                            ATB;
     private float                              BTB;
 
+    // the same sums in doubles, which the error is worked out from. See QEFError
+    private QEFError exact;
+
     // the sum of the intersections, the mass point is their average. Unlike the SVD solver's it is always that of every
     // sample, combined or not: it is the point every sample's pull goes to
     private Vector3 massPoint;
@@ -54,6 +57,8 @@ public class ProbabilisticQEF : QEFSolver {
         this.BTB       += dot * dot;
         this.massPoint += intersection;
 
+        this.exact.add( intersection.x, intersection.y, intersection.z, normal.x, normal.y, normal.z );
+
         ++this.intersectionCount;
     }
 
@@ -69,6 +74,8 @@ public class ProbabilisticQEF : QEFSolver {
             this.BTB               += solver.BTB;
             this.massPoint         += solver.massPoint;
             this.intersectionCount += solver.intersectionCount;
+
+            this.exact.combine( solver.exact );
         }
         else {
             throw new Exception( "Unable to combine different derived solvers" );
@@ -87,7 +94,7 @@ public class ProbabilisticQEF : QEFSolver {
 
         var vertex = minimize( this.ATA, this.ATB - this.ATA.multiplyVector( massPoint ), pull ) + massPoint;
 
-        return ( vertex, SVDQEF.SVD.calculateError( this.ATA, this.ATB, this.BTB, vertex ) );
+        return ( vertex, this.exact.valueAt( vertex.x, vertex.y, vertex.z ) );
     }
 
     public ( Vector3 vertex, float error ) solveMassPoint( ) {
@@ -97,7 +104,7 @@ public class ProbabilisticQEF : QEFSolver {
 
         var massPoint = this.massPoint / this.intersectionCount;
 
-        return ( massPoint, SVDQEF.SVD.calculateError( this.ATA, this.ATB, this.BTB, massPoint ) );
+        return ( massPoint, this.exact.valueAt( massPoint.x, massPoint.y, massPoint.z ) );
     }
 
     // the solution d of ( AtA + pull I ) d = r. The matrix is symmetric and, with a pull above zero, positive definite, and

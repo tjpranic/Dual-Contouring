@@ -1055,6 +1055,8 @@ public class InteractiveEditorTest {
         ["adaptive topology safe"]  = ( ( p ) => selected<AdaptiveDualContouring>( p, Algorithm.Adaptive ), ( p ) => ( p.editor.voxelizer as AdaptiveDualContouring ).topologySafe   = false ),
         ["manifold threshold"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorThreshold  = 0.5f ),
         ["manifold criterion"]      = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).enforceManifold = false ),
+        ["manifold error measure"]  = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorMeasure    = ManifoldDualContouring.ErrorMeasure.Distance ),
+        ["manifold error distance"] = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ).errorMeasure = ManifoldDualContouring.ErrorMeasure.Distance, ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorDistance = 0.5f ),
         ["occupancy edge search"]   = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).edgeSearchIterations -= 1 ),
         ["occupancy face samples"]  = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).faceSearchSamples    += 1 ),
         ["occupancy face search"]   = ( ( p ) => selected<OccupancyDualContouring>( p, Algorithm.Occupancy ), ( p ) => ( p.editor.voxelizer as OccupancyDualContouring ).faceSearchIterations -= 1 ),
@@ -1083,6 +1085,10 @@ public class InteractiveEditorTest {
         ["wireframe"]                    = ( null, ( p ) => p.editor.voxelizer.wireframe          = Wireframe.Look.LinesOnly ),
         ["wireframe line width"]         = ( null, ( p ) => p.editor.voxelizer.wireframeLineWidth = 3.0f ),
         ["wireframe colours"]            = ( null, ( p ) => { p.editor.voxelizer.wireframeLineColor = Color.red; p.editor.voxelizer.wireframeFillColor = Color.blue; } ),
+
+        // each error measure of manifold dual contouring has a threshold of its own, which the other does not look at
+        ["manifold error distance, sum measure"]     = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ), ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorDistance = 0.5f ),
+        ["manifold error threshold, distance measure"] = ( ( p ) => selected<ManifoldDualContouring>( p, Algorithm.Manifold ).errorMeasure = ManifoldDualContouring.ErrorMeasure.Distance, ( p ) => ( p.editor.voxelizer as ManifoldDualContouring ).errorThreshold = 0.5f ),
 
         // the deviation means nothing to the SVD solver, and the sweeps nothing to the probabilistic one
         ["normal deviation, SVD solver"]           = ( null, ( p ) => p.editor.voxelizer.normalDeviation = 0.3f ),

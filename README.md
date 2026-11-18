@@ -67,6 +67,13 @@ The vertex of a cell goes where the QEF of its hermite samples is least: the sum
 
 **How the probabilistic solver works:** to the plane of each sample it adds a pull toward the sample's own point, weighted by the deviation squared. The QEF then has exactly one point of least error, found with a 3 × 3 linear solve, with nothing to truncate. The error that simplification and clustering compare with their thresholds is the same for all three solvers: the QEF at the vertex.
 
+**The error is worked out in doubles.** Written as xᵀAᵀAx − 2xᵀAᵀb + bᵀb, it is a small difference of three large terms close to the surface. They grow with the number of samples and their distance from the origin, and in floats they round by more than the error itself.
+- **Example:** an octant of a cube 0.6 across, at 128³ cells, has an error of exactly 0. Floats rounded it to 1.2e-4, twelve times the interactive editor's threshold. A cube 0.5 across rounds to 0 by luck, since all its numbers are powers of two.
+- **How:** every QEF keeps its sums a second time in doubles (`QEFError`), and works its error out from those. It still solves with the float sums, so the vertices are as before, and the same as the GPU's. The one exception is the managed simple solver, which keeps its planes and adds up the squared distances to them one by one, with nothing to cancel.
+- **The GPU** has no doubles and works the error out in floats, but none of its algorithms compares the error with a threshold.
+- **Cost:** at 128³ cells on the three balls with Burst, Uniform contours as fast as before, also at 256³. Manifold Dual Contouring is about 5% slower, 37 ms against 35. Adaptive is about 14% slower, 40 ms against 35: it keeps a QEF for every node of its octree, and each is now twice the size.
+- **What it changes:** clusters and nodes that rounding let through are refused where their real error is over the threshold. At 128³ cells and 2e-4 the three balls keep 2,428 vertices instead of 2,359 in Manifold Dual Contouring, and 2,652 instead of 2,586 in Adaptive. On the four test models at 8³ and 16³ cells, at 2e-4, the meshes of both are the same as before.
+
 **Where it works:** every algorithm and implementation. The GPU's shaders have no simple solver and solve with SVD in its place, and the inspector turns a GPU voxelizer's Simple into SVD.
 
 **How it compares with SVD,** at 0.05:
@@ -201,6 +208,41 @@ Its settings are in the **Mesh Simplification** section of the inspector:
 
 Example scenes are in `Assets/Scenes/Mesh Simplification`, each a copy of a Burst scene on 64³ cells with simplification on and the wireframe drawn, so the triangles show.
 
+## Manifold Dual Contouring
+`ManifoldDualContouring` follows *Manifold Dual Contouring* (Schaefer, Ju and Warren, 2007). Every piece of surface in a leaf of the octree has a vertex. On the way up the octree, the vertices that the surface connects inside a cell are clustered into one. A cluster stands in for the vertices below it when its error is within the threshold and, with Enforce Manifold, its piece of surface is a disk that crosses the edges of each face of its cell 0 or 2 times. However far that goes, the mesh stays closed and manifold.
+
+| Setting | Default | What it does |
+|---|---|---|
+| Error Measure | Sum | What a cluster's error is measured as. **Sum:** the QEF at its vertex, the sum of the squared distances to the planes of its samples, as in the paper. **Distance:** the root mean square of those distances in cells, and never less than that of the clusters below it. |
+| Error Threshold | 6e-12 | Only shown under Sum: the largest sum at which a cluster may stand in for its vertices. |
+| Error Distance | 0.05 | Only shown under Distance: the largest distance, in cells. |
+| Enforce Manifold | On | Lets a cluster stand in only for a disk, as above. Off, the error decides alone, and tubes and sheets can collapse into each other. |
+
+**Why there are two measures:** the sum grows with the number of samples, and so with the size of a cluster. A threshold that the small clusters on a face pass refuses the large ones above them, and one that lets the large ones through lets small ones stray from the surface. The distance does not grow with size, so 0.05 of a cell means about the same at every resolution, as the Error of mesh simplification does. Distance is not in the paper.
+- **The largest of the clusters below** keeps a feature that few samples see from being averaged away by the many around it. A dent a cell deep that four samples see is 0.4 of a cell in a cluster of 25.
+- **Leaves count for nothing in it.** A leaf is never judged, and among its handful of samples one normal taken across a sharp edge is most of its mean. On a turned cube at 128³ cells, two leaves came to 0.1 of a cell that way, and every cluster above them would have been refused with them.
+
+**A cube,** at 128³ cells with Burst, in vertices:
+
+| Cube | Sum, 1e-5, error in floats | Sum, 1e-5 | Distance, 0.05 |
+|---|---|---|---|
+| 0.6 across, at the centre | 14 | 8 | 8 |
+| 0.5 across, off the centre | 24 | 8 | 8 |
+| 0.6 across, turned 45° about y | 54 | 48 | 48 |
+| 0.5 across, turned about all three axes | 357 | 378 | 16 |
+
+- **The error in floats** is how it was worked out before (see QEF Solvers). The fully turned cube's real error is not 0: its samples are found by a binary search and its normals by differences.
+- **The fully turned cube under Sum** comes to 16 vertices only at 1e-3, a hundred times the threshold. At 64³ cells, Distance takes it to its 8 corners at 0.1 of a cell, each within a tenth of a cell of where it should be.
+
+**Where clustering stops:** a cluster is a cell of the octree, so clusters on either side of a plane that divides the octree never merge.
+- **The cube turned 45° about y** has its four upright edges in the planes that divide the root. All 48 cells of the level below keep a vertex, including 8 in the middle of faces.
+- **A cube that spans three cells** along an axis keeps 12.
+- **Mesh simplification** takes every one of these cubes to its 8 corners.
+
+**On the models,** Distance leaves about as many vertices as Sum for the same accuracy. Its accuracy in cells changes less with the resolution. On the sphere at Distance 0.05, the middles of triangles are within 0.06 of a cell of the surface at 32³ cells, and 0.10 at 128³. At Sum 2e-4 the figures are 0.09 and 0.26.
+
+The example scenes in `Assets/Scenes/Manifold Dual Contouring` use Sum, so their thresholds mean what they did. In the interactive editor, the Error Measure is among the Manifold voxelizer's settings below the editor.
+
 ## Occupancy-Based Dual Contouring
 `OccupancyDualContouring` follows *Occupancy-Based Dual Contouring* (Hwang and Sung, 2024). It is Manifold Dual Contouring on a uniform grid, without simplification, and it only ever asks the volumes whether a point is inside or outside, never how far away the surface is. A point is inside where the volumes give it a material.
 
@@ -268,7 +310,7 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 
 | Folder | Contents |
 |---|---|
-| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, and the dual marching cubes table. `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
+| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, the dual marching cubes table, and the sums in doubles that every QEF works its error out from (`QEFError.cs`). `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
 | `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. So is the pass that creases the normals of the managed and Burst implementations' meshes, `BurstCreases.cs`. |
 | `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share, the layout they upload density functions in and the number the shaders know each QEF solver by (`QEFSolver.GPU.cs`). The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl` and the QEF solves in `QEF.hlsl`. Both crease their normals with `GPUCreases.cs` and its shader, `CreaseNormals.compute`. |

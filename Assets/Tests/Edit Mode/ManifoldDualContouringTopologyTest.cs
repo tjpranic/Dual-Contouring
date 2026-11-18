@@ -174,6 +174,48 @@ public abstract class ManifoldDualContouringTopologyTest : TopologyTest {
         Assert.AreEqual( 12, topology.triangles, $"triangles of: {topology}" );
     }
 
+    // the octants of a cube of 0.6 have thousands of samples at a resolution of 7. Their error is zero, which the sums in
+    // floats rounded to 3e-5, so that the threshold of the interactive editor's scene, 1e-5, left 56 vertices
+    [Test]
+    public void cubeOfAnySizeClustersToItsCorners( ) {
+        var voxelizer = this.create( 7, QEFSolverType.SVD, new[] { cube( Vector3.zero, 0.3f ) }, 1e-5f );
+
+        var topology = this.contour( voxelizer );
+
+        assertSingleSphere( topology );
+
+        Assert.AreEqual( 8, topology.vertices, $"vertices of: {topology}" );
+    }
+
+    // a cube turned off every axis, whose samples are not exact: under the sum the octants refuse it at 1e-5, which left
+    // 246 vertices, and the root mean square of their distances is a few hundredths of a cell
+    [Test]
+    public void rotatedCubeClustersToItsCornersUnderTheDistance( ) {
+        var rotation  = Quaternion.Euler( 20.0f, 30.0f, 10.0f );
+        var voxelizer = this.create( 7, QEFSolverType.SVD, new[] { cube( Vector3.zero, 0.25f ).rotated( rotation ) }, 0.0f );
+
+        voxelizer.errorMeasure  = ManifoldDualContouring.ErrorMeasure.Distance;
+        voxelizer.errorDistance = 0.1f;
+
+        var mesh     = this.voxelize( voxelizer ).mesh;
+        var topology = MeshTopology.of( mesh );
+
+        assertSingleSphere( topology );
+
+        Assert.AreEqual( 8, topology.vertices, $"vertices of: {topology}" );
+
+        // each of them in a corner, to within a tenth of a cell
+        var corners = Enumerable.Range( 0, 8 ).Select(
+            ( index ) => rotation * new Vector3( ( index & 1 ) == 0 ? -0.25f : 0.25f, ( index & 2 ) == 0 ? -0.25f : 0.25f, ( index & 4 ) == 0 ? -0.25f : 0.25f )
+        ).ToArray( );
+
+        foreach( var vertex in mesh.vertices ) {
+            var nearest = corners.Min( ( corner ) => Vector3.Distance( corner, vertex ) );
+
+            Assert.Less( nearest, 0.1f * voxelizer.cellSize, $"{vertex} is {nearest / voxelizer.cellSize} cells from the nearest corner" );
+        }
+    }
+
     // with the error threshold out of the way only the manifold criterion stops clustering. Every Model is a closed
     // surface around the center of the grid: the root holds all of it, which is not a disk, and each of the eight
     // octants holds a part that is
@@ -225,6 +267,44 @@ public class ManagedManifoldDualContouringTopologyTest : ManifoldDualContouringT
 
     public ManagedManifoldDualContouringTopologyTest( ) {
         this.implementation = ImplementationType.Managed;
+    }
+
+    // under the distance a cluster comes to its own samples' distance or more, no cluster comes to less than the
+    // clusters among its members, and the leaves come to nothing. The vertex trees are the managed implementation's,
+    // which the Burst one is held to, so it runs for that one alone
+    [Test]
+    public void clusterDistancesNeverShrinkUpTheVertexTree( [Values] Model model ) {
+        // at a distance of zero no cluster stands in for anything, so the vertices on the contour are those of the
+        // leaves, and every cluster is on the way up from one of them
+        var voxelizer = this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapesOf( model ) );
+
+        voxelizer.enforceManifold = true;
+
+        voxelizer.errorMeasure  = ManifoldDualContouring.ErrorMeasure.Distance;
+        voxelizer.errorDistance = 0.0f;
+
+        var leaves = this.voxelize( voxelizer ).voxels.Cast<ManifoldDualContouring.Vertex>( ).ToList( );
+
+        Assert.Greater( leaves.Count, 0 );
+
+        var clusters = 0;
+
+        foreach( var leaf in leaves ) {
+            Assert.AreEqual( SurfaceExtractor.Voxel.Type.Leaf, leaf.voxel.type, "a vertex on the contour is not a leaf's" );
+            Assert.AreEqual( 0.0f, leaf.distance, "a leaf has no distance" );
+
+            for( var vertex = leaf.parent; vertex != null; vertex = vertex.parent ) {
+                ++clusters;
+
+                Assert.GreaterOrEqual( vertex.distance, Mathf.Sqrt( vertex.error / vertex.qef.intersectionCount ), "a cluster comes to less than its own samples" );
+
+                if( vertex.parent != null ) {
+                    Assert.GreaterOrEqual( vertex.parent.distance, vertex.distance, "a cluster comes to less than one of its members" );
+                }
+            }
+        }
+
+        Assert.Greater( clusters, 0 );
     }
 
 }

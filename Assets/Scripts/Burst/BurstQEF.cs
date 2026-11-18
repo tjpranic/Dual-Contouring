@@ -25,6 +25,9 @@ public struct BurstQEF {
     public float3 atb;
     public float  btb;
 
+    // the same sums in doubles, which the error is worked out from. See QEFError
+    public QEFError exact;
+
     public int intersectionCount;
 
     // the sum of the intersections and how many there are, and the dimension of the feature they lie on: 1 for a plane,
@@ -60,6 +63,8 @@ public struct BurstQEF {
         this.btb       += dot * dot;
         this.massPoint += intersection;
 
+        this.exact.add( intersection.x, intersection.y, intersection.z, normal.x, normal.y, normal.z );
+
         ++this.massPointCount;
         ++this.intersectionCount;
     }
@@ -74,6 +79,8 @@ public struct BurstQEF {
         this.atb               += other.atb;
         this.btb               += other.btb;
         this.intersectionCount += other.intersectionCount;
+
+        this.exact.combine( other.exact );
 
         // the mass point of the simple and probabilistic solvers is that of every intersection. The SVD solver merges mass
         // points of the same dimension and keeps the one of the higher dimension of two that differ
@@ -141,11 +148,9 @@ public struct BurstQEF {
         }
     }
 
-    // E[x] = xT AtA x - 2 xT AtB + BtB, which rounding can leave just below zero close to the surface
+    // E[x] = xT AtA x - 2 xT AtB + BtB, from the sums in doubles
     public readonly float calculateError( float3 x ) {
-        var error = BurstSurfaceExtractor.dot( x, this.ata( ).multiplyVector( x ) ) - ( 2.0f * BurstSurfaceExtractor.dot( x, this.atb ) ) + this.btb;
-
-        return BurstSurfaceExtractor.max( error, 0.0f );
+        return this.exact.valueAt( x.x, x.y, x.z );
     }
 
     private readonly SymmetricMatrix3x3 ata( ) {

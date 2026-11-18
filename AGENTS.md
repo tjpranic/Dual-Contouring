@@ -12,6 +12,11 @@ An extension to the original dual contouring algorithm to allow for mesh simplif
 
 ## Manifold Dual Contouring
 Based off the *Manifold Dual Contouring* paper; a technique that allows for guaranteed watertight (2-manifold) mesh generation and simplification.
+- **Error measure:** a cluster stands in for its vertices by one of two measures.
+  - **Sum:** the QEF at its vertex, as in the paper, and the default, so the scenes keep their thresholds.
+  - **Distance:** the root mean square distance of its samples' planes in cells, never less than that of the clusters below it. Leaves count for nothing in it. It is not in the paper; the README says why.
+- **QEF error:** every QEF but the managed simple one, which keeps its planes, keeps its sums a second time in doubles (`QEFError`) and works its error out from those. It solves with the float sums, so vertices stay the same as the GPU's. Do not work an error out from the float sums: close to the surface their rounding is larger than the thresholds. This holds for Adaptive Dual Contouring too.
+- **Tests:** they hold Burst to the managed implementation under both measures. Only the managed implementation keeps vertex trees, so the rule for distances is tested on it alone.
 
 ## Occupancy-Based Dual Contouring
 Based off the *Occupancy-Based Dual Contouring* paper; manifold dual contouring on a uniform grid that only asks whether a point is inside or outside, with searches in place of distances and gradients. It has Burst and GPU implementations and no managed one, so its tests hold it to answers known in closed form and the two implementations to each other.

@@ -586,7 +586,9 @@ public class InteractiveEditor : MonoBehaviour {
                 break;
             }
             case ManifoldDualContouring manifold: {
-                append( manifold.errorThreshold );
+                // the threshold of the measure that is set, which says nothing about the other one's
+                append( manifold.errorMeasure );
+                append( manifold.errorMeasure == ManifoldDualContouring.ErrorMeasure.Sum ? manifold.errorThreshold : manifold.errorDistance );
                 append( manifold.enforceManifold );
                 break;
             }

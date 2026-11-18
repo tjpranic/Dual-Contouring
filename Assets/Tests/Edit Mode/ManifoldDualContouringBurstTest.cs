@@ -61,6 +61,19 @@ public class ManifoldDualContouringBurstTest : TopologyTest {
         this.assertSameContour( 5, solver, shapesOf( model ), clustering ); // 16^3 leaves
     }
 
+    // under the distance measure, from a little clustering to a lot
+    [Test]
+    public void contourIsTheManagedOneUnderTheDistance( [Values] Model model, [Values] QEFSolverType solver, [Values( 0.02f, 0.05f, 0.25f )] float distance ) {
+        var voxelizer = this.create( 5, solver, shapesOf( model ), Clustering.None, true );
+
+        voxelizer.errorMeasure  = ManifoldDualContouring.ErrorMeasure.Distance;
+        voxelizer.errorDistance = distance;
+
+        var ( managed, burst ) = this.contourBoth( voxelizer );
+
+        BurstParity.assertSameContour( managed, burst, 1.0f / ( 1 << 4 ) );
+    }
+
     // without the manifold criterion the error threshold alone decides, and tubes and sheets may collapse together
     [Test]
     public void contourIsTheManagedOneWithoutTheManifoldCriterion( [Values] Model model, [Values] QEFSolverType solver ) {

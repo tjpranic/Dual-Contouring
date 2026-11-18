@@ -155,6 +155,7 @@ public partial class ManifoldDualContouring {
         public Vector3   vertex        { get; set; } = Vector3.zero;
         public Vector3   normal        { get; set; } = Vector3.zero;
         public float     error         { get; set; } = 0.0f;
+        public float     distance      { get; set; } = 0.0f; // of a cluster, see clusterDistance
         public Vertex    parent        { get; set; } = null;
         public bool      collapsible   { get; set; } = true; // whether the vertex may stand in for the vertices clustered below it
         public int       index         { get; set; } = -1;
@@ -521,6 +522,7 @@ public partial class ManifoldDualContouring {
                     var euler         = 0;
                     var intersections = 0;
                     var averageNormal = Vector3.zero;
+                    var distance      = 0.0f;
 
                     foreach( var memberIndex in cluster ) {
                         var ( childIndex, member ) = members[memberIndex];
@@ -530,6 +532,8 @@ public partial class ManifoldDualContouring {
                         vertex.qef.combine( member.qef );
 
                         averageNormal += member.normal;
+
+                        distance = Mathf.Max( distance, member.distance );
 
                         // count the intersections on each edge of the cell, along which lie the edges of the children
                         // at either end of it
@@ -566,6 +570,8 @@ public partial class ManifoldDualContouring {
                     // solve QEF for vertex cluster
 
                     ( vertex.vertex, vertex.error ) = vertex.qef.solve( voxel );
+
+                    vertex.distance = clusterDistance( distance, vertex.error, vertex.qef.intersectionCount );
 
                     vertex.normal = Vector3.Normalize( averageNormal );
 
@@ -617,7 +623,7 @@ public partial class ManifoldDualContouring {
                     // the vertex of a cluster is judged by itself: a cluster that is safe to collapse can sit above
                     // clusters that are not
                     foreach( var vertex in voxel.vertices ) {
-                        vertex.collapsible = vertex.error < this.errorThreshold && (
+                        vertex.collapsible = this.withinError( vertex.error, vertex.distance ) && (
                             !this.enforceManifold || ( vertex.euler == 1 && vertex.face )
                         );
                     }

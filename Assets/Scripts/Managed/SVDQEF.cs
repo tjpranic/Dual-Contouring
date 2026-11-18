@@ -40,6 +40,9 @@ public class SVDQEF : QEFSolver {
     private Vector3            ATB;
     private float              BTB;
 
+    // the same sums in doubles, which the error is worked out from. See QEFError
+    private QEFError exact;
+
     // Dual Contouring: The Secret Sauce, section 2.1: the mass point is the average of the intersections, kept as their
     // sum and how many there are. It also has the dimension of the feature those intersections lie on: 1 for a plane,
     // 2 for an edge and 3 for a corner, which is known once the QEF has been solved and is 0 until then
@@ -58,6 +61,9 @@ public class SVDQEF : QEFSolver {
         this.massPoint         = qefData.massPoint;
         this.massPointCount    = qefData.intersectionCount;
         this.intersectionCount = qefData.intersectionCount;
+
+        // the data has the float sums only
+        this.exact = QEFError.of( this.ATA.m00, this.ATA.m01, this.ATA.m02, this.ATA.m11, this.ATA.m12, this.ATA.m22, this.ATB.x, this.ATB.y, this.ATB.z, this.BTB );
     }
 
     public void add( Vector3 intersection, Vector3 normal ) {
@@ -74,6 +80,8 @@ public class SVDQEF : QEFSolver {
         this.BTB       += dot * dot;
         this.massPoint += intersection;
 
+        this.exact.add( intersection.x, intersection.y, intersection.z, normal.x, normal.y, normal.z );
+
         ++this.massPointCount;
         ++this.intersectionCount;
     }
@@ -89,6 +97,8 @@ public class SVDQEF : QEFSolver {
             this.ATB               += solver.ATB;
             this.BTB               += solver.BTB;
             this.intersectionCount += solver.intersectionCount;
+
+            this.exact.combine( solver.exact );
 
             // mass points of the same dimension are merged. Of mass points that differ the one of the higher dimension
             // is kept: the minimizer of the combined QEF is likely to be near the sharpest feature, so that the mass
@@ -129,7 +139,7 @@ public class SVDQEF : QEFSolver {
         // down in: one for a plane, two for an edge and three for a corner
         this.massPointDimension = SVD.calculateRank( VTAV );
 
-        return ( minimizingVertex, SVD.calculateError( this.ATA, this.ATB, this.BTB, minimizingVertex ) );
+        return ( minimizingVertex, this.calculateError( minimizingVertex ) );
     }
 
     public ( Vector3 vertex, float error ) solveMassPoint( ) {
@@ -139,7 +149,13 @@ public class SVDQEF : QEFSolver {
 
         var massPoint = this.massPoint / this.massPointCount;
 
-        return ( massPoint, SVD.calculateError( this.ATA, this.ATB, this.BTB, massPoint ) );
+        return ( massPoint, this.calculateError( massPoint ) );
+    }
+
+    // the value of the QEF at x, from the sums in doubles. SVD.calculateError works it out from the float sums, as the
+    // GPU does
+    private float calculateError( Vector3 x ) {
+        return this.exact.valueAt( x.x, x.y, x.z );
     }
 
     public class Matrix3x3 {

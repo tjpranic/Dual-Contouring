@@ -24,6 +24,7 @@ public partial class ManifoldDualContouring {
         public NativeList<BurstQEF> qefs;
         public NativeList<int>      parents;       // the vertex each one was clustered into, -1 at the top of a vertex tree
         public NativeList<bool>     collapsible;
+        public NativeList<float>    distances;     // of each cluster, see ManifoldDualContouring.clusterDistance
         public NativeList<int>      eulers;
         public NativeList<int>      nodes;         // the node each vertex was created in
         public NativeList<byte>     intersections; // 12 for each vertex, one for each edge of its node
@@ -39,6 +40,7 @@ public partial class ManifoldDualContouring {
             this.qefs                  = new NativeList<BurstQEF> ( allocator );
             this.parents               = new NativeList<int>      ( allocator );
             this.collapsible           = new NativeList<bool>     ( allocator );
+            this.distances             = new NativeList<float>    ( allocator );
             this.eulers                = new NativeList<int>      ( allocator );
             this.nodes                 = new NativeList<int>      ( allocator );
             this.intersections         = new NativeList<byte>     ( allocator );
@@ -58,6 +60,7 @@ public partial class ManifoldDualContouring {
             this.qefs.ResizeUninitialized                  ( count );
             this.parents.ResizeUninitialized               ( count );
             this.collapsible.ResizeUninitialized           ( count );
+            this.distances.ResizeUninitialized             ( count );
             this.eulers.ResizeUninitialized                ( count );
             this.nodes.ResizeUninitialized                 ( count );
             this.intersections.ResizeUninitialized         ( count * SurfaceExtractor.Voxel.EdgeCount );
@@ -72,6 +75,7 @@ public partial class ManifoldDualContouring {
             this.qefs.Dispose( );
             this.parents.Dispose( );
             this.collapsible.Dispose( );
+            this.distances.Dispose( );
             this.eulers.Dispose( );
             this.nodes.Dispose( );
             this.intersections.Dispose( );
@@ -275,6 +279,7 @@ public partial class ManifoldDualContouring {
         [NativeDisableParallelForRestriction] public NativeArray<BurstQEF> qefs;
         [NativeDisableParallelForRestriction] public NativeArray<int>      parents;
         [NativeDisableParallelForRestriction] public NativeArray<bool>     collapsible;
+        [NativeDisableParallelForRestriction] public NativeArray<float>    distances;
         [NativeDisableParallelForRestriction] public NativeArray<int>      eulers;
         [NativeDisableParallelForRestriction] public NativeArray<int>      nodes;
         [NativeDisableParallelForRestriction] public NativeArray<byte>     intersections;
@@ -401,6 +406,7 @@ public partial class ManifoldDualContouring {
                 this.qefs[vertex]        = qef;
                 this.parents[vertex]     = -1;
                 this.collapsible[vertex] = true;
+                this.distances[vertex]   = 0.0f; // a leaf has no distance, see ManifoldDualContouring.clusterDistance
                 this.eulers[vertex]      = 1; // its piece of the contour is a disk, which has an euler characteristic of 1
                 this.nodes[vertex]       = node;
             }
@@ -420,7 +426,9 @@ public partial class ManifoldDualContouring {
         public BurstOctree   octree;
         public BurstSettings settings;
         public int           level;
+        public ErrorMeasure  errorMeasure;
         public float         errorThreshold;
+        public float         distanceThreshold; // the error distance in object space
         public bool          enforceManifold;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>  vertexCounts;
@@ -431,6 +439,7 @@ public partial class ManifoldDualContouring {
         [NativeDisableParallelForRestriction] public NativeArray<BurstQEF> qefs;
         [NativeDisableParallelForRestriction] public NativeArray<int>      parents;
         [NativeDisableParallelForRestriction] public NativeArray<bool>     collapsible;
+        [NativeDisableParallelForRestriction] public NativeArray<float>    distances;
         [NativeDisableParallelForRestriction] public NativeArray<int>      eulers;
         [NativeDisableParallelForRestriction] public NativeArray<int>      nodes;
         [NativeDisableParallelForRestriction] public NativeArray<byte>     intersections;
@@ -597,11 +606,12 @@ public partial class ManifoldDualContouring {
 
                         var created = first + clusterIndex;
 
-                        this.qefs[created]    = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations, this.settings.normalDeviation );
-                        this.normals[created] = float3.zero;
-                        this.eulers[created]  = 0;
-                        this.parents[created] = -1;
-                        this.nodes[created]   = node;
+                        this.qefs[created]      = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations, this.settings.normalDeviation );
+                        this.normals[created]   = float3.zero;
+                        this.eulers[created]    = 0;
+                        this.distances[created] = 0.0f;
+                        this.parents[created]   = -1;
+                        this.nodes[created]     = node;
 
                         for( var edge = 0; edge < EdgeCount; ++edge ) {
                             this.intersections[( created * EdgeCount ) + edge] = 0;
@@ -619,6 +629,8 @@ public partial class ManifoldDualContouring {
                     this.qefs[vertex] = qef;
 
                     this.normals[vertex] += this.normals[member];
+
+                    this.distances[vertex] = math.max( this.distances[vertex], this.distances[member] );
 
                     // an edge of the node runs along the edges of the children at either end of it, which are the
                     // corners it runs between. The other edges of a child lie inside the node or on one of its faces
@@ -676,9 +688,15 @@ public partial class ManifoldDualContouring {
                 this.positions[vertex] = position;
                 this.normals[vertex]   = BurstSurfaceExtractor.normalize( this.normals[vertex] );
 
+                // ManifoldDualContouring.clusterDistance
+                var distance = math.max( this.distances[vertex], math.sqrt( error / solved.intersectionCount ) );
+
+                this.distances[vertex] = distance;
+
                 // the vertex of a cluster is judged by itself: a cluster that is safe to collapse can sit above clusters
                 // that are not
-                var isCollapsible = error < this.errorThreshold && ( !this.enforceManifold || ( euler == 1 && face ) );
+                var withinError   = this.errorMeasure == ErrorMeasure.Sum ? error < this.errorThreshold : distance < this.distanceThreshold;
+                var isCollapsible = withinError && ( !this.enforceManifold || ( euler == 1 && face ) );
 
                 this.collapsible[vertex] = isCollapsible;
 
@@ -1151,6 +1169,7 @@ public partial class ManifoldDualContouring {
                 qefs             = vertices.qefs.AsArray( ),
                 parents          = vertices.parents.AsArray( ),
                 collapsible      = vertices.collapsible.AsArray( ),
+                distances        = vertices.distances.AsArray( ),
                 eulers           = vertices.eulers.AsArray( ),
                 nodes            = vertices.nodes.AsArray( ),
                 intersections    = vertices.intersections.AsArray( )
@@ -1186,7 +1205,9 @@ public partial class ManifoldDualContouring {
                     octree                = octree,
                     settings              = settings,
                     level                 = level,
+                    errorMeasure          = this.errorMeasure,
                     errorThreshold        = this.errorThreshold,
+                    distanceThreshold     = this.distanceThreshold,
                     enforceManifold       = this.enforceManifold,
                     vertexCounts          = vertexCounts,
                     collapsed             = collapsed,
@@ -1195,6 +1216,7 @@ public partial class ManifoldDualContouring {
                     qefs                  = vertices.qefs.AsArray( ),
                     parents               = vertices.parents.AsArray( ),
                     collapsible           = vertices.collapsible.AsArray( ),
+                    distances             = vertices.distances.AsArray( ),
                     eulers                = vertices.eulers.AsArray( ),
                     nodes                 = vertices.nodes.AsArray( ),
                     intersections         = vertices.intersections.AsArray( ),

@@ -466,12 +466,12 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 2
   _implementation: 2
-  _qefSolver: 2
+  _qefSolver: 1
   _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
-  smoothNormals: 0
+  smoothNormals: 1
   meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
@@ -499,7 +499,9 @@ MonoBehaviour:
   debugMinimizingVertexColor: {r: 0, g: 0, b: 1, a: 1}
   debugSurfaceNormalColor: {r: 0, g: 0, b: 1, a: 1}
   keepDebugInformation: 0
+  errorMeasure: 1
   errorThreshold: 0.00001
+  errorDistance: 0.05
   enforceManifold: 1
 --- !u!114 &954588969
 MonoBehaviour:
