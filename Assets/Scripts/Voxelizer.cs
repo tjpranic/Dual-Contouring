@@ -155,6 +155,9 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
     [Tooltip( "Isotropic only: how many rounds of smoothing follow, which make the areas around the vertices alike. Zero leaves them out" ), Min( 0 )]
     public int remeshingAreaIterations = 5;
 
+    [Tooltip( "Field Aligned only: the faces it makes. Triangles; Quad Dominant, quads with triangles and pentagons where rows of faces begin and end; or Quads, quads only, made by splitting the faces of twice the edge length" )]
+    public BurstFieldAligned.Faces remeshingFaces = BurstFieldAligned.Faces.QuadDominant;
+
     [Tooltip( "The normals the remeshed mesh starts from, before it is creased or split. Input: those the mesh it was given would show, creased at the Crease Angle, where each vertex lies on it. Faces: those of each vertex's own triangles" )]
     public Remeshing.Normals remeshingNormals = Remeshing.Normals.Input;
 
@@ -169,7 +172,8 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
                 this.remeshingIterations,
                 this.remeshingAreaIterations,
                 this.vertexNormals == VertexNormals.Split ? Remeshing.Normals.Faces : this.remeshingNormals,
-                this.creaseAngle
+                this.creaseAngle,
+                this.remeshingFaces
             );
         }
     }

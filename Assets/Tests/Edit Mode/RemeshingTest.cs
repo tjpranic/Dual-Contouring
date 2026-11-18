@@ -13,9 +13,9 @@ using ContourVertices    = SurfaceExtractor.ContourVertices;
 using QEFSolverType      = QEFSolver.Type;
 
 // the frame the remeshing techniques go into (Documents/Plans/Remeshing.md, step 1), through Voxelizer.contour,
-// simplify and remesh, with the stand-in technique: which meshes are kept for remeshing, that a remesh is what a fresh
-// contour under the same settings shows, and that the flags of the faces follow the mesh through creasing, splitting
-// and reordering, for every algorithm and implementation
+// simplify and remesh: which meshes are kept for remeshing, that a remesh is what a fresh contour under the same
+// settings shows, and that the flags of the faces follow the mesh through creasing, splitting and reordering, for every
+// algorithm and implementation. Field Aligned stands for the techniques where any will do, since it makes quads
 public class RemeshingTest : TopologyTest {
 
     public enum Algorithm {
@@ -76,7 +76,7 @@ public class RemeshingTest : TopologyTest {
     // 16^3 cells for the uniform grids, 16^3 leaves for the octrees
     private const int resolution = 4;
 
-    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased, Remeshing.Technique technique = Remeshing.Technique.FlatPairs ) {
+    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased, Remeshing.Technique technique = Remeshing.Technique.FieldAligned ) {
         Voxelizer voxelizer = variant.algorithm switch {
             Algorithm.Uniform   => this.createVoxelizer<UniformDualContouring>  ( resolution,     QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive  => this.createVoxelizer<AdaptiveDualContouring> ( resolution + 1, QEFSolverType.SVD, shapes ),
@@ -121,11 +121,44 @@ public class RemeshingTest : TopologyTest {
         }
     }
 
-    // the flags make faces of the mesh, in the order of its index buffer: every edge a triangle leaves out is left out
-    // by the one other triangle on it too, of the same sub-mesh, and the two lie flat together, as the stand-in pairs
-    // them. A creased or split mesh has several vertices at a position, so edges are found by the positions of their
-    // ends. Gives the number of pairs
-    private static int pairsOf( Mesh mesh, IReadOnlyList<byte> flags ) {
+    // the faces the flags of a mesh make, counted as a remesh counts its own (BurstRemeshing.count), with the vertices at
+    // one position made one: a creased or split mesh has several there. Where the flags follow the triangles through
+    // creasing, splitting and reordering, these are the faces the remesh says it made
+    private static BurstRemeshing.FaceCounts countsOf( Mesh mesh, IReadOnlyList<byte> flags ) {
+        var vertices = mesh.vertices;
+        var places   = new Dictionary<Vector3, int>( );
+        var built    = new List<BurstMesh.Triangle>( );
+
+        int place( int index ) {
+            if( !places.TryGetValue( vertices[index], out var at ) ) {
+                places.Add( vertices[index], at = places.Count );
+            }
+            return at;
+        }
+
+        for( var subMesh = 0; subMesh < mesh.subMeshCount; ++subMesh ) {
+            var indices = mesh.GetTriangles( subMesh );
+
+            for( var index = 0; index < indices.Length; index += 3 ) {
+                built.Add( new BurstMesh.Triangle( place( indices[index] ), place( indices[index + 1] ), place( indices[index + 2] ), subMesh ) );
+            }
+        }
+
+        Assert.AreEqual( built.Count, flags.Count, "a flag for every triangle" );
+
+        using var triangles = new Unity.Collections.NativeArray<BurstMesh.Triangle>( built.ToArray( ), Unity.Collections.Allocator.TempJob );
+        using var native    = new Unity.Collections.NativeArray<byte>( flags.ToArray( ), Unity.Collections.Allocator.TempJob );
+
+        BurstRemeshing.count( triangles, native, out _, out var faces );
+
+        return faces;
+    }
+
+    // the faces the flags make of a mesh, in the order of its index buffer: every edge a triangle leaves out is left out
+    // by the one other triangle on it too, of the same sub-mesh, and the triangles joined across such edges are a face
+    // of as many sides as they draw edges. A creased or split mesh has several vertices at a position, so edges are found
+    // by the positions of their ends
+    private static ( int triangles, int quads, int larger ) facesOf( Mesh mesh, IReadOnlyList<byte> flags ) {
         var vertices  = mesh.vertices;
         var triangles = new List<( int a, int b, int c, int subMesh )>( );
 
@@ -139,18 +172,26 @@ public class RemeshingTest : TopologyTest {
 
         Assert.AreEqual( triangles.Count, flags.Count, "a flag for every triangle" );
 
+        var parents = Enumerable.Range( 0, triangles.Count ).ToArray( );
+
+        int find( int item ) {
+            while( parents[item] != item ) {
+                item = parents[item] = parents[parents[item]];
+            }
+            return item;
+        }
+
         var leftOut = new Dictionary<( Vector3, Vector3 ), List<int>>( );
+        var sides   = new int[triangles.Count];
 
         for( var triangle = 0; triangle < triangles.Count; ++triangle ) {
             var corners = new[] { triangles[triangle].a, triangles[triangle].b, triangles[triangle].c };
-            var count   = 0;
 
             for( var k = 0; k < 3; ++k ) {
                 if( ( flags[triangle] & ( 1 << k ) ) != 0 ) {
+                    ++sides[triangle];
                     continue;
                 }
-
-                ++count;
 
                 var a   = vertices[corners[k]];
                 var b   = vertices[corners[( k + 1 ) % 3]];
@@ -161,13 +202,6 @@ public class RemeshingTest : TopologyTest {
                 }
                 list.Add( triangle );
             }
-
-            Assert.LessOrEqual( count, 1, $"edges triangle {triangle} leaves out" );
-        }
-
-        Vector3 normalOf( int triangle ) {
-            var t = triangles[triangle];
-            return Vector3.Cross( vertices[t.b] - vertices[t.a], vertices[t.c] - vertices[t.a] ).normalized;
         }
 
         foreach( var entry in leftOut ) {
@@ -177,10 +211,21 @@ public class RemeshingTest : TopologyTest {
             var second = entry.Value[1];
 
             Assert.AreEqual( triangles[first].subMesh, triangles[second].subMesh, $"sub-meshes of the triangles across {entry.Key}" );
-            Assert.Less( Vector3.Angle( normalOf( first ), normalOf( second ) ), 1.01f, $"angle between the triangles across {entry.Key}" );
+
+            parents[find( first )] = find( second );
         }
 
-        return leftOut.Count;
+        var faceSides = new Dictionary<int, int>( );
+
+        for( var triangle = 0; triangle < triangles.Count; ++triangle ) {
+            var root = find( triangle );
+
+            faceSides[root] = ( faceSides.TryGetValue( root, out var count ) ? count : 0 ) + sides[triangle];
+        }
+
+        Assert.IsTrue( faceSides.Values.All( ( count ) => count >= 3 ), "every face has three sides or more" );
+
+        return ( faceSides.Values.Count( ( count ) => count == 3 ), faceSides.Values.Count( ( count ) => count == 4 ), faceSides.Values.Count( ( count ) => count > 4 ) );
     }
 
     // ---- with remeshing off ----
@@ -197,13 +242,13 @@ public class RemeshingTest : TopologyTest {
         Assert.AreEqual( ContourVertices.Creased, voxelizer.contourVertices, "what the implementation is asked for" );
     }
 
-    // ---- the stand-in through the frame ----
+    // ---- a technique through the frame ----
 
-    // the stand-in moves nothing, so the mesh shown is the contour as remeshing off shows it, with flags that pair its
-    // flat triangles. The flags are those of the mesh as it is shown: creased or split, its vertices reordered or not,
-    // of one material or two. A GPU contour is read back to be remeshed
+    // Field Aligned's faces through the frame: the flags of the mesh shown make the faces the remesh says it made, as
+    // the mesh is shown, creased or split, its vertices reordered or not, of one material or two. A GPU contour is read
+    // back to be remeshed. Its faces are quads, with triangles and pentagons among them
     [Test]
-    public void theStandInPairsTheFlatTrianglesOfTheContour(
+    public void aRemeshsFacesGoThroughTheFrame(
         [ValueSource( nameof( variants ) )] Variant variant, [Values] Surface surface, [Values] VertexNormals normals, [Values] bool reorderVertices
     ) {
         var voxelizer  = this.create( variant, shapesOf( surface ), normals );
@@ -214,28 +259,33 @@ public class RemeshingTest : TopologyTest {
         Assert.IsTrue( statistics.remeshing.HasValue, "what the remesh did" );
 
         var remeshing = statistics.remeshing.Value;
-        var pairs     = pairsOf( mesh, voxelizer.shownEdgeFlags );
 
         Assert.IsNull( remeshing.gaveUp, "gave up" );
-        Assert.Greater( pairs, triangleCountOf( mesh ) / 8, "pairs, on models with flat faces" );
+        Assert.AreEqual( Remeshing.Technique.FieldAligned, remeshing.technique );
+        Assert.IsTrue( remeshing.fieldAligned.HasValue, "what Field Aligned did" );
 
-        Assert.AreEqual( pairs,                                    remeshing.quads,              "quads" );
-        Assert.AreEqual( triangleCountOf( mesh ) - ( 2 * pairs ), remeshing.triangles,          "triangles" );
-        Assert.AreEqual( 0,                                        remeshing.largerFaces,        "larger faces" );
-        Assert.AreEqual( 0,                                        remeshing.newOpenLines,       "new open lines" );
-        Assert.AreEqual( 0,                                        remeshing.newNonManifoldLines, "new lines of edges of more than two triangles" );
-        Assert.AreEqual( triangleCountOf( mesh ),                  remeshing.inputTriangleCount, "triangles given" );
+        var faces = countsOf( mesh, voxelizer.shownEdgeFlags );
 
-        Assert.AreEqual( Remeshing.Technique.FlatPairs, remeshing.technique );
+        Assert.AreEqual( remeshing.triangles,   faces.triangles, "triangles" );
+        Assert.AreEqual( remeshing.quads,       faces.quads,     "quads" );
+        Assert.AreEqual( remeshing.largerFaces, faces.larger,    "larger faces" );
+        Assert.Greater( faces.quads, 4 * ( faces.triangles + faces.larger ), "mostly quads" );
 
-        // the GPU hands its vertices over in a different order every time, so only the CPU's mesh is the same as the one
-        // remeshing off shows, and only its contour can be had again to work out the length from
+        // where the remesh is a manifold, as on these models but the turned shapes, where sheets meet, every edge a
+        // triangle leaves out is left out by the one other triangle on it, of its sub-mesh (finding 7)
+        if( surface != Surface.TurnedShapes ) {
+            Assert.AreEqual( 0, faces.inconsistent, "flags that make no face" );
+            Assert.AreEqual( ( faces.triangles, faces.quads, faces.larger ), facesOf( mesh, voxelizer.shownEdgeFlags ), "faces, by the edges left out" );
+        }
+
+        // the GPU hands its vertices over in a different order every time, so only the CPU's contour can be had again
+        // to work out the length from
         if( variant.implementation == ImplementationType.GPU ) {
             Assert.Greater( remeshing.edgeLength, 0.5, "edge length in cells, of a contour of about a cell" );
             Assert.Less( remeshing.edgeLength, 2.0,    "edge length in cells, of a contour of about a cell" );
         }
         else {
-            // the stand-in makes quads, which have a vertex for every l^2 of the area: at 1 as many as the contour has
+            // quads have a vertex for every l^2 of the area: at 1 as many as the contour has
             var contour = this.voxelize( voxelizer ).mesh;
 
             this.made.Add( contour );
@@ -251,12 +301,7 @@ public class RemeshingTest : TopologyTest {
             var used = triangles.Distinct( ).Count( );
 
             Assert.AreEqual( Math.Sqrt( area / used ) / voxelizer.cellSize, remeshing.edgeLength, remeshing.edgeLength * 1e-4, "edge length in cells" );
-
-            var plain = this.create( variant, shapesOf( surface ), normals, Remeshing.Technique.Off );
-
-            plain.contour( drawFromGPU: false, reorderVertices: reorderVertices );
-
-            MeshComparison.assertSameTriangles( shown( plain ), mesh );
+            Assert.AreEqual( triangles.Length / 3, remeshing.inputTriangleCount, "triangles given" );
         }
     }
 
@@ -300,7 +345,7 @@ public class RemeshingTest : TopologyTest {
             Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, shown( voxelizer ).hideFlags, $"{what}: the mesh is not saved with the scene" );
         }
 
-        voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+        voxelizer.remeshing = Remeshing.Technique.FieldAligned;
 
         assertShowsWhatAFreshContourShows( "turned on" );
 
@@ -375,7 +420,7 @@ public class RemeshingTest : TopologyTest {
         Assert.IsNull( shown( voxelizer ), "drawn straight from the GPU" );
         Assert.IsFalse( voxelizer.remesh( ).HasValue, "after a contour drawn straight from the GPU" );
 
-        voxelizer.remeshing = Remeshing.Technique.FlatPairs;
+        voxelizer.remeshing = Remeshing.Technique.FieldAligned;
 
         Assert.AreEqual( ContourVertices.Shared, voxelizer.contourVertices, "asked for with remeshing on" );
 
@@ -406,7 +451,7 @@ public class RemeshingTest : TopologyTest {
 
             Assert.AreEqual( triangleCountOf( simplest ), statistics.remeshing.Value.inputTriangleCount, "triangles given, at a detail of 0" );
             Assert.AreEqual( simplest.vertexCount,        statistics.remeshing.Value.inputVertexCount,   "vertices given, at a detail of 0" );
-            Assert.AreEqual( pairsOf( shown( voxelizer ), voxelizer.shownEdgeFlags ), statistics.remeshing.Value.quads, "quads" );
+            Assert.AreEqual( facesOf( shown( voxelizer ), voxelizer.shownEdgeFlags ).quads, statistics.remeshing.Value.quads, "quads" );
 
             voxelizer.simplificationDetail = 0.5f;
 
@@ -414,7 +459,7 @@ public class RemeshingTest : TopologyTest {
 
             Assert.IsTrue( again.HasValue, "simplified again" );
             Assert.AreEqual( triangleCountOf( halfway ), again.Value.remeshing.Value.inputTriangleCount, "triangles given, at a detail of 0.5" );
-            Assert.AreEqual( pairsOf( shown( voxelizer ), voxelizer.shownEdgeFlags ), again.Value.remeshing.Value.quads, "quads at a detail of 0.5" );
+            Assert.AreEqual( facesOf( shown( voxelizer ), voxelizer.shownEdgeFlags ).quads, again.Value.remeshing.Value.quads, "quads at a detail of 0.5" );
 
             // and remesh starts from the mesh at that detail
             voxelizer.remeshing = Remeshing.Technique.Off;
@@ -447,7 +492,7 @@ public class RemeshingTest : TopologyTest {
     // split, a mesh has three vertices for every triangle, which passes 65,535 at 21,845 triangles. The flags still
     // follow its triangles
     [Test]
-    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( [Values( Remeshing.Technique.FlatPairs, Remeshing.Technique.Isotropic )] Remeshing.Technique technique ) {
+    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( [Values( Remeshing.Technique.FieldAligned, Remeshing.Technique.Isotropic )] Remeshing.Technique technique ) {
         var voxelizer = this.createVoxelizer<UniformDualContouring>( 6, QEFSolverType.SVD, shapesOf( Model.ThreeBalls ) );
 
         voxelizer.implementationType   = ImplementationType.Burst;
@@ -460,18 +505,18 @@ public class RemeshingTest : TopologyTest {
 
         Assert.Greater( statistics.triangleCount.Value, 21845, "triangles" );
         Assert.AreEqual( UnityEngine.Rendering.IndexFormat.UInt32, mesh.indexFormat, "index format" );
-        Assert.AreEqual( statistics.remeshing.Value.quads, voxelizer.shownEdgeFlags == null ? 0 : pairsOf( mesh, voxelizer.shownEdgeFlags ), "quads" );
+        Assert.AreEqual( statistics.remeshing.Value.quads, voxelizer.shownEdgeFlags == null ? 0 : countsOf( mesh, voxelizer.shownEdgeFlags ).quads, "quads" );
         Assert.AreEqual( 3 * statistics.triangleCount.Value, mesh.vertexCount, "three vertices for every triangle" );
     }
 
     // ---- Isotropic ----
 
-    // the kept mesh as it came, and remeshed by Isotropic, shown with shared vertices: creased at 180 degrees, every
+    // the kept mesh as it came, and remeshed by a technique, shown with shared vertices: creased at 180 degrees, every
     // triangle around a vertex is one group. A GPU contour is only kept while remeshing is on, so it contours remeshed
-    private ( Mesh input, Mesh output, Remeshing.Statistics statistics ) isotropicOf( Voxelizer voxelizer ) {
+    private ( Mesh input, Mesh output, Remeshing.Statistics statistics ) remeshedOf( Voxelizer voxelizer, Remeshing.Technique technique ) {
         voxelizer.vertexNormals = VertexNormals.Creased;
         voxelizer.creaseAngle   = 180.0f;
-        voxelizer.remeshing     = Remeshing.Technique.Isotropic;
+        voxelizer.remeshing     = technique;
 
         voxelizer.contour( drawFromGPU: false );
 
@@ -482,11 +527,15 @@ public class RemeshingTest : TopologyTest {
 
         this.made.Add( input );
 
-        voxelizer.remeshing = Remeshing.Technique.Isotropic;
+        voxelizer.remeshing = technique;
 
         var statistics = voxelizer.remesh( ).Value.remeshing.Value;
 
         return ( input, shown( voxelizer ), statistics );
+    }
+
+    private ( Mesh input, Mesh output, Remeshing.Statistics statistics ) isotropicOf( Voxelizer voxelizer ) {
+        return this.remeshedOf( voxelizer, Remeshing.Technique.Isotropic );
     }
 
     private static BurstMesh.Triangle[] trianglesWithSubMeshesOf( Mesh mesh ) {
@@ -989,6 +1038,167 @@ public class RemeshingTest : TopologyTest {
 
             CollectionAssert.AreEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), $"back from {what}" );
         }
+    }
+
+    // ---- Field Aligned ----
+
+    private static double areaOf( Mesh mesh, int subMesh ) {
+        var vertices = mesh.vertices;
+        var indices  = mesh.GetTriangles( subMesh );
+        var area     = 0.0;
+
+        for( var index = 0; index < indices.Length; index += 3 ) {
+            area += 0.5 * Vector3.Cross( vertices[indices[index + 1]] - vertices[indices[index]], vertices[indices[index + 2]] - vertices[indices[index]] ).magnitude;
+        }
+
+        return area;
+    }
+
+    // what Field Aligned keeps of the mesh it is given, for every algorithm and implementation, contoured and
+    // simplified, as quads with triangles and pentagons among them: every vertex on that mesh, the area of every
+    // material to within a tenth or so, about as many vertices, mostly quads, and the same remesh every time. Its
+    // topology is counted and not held to the input's (finding 7)
+    [Test]
+    public void theFieldAlignedRemeshKeepsTheSurfaceAndItsAreas( [ValueSource( nameof( variants ) )] Variant variant, [Values] Surface surface, [Values] bool simplified ) {
+        var voxelizer = this.create( variant, shapesOf( surface ), VertexNormals.Creased, Remeshing.Technique.Off );
+
+        voxelizer.meshSimplification = simplified;
+
+        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.FieldAligned );
+        var cellSize                       = ( double )voxelizer.cellSize;
+
+        Debug.Log( $"{variant} {surface} {( simplified ? "simplified" : "contour" )}: {output.vertexCount} vertices from {input.vertexCount}, {statistics.quads} quads, {statistics.triangles} triangles, {statistics.largerFaces} larger, {statistics.newOpenLines} new open lines, {statistics.newNonManifoldLines} new lines of more than two triangles" );
+
+        Assert.IsNull( statistics.gaveUp, "gave up" );
+        Assert.AreEqual( 0, statistics.fieldAligned.Value.offInput, "vertices without a point of the mesh within reach" );
+        Assert.Greater( statistics.quads, statistics.triangles + statistics.largerFaces, "mostly quads" );
+
+        // on the mesh it was given
+        var built = new HandBuiltMesh( );
+
+        built.positions.AddRange( input.vertices );
+        built.triangles.AddRange( trianglesWithSubMeshesOf( input ) );
+
+        using var features = new FeatureMeshRun( built, 40.0 );
+        using var grid     = SurfaceGrid.of( features.mesh, 2.0 * cellSize, Unity.Collections.Allocator.TempJob );
+
+        foreach( var position in output.vertices ) {
+            Assert.LessOrEqual( nearestOn( grid, position, cellSize, out _ ) / cellSize, 1e-5, $"the vertex at {position} is on the mesh, in cells" );
+        }
+
+        // every material about as large. A face takes the material most of its area has, so a line between two moves by
+        // up to half an edge, which on a small simplified mesh of long edges is much of a small material's area:
+        // measured 0.92 to 1.01 of the input's on contours, and down to 0.86 on the turned shapes simplified
+        Assert.AreEqual( input.subMeshCount, output.subMeshCount, "sub-meshes" );
+
+        for( var subMesh = 0; subMesh < input.subMeshCount; ++subMesh ) {
+            Assert.That( areaOf( output, subMesh ) / areaOf( input, subMesh ), Is.InRange( simplified ? 0.8 : 0.9, 1.05 ), $"the area of sub-mesh {subMesh} against the input's" );
+        }
+
+        // about as many vertices, on meshes of 300 vertices and more: measured 0.96 to 1.07
+        if( input.vertexCount >= 300 ) {
+            Assert.That( output.vertexCount / ( double )input.vertexCount, Is.InRange( 0.9, 1.15 ), $"vertices, against the {input.vertexCount} of the mesh given" );
+        }
+
+        // and the same again
+        var first = MeshComparison.trianglesOf( output );
+        var flags = voxelizer.shownEdgeFlags.ToArray( );
+
+        voxelizer.remesh( );
+
+        CollectionAssert.AreEqual( first, MeshComparison.trianglesOf( shown( voxelizer ) ), "the second remesh" );
+        CollectionAssert.AreEqual( flags, voxelizer.shownEdgeFlags, "the second remesh's flags" );
+    }
+
+    // Field Aligned's triangles and its quads alone, which are split from faces of twice the length, are on the mesh too
+    [Test]
+    public void everyVertexOfEachKindOfFaceIsOnTheMesh( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] bool simplified, [Values( BurstFieldAligned.Faces.Triangles, BurstFieldAligned.Faces.Quads )] BurstFieldAligned.Faces faces ) {
+        var voxelizer = this.create( new( algorithm, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.Off );
+
+        voxelizer.meshSimplification = simplified;
+        voxelizer.remeshingFaces     = faces;
+
+        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.FieldAligned );
+        var cellSize                       = ( double )voxelizer.cellSize;
+
+        Assert.IsNull( statistics.gaveUp, "gave up" );
+
+        var built = new HandBuiltMesh( );
+
+        built.positions.AddRange( input.vertices );
+        built.triangles.AddRange( trianglesWithSubMeshesOf( input ) );
+
+        using var features = new FeatureMeshRun( built, 40.0 );
+        using var grid     = SurfaceGrid.of( features.mesh, 2.0 * cellSize, Unity.Collections.Allocator.TempJob );
+
+        foreach( var position in output.vertices ) {
+            Assert.LessOrEqual( nearestOn( grid, position, cellSize, out _ ) / cellSize, 1e-5, $"the vertex at {position} is on the mesh, in cells" );
+        }
+    }
+
+    // the edge length sets how many vertices Field Aligned makes, in each of its faces: a fourth as many at twice the
+    // length and four times at half
+    [Test]
+    public void theEdgeLengthSetsHowManyVerticesFieldAlignedMakes( [ValueSource( nameof( cpuVariants ) )] Variant variant, [Values] BurstFieldAligned.Faces faces ) {
+        var voxelizer = this.create( variant, shapesOf( Model.ThreeBalls ), VertexNormals.Creased, Remeshing.Technique.Off );
+        var counts    = new Dictionary<float, int>( );
+
+        voxelizer.creaseAngle    = 180.0f;
+        voxelizer.remeshing      = Remeshing.Technique.FieldAligned;
+        voxelizer.remeshingFaces = faces;
+
+        voxelizer.contour( drawFromGPU: false );
+
+        foreach( var length in new[] { 0.5f, 1.0f, 2.0f } ) {
+            voxelizer.remeshingEdgeLength = length;
+
+            var statistics = voxelizer.remesh( ).Value;
+
+            Assert.IsNull( statistics.remeshing.Value.gaveUp, $"gave up at {length}" );
+
+            counts[length] = statistics.vertexCount.Value;
+        }
+
+        Debug.Log( $"{variant} {faces}: {string.Join( ", ", counts.Select( ( pair ) => $"{pair.Value} at {pair.Key}" ) )}" );
+
+        Assert.That( counts[0.5f] / ( double )counts[1.0f], Is.InRange( 3.5, 4.5 ),  "at half the length" );
+        Assert.That( counts[2.0f] / ( double )counts[1.0f], Is.InRange( 0.2, 0.33 ), "at twice the length" );
+    }
+
+    // each of Field Aligned's settings changes what it makes, and those it does not take, Isotropic's, change nothing
+    [Test]
+    public void eachOfFieldAlignedsSettingsChangesTheRemesh( ) {
+        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.FieldAligned );
+
+        voxelizer.contour( drawFromGPU: false );
+
+        var defaults = MeshComparison.trianglesOf( shown( voxelizer ) );
+        var flags    = voxelizer.shownEdgeFlags.ToArray( );
+
+        foreach( var ( what, change, back ) in new ( string, Action, Action )[] {
+            ( "triangles",                                     ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.Triangles, ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.QuadDominant ),
+            ( "quads only",                                    ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.Quads,     ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.QuadDominant ),
+            ( "a feature angle above the cubes' right angles", ( ) => voxelizer.remeshingFeatureAngle = 100.0f, ( ) => voxelizer.remeshingFeatureAngle = 40.0f ),
+            ( "the normals of the faces",                      ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Faces, ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Input )
+        } ) {
+            change( );
+            voxelizer.remesh( );
+
+            CollectionAssert.AreNotEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), $"with {what}" );
+
+            back( );
+            voxelizer.remesh( );
+
+            CollectionAssert.AreEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), $"back from {what}" );
+        }
+
+        // Isotropic's
+        voxelizer.remeshingIterations     = 2;
+        voxelizer.remeshingAreaIterations = 0;
+        voxelizer.remesh( );
+
+        CollectionAssert.AreEqual( defaults, MeshComparison.trianglesOf( shown( voxelizer ) ), "with Isotropic's settings changed" );
+        CollectionAssert.AreEqual( flags, voxelizer.shownEdgeFlags, "the flags with Isotropic's settings changed" );
     }
 
     // a length that would make more vertices than mostVertices gives up, and the mesh is shown as it came

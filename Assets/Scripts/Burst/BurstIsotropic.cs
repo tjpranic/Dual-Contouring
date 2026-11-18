@@ -1190,35 +1190,9 @@ public static class BurstIsotropic {
             var point   = this.orders[vertex] == 2 || this.sharpCounts[vertex] == 1 || this.sharpCounts[vertex] >= 3;
             var subMesh = kindOf( point, count, this.corners[vertex] ) == Kind.Surface ? this.subMeshes[this.firstCorners[vertex] / 3] : SurfaceGrid.anySubMesh;
 
-            this.normals[vertex] = this.grid.nearestOnSurface( position, subMesh, normal, this.reach, out var nearest, out var triangle ) ? this.inputNormalAt( nearest, triangle, normal ) : normal;
-        }
-
-        // the normals at the corners, weighted by the barycentric coordinates of the point (Ericson, section 3.4)
-        private readonly double3 inputNormalAt( double3 point, int triangle, double3 otherwise ) {
-            var a  = this.grid.corners[triangle * 3];
-            var v0 = this.grid.corners[( triangle * 3 ) + 1] - a;
-            var v1 = this.grid.corners[( triangle * 3 ) + 2] - a;
-            var v2 = point - a;
-
-            var d00 = math.dot( v0, v0 );
-            var d01 = math.dot( v0, v1 );
-            var d11 = math.dot( v1, v1 );
-            var d20 = math.dot( v2, v0 );
-            var d21 = math.dot( v2, v1 );
-
-            var denominator = ( d00 * d11 ) - ( d01 * d01 );
-
-            if( !( denominator > 0.0 ) ) {
-                return otherwise;
-            }
-
-            var v = ( ( d11 * d20 ) - ( d01 * d21 ) ) / denominator;
-            var w = ( ( d00 * d21 ) - ( d01 * d20 ) ) / denominator;
-            var u = 1.0 - v - w;
-
-            var mixed = ( ( double3 )this.cornerNormals[triangle * 3] * u ) + ( ( double3 )this.cornerNormals[( triangle * 3 ) + 1] * v ) + ( ( double3 )this.cornerNormals[( triangle * 3 ) + 2] * w );
-
-            return math.lengthsq( mixed ) > 0.0 ? math.normalize( mixed ) : otherwise;
+            this.normals[vertex] = this.grid.nearestOnSurface( position, subMesh, normal, this.reach, out var nearest, out var triangle )
+                ? BurstRemeshing.inputNormalAt( this.grid, this.cornerNormals, nearest, triangle, normal )
+                : normal;
         }
 
     }

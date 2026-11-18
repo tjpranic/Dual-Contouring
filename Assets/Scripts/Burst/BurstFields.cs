@@ -454,11 +454,13 @@ public static class BurstFields {
     //   there (finding 11). So is a vertex without triangles.
     // - A vertex of an open edge or of a line between materials is held (section 3.7, finding 11): its direction to
     //   that of one of its hard edges, the flattest in its tangent plane, and its lattice to a line through the vertex
-    //   along it
+    //   along it. With freeMaterials, lines between materials are not held, which is only for measuring what holding
+    //   them does (step 5)
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct VerticesJob : IJobParallelFor {
 
         public bool creases;
+        public bool freeMaterials;
 
         [ReadOnly] public NativeArray<double3> meshPositions;
         [ReadOnly] public NativeArray<int>     firstCorners;
@@ -562,7 +564,7 @@ public static class BurstFields {
             for( var end = this.firstEdges[vertex]; end != -1; end = this.nextEdges[end] ) {
                 var edge = end >> 1;
 
-                if( this.edgeSharp[edge] == Sharp.None ) {
+                if( this.edgeSharp[edge] == Sharp.None || ( this.freeMaterials && this.edgeSharp[edge] == Sharp.Materials ) ) {
                     continue;
                 }
 
@@ -1370,15 +1372,18 @@ public static class BurstFields {
     // every edge of a mesh longer than a limit split at its middle, the longest first and of two of one length the
     // lower, the edges the splits make among them, until none is longer: how both field techniques prepare the mesh
     // they are given, whose fields live on its vertices (finding 3; the code). It is the first operation of
-    // Isotropic's loop, without the search for a point of the input: the middle of an edge is on it
+    // Isotropic's loop, without the search for a point of the input: the middle of an edge is on it. The splits stop
+    // where the mesh would pass a number of vertices, if one is given, and say so
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct PrepareJob : IJob {
 
         public FeatureMesh mesh;
         public double      length; // the edge length the fields are for
 
-        // one, added to
+        // two, added to: the splits, and 1 where they stopped at the limit
         public NativeArray<int> splits;
+
+        public int mostVertices; // or 0 for no limit
 
         public void Execute( ) {
             var total = 0.0;
@@ -1405,6 +1410,11 @@ public static class BurstFields {
 
                 if( !( BurstIsotropic.lengthOf( this.mesh, edge ) > longest ) ) {
                     continue;
+                }
+
+                if( this.mostVertices > 0 && this.mesh.mesh.vertexCount >= this.mostVertices ) {
+                    this.splits[1] = 1;
+                    break;
                 }
 
                 var ends   = this.mesh.mesh.edges[edge];
@@ -1435,9 +1445,11 @@ public static class BurstFields {
         public double   featureLength; // the length the features by angle are found at (BurstFeatures), or 0 for each edge's own
         public bool     creases;       // vertices of feature edges by angle take a triangle's normal (section 3.5)
         public bool     smallerRatio;  // the hierarchy scored by the smaller ratio of two areas, as the paper writes it
+        public bool     freeMaterials; // lines between materials not held, for measuring what holding them does
         public int      iterations;    // of the smoothing, a level
         public uint     seed;
         public bool     measure;       // the energies of every level and the singularities, into the report
+        public int      mostVertices;  // of the mesh the fields are on, or 0 for no limit: past it there are no fields
 
     }
 
@@ -1458,9 +1470,10 @@ public static class BurstFields {
 
         public BurstSheets.Report sheets;
 
-        public int inputVertices;
-        public int splits;         // edges split before the fields
-        public int vertices;       // of the mesh the fields are on
+        public int  inputVertices;
+        public int  splits;        // edges split before the fields
+        public bool tooLarge;      // the mesh the fields are on would have passed Settings.mostVertices: no fields
+        public int  vertices;      // of the mesh the fields are on
         public int triangles;
         public int leftOut;        // vertices the fields leave out
         public int held;           // vertices whose fields are held
@@ -1544,7 +1557,7 @@ public static class BurstFields {
 
         using( prepareMarker.Auto( ) ) {
             using var lineCount = new NativeArray<int>( 1, Allocator.TempJob );
-            using var splits    = new NativeArray<int>( 1, Allocator.TempJob );
+            using var splits    = new NativeArray<int>( 2, Allocator.TempJob );
 
             new BurstMeshSimplifier.BuildJob { positions = sheetPositions.AsArray( ), normals = sheetNormals.AsArray( ), triangles = sheetTriangles.AsArray( ), mesh = fields.mesh.mesh }.Run( );
 
@@ -1559,9 +1572,10 @@ public static class BurstFields {
 
             new BurstIsotropic.ConstraintsJob { mesh = fields.mesh }.Run( );
 
-            new PrepareJob { mesh = fields.mesh, length = settings.length, splits = splits }.Run( );
+            new PrepareJob { mesh = fields.mesh, length = settings.length, mostVertices = settings.mostVertices, splits = splits }.Run( );
 
-            report.splits = splits[0];
+            report.splits   = splits[0];
+            report.tooLarge = splits[1] != 0;
         }
 
         report.prepareMilliseconds = lap( stopwatch );
@@ -1571,7 +1585,7 @@ public static class BurstFields {
 
     // level 0 of a hierarchy, from a mesh with its features: its vertices (VerticesJob) and the edges between them
     // (LinksJob)
-    public static void graph( in FeatureMesh features, Hierarchy hierarchy, bool creases, ref Report report ) {
+    public static void graph( in FeatureMesh features, Hierarchy hierarchy, bool creases, ref Report report, bool freeMaterials = false ) {
         var mesh        = features.mesh;
         var vertexCount = mesh.vertexCount;
 
@@ -1591,6 +1605,7 @@ public static class BurstFields {
 
         new VerticesJob {
             creases        = creases,
+            freeMaterials  = freeMaterials,
             meshPositions  = mesh.positions.AsArray( ),
             firstCorners   = mesh.firstCorners.AsArray( ),
             nextCorners    = mesh.nextCorners.AsArray( ),
@@ -1631,7 +1646,8 @@ public static class BurstFields {
     // the fields of a mesh of shared vertices at an edge length (sections 3.2 to 3.5): the mesh prepared, the
     // hierarchy built, the directions smoothed from the top level down, handed up again from level 0, and the lattice
     // points smoothed from the top level down along them. The levels get a line each with Settings.measure, in a list
-    // that is the caller's
+    // that is the caller's. Where the mesh the fields are on would pass Settings.mostVertices, the report says so and
+    // the hierarchy is left empty
     public static Fields solve(
         NativeArray<float3>             positions,
         NativeArray<float3>             normals,
@@ -1648,8 +1664,12 @@ public static class BurstFields {
         var rho       = ( float )settings.length;
         var stopwatch = System.Diagnostics.Stopwatch.StartNew( );
 
+        if( report.tooLarge ) {
+            return fields;
+        }
+
         using( graphMarker.Auto( ) ) {
-            graph( fields.mesh, hierarchy, settings.creases, ref report );
+            graph( fields.mesh, hierarchy, settings.creases, ref report, settings.freeMaterials );
         }
 
         report.graphMilliseconds = lap( stopwatch );

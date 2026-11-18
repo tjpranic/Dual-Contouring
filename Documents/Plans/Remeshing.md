@@ -2,7 +2,7 @@
 
 Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mesh simplification, with three techniques to choose between: evenly shaped triangles from a loop of edge splits, collapses, flips and smoothing; triangles or quads that follow an orientation field; and quads with few irregular vertices.
 
-**Status:** steps 0 to 2 done on 2026-11-17. Step 3, the isotropic loop, done; its turned-box acceptance (finding 19) holds since step 3b, where the test now asks it to. Step 4, the fields of Field Aligned, done on 2026-11-18. Step 3b, features by angle at the scale of the edge length, done on 2026-11-18 after step 4.
+**Status:** steps 0 to 2 done on 2026-11-17. Step 3, the isotropic loop, done; its turned-box acceptance (finding 19) holds since step 3b, where the test now asks it to. Step 4, the fields of Field Aligned, done on 2026-11-18. Step 3b, features by angle at the scale of the edge length, done on 2026-11-18 after step 4. Step 5, Field Aligned's mesh, done on 2026-11-19.
 - **Step 0,** on the user's "Alright, begin on step 0.": the baseline, and a measure of what the pass will meet.
 - **Step 1,** on "Start step 1.": the frame, with a stand-in technique.
 - **Step 2,** on "Looks good so far, continue.": Isotropic's skeleton, operations and search, committed as 7caab82.
@@ -10,11 +10,12 @@ Plan written 2026-11-17 for a pass that rebuilds the mesh of a contour after mes
   - On 2026-11-18, "Add those fixes in.": preserve hard-polyline breakpoints and validate face orientation against the immutable input. Scale-aware angle-feature cleanup remains separate.
 - **Step 4,** on "Let's continue implementing the resmeshing plan. We are on step 4 now.": the sheets, and the two fields with their hierarchy. Nothing is wired in yet, which is step 5's. Committed as e7e5769.
   - **Step 3b was passed over** by that go-ahead, and done after it. The fields are held to open edges and lines between materials, which 3b leaves alone; what it changes for them is which vertices count as on a crease. Step 4's measurements were made before it.
-- **Step 3b,** on "Let's do step 3b first.": the skeleton at the scale of the edge length, in `BurstFeatures`, for Isotropic now and the fields at step 5. Uncommitted.
+- **Step 3b,** on "Let's do step 3b first.": the skeleton at the scale of the edge length, in `BurstFeatures`, for Isotropic now and the fields at step 5. Committed as c24286d.
+- **Step 5,** on "Alright, start on step 5.": Field Aligned's mesh read off the fields, wired in as a technique, with the stand-in taken out. Uncommitted.
 
-**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting. Step 4 raised none, and made two choices the user has not seen yet: the code's score for the hierarchy in place of the paper's (finding 22), and two departures from the code in how the fields are held to lines (finding 23). Step 3b raised a twelfth: the scale of the features of a simplified mesh, which 3b builds at no more than a cell, short of decision 10's *l* (finding 26). The user answered it on 2026-11-18, as recommended: no more than a cell.
+**Decisions:** the first eight were answered on 2026-11-17 (Decisions). Step 0 raised a ninth, about what the Edge Length is measured against (finding 16). The user answered it the same day: the mesh the pass is given. Step 3 raised a tenth: whether to find features by angle at the scale of the edge length (finding 19). The user answered it on 2026-11-18, as recommended: yes, in a step of its own, 3b, before Field Aligned. After step 3 the user found smooth shading broken under Isotropic (finding 21), and answered the eleventh decision, how to put it right, on 2026-11-18: both ways, as a setting. Step 4 raised none, and made two choices: the code's score for the hierarchy in place of the paper's (finding 22), and two departures from the code in how the fields are held to lines (finding 23). The user was told of them on 2026-11-19, before saying to start step 5. Step 3b raised a twelfth: the scale of the features of a simplified mesh, which 3b builds at no more than a cell, short of decision 10's *l* (finding 26). The user answered it on 2026-11-18, as recommended: no more than a cell. Step 5 raised none, and made five choices of its own where the code does otherwise or the paper is silent (step 5, findings 27 and 28).
 
-**Next:** step 5, Field Aligned's mesh, which waits for the go-ahead.
+**Next:** step 6, QuadriFlow's offsets and flow, which waits for the go-ahead.
 
 **Papers,** all in `Documents/Papers/`:
 - *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): the technique called **Isotropic** below. It is its section 4.
@@ -290,6 +291,30 @@ From reading the papers and the code. Nothing was measured; step 0 measures.
     - **The noise is of the contour's cells,** whatever the edge length: a sliver is no wider at 128³ than at 32³, and a bridge is never wider than a cell.
     - **What is built** (decision 12, answered as recommended): features by angle found at the edge length, but at no more than a cell (`Remeshing.featureLengthOf`). Every simplified flat model then keeps its skeleton exactly, and the noise is still more than halved. At the edge length uncapped, the simplified round and turned shapes would have somewhat fewer lines still (Measurements).
 
+27. **The walk round a face stops at its first vertex, so the rim of an open mesh is walked as a face** (step 5). The code's walk goes along an edge, turns at its end to the next neighbour round, and is done when it comes back to the vertex it started from, not to the edge.
+    - **What follows:** the rim of an open mesh, of up to eight sides, is walked like any other cycle, and comes out as a face turned the other way, laid over the faces inside it. Of up to six sides, the hole step fills it the same way. In the code's own use its rims are long; here a small opening of the surface would be capped upside down. The rim of a square split by its diagonal was taken for a third face.
+    - **Built:** a face, or a hole filled, must face the way its corners' normals do: its area's normal against their sum. A rim walked from outside faces the other way.
+    - **A walk that comes round to a vertex twice** cannot happen on a flat graph, as a result of the same rule: the shorter cycle through that vertex is always walked first. The check is kept as a guard; it and the rule that a walk stops at a vertex of one neighbour stand for each other, and taking out either changes no output of the 15 models (step 5's deliberate mistakes).
+
+28. **A vertex of the graph is where its lattice points are, which on a crease can be off the surface** (step 5). The paper puts each vertex at the mean of its group's lattice points, each in its own vertex's tangent plane, and the code puts vertices back on the input only when it smooths them, and never those on creases or held lines.
+    - **What follows:** on a curved surface the mean is a little inside or outside it. At a crease, a group of one vertex next to a corner has its lattice point past the corner: on the box of four as triangles, one vertex came out 0.32 lengths outside the box, and folded the faces round it over.
+    - **Built:** every vertex goes to the nearest point of the input that faces its way, within an edge length, once the graph is tidied and again for the vertices a split into quads adds. A vertex already on the surface stays where it is, so a flat square and a box along the axes are exact. With it, no vertex of the 480 meshes measured was out of reach of the input, and on the test's models every vertex out is on it to within the rounding of floats.
+
+29. **Holding the fields to lines between materials keeps those lines where they were, on contours** (step 5, Measurements). Section 3.7 holds the fields to open edges, and this plan holds them to lines between materials too (finding 5). Step 5 measured both ways, the 15 models by every algorithm at 64³, as quads with triangles and pentagons, from the middle of every edge between two materials out to the nearest of the input's, and back:
+    - **Held:** over the 24 contours that have such lines, the median of their means is 0.004 of a cell, and of their furthest 0.05. The turned and the new shapes, whose lines cross the grid, keep theirs within a third of a cell to a cell at their furthest.
+    - **Free:** 0.28 of a cell, and 0.5 at the furthest, the same way: wherever the lattice happens to put its rows, and a face to whichever material has more of it. Free, the simplified slab with a band lost its band altogether.
+    - **On simplified meshes,** whose edges are several cells long, held lines move a quarter of a cell on the median and up to a cell, and free ones a cell and up to two.
+    - **Quads alone** are read off a lattice of twice the length, and on a small simplified mesh can lose a narrow material: the slab across the bounds by Uniform at 32³ simplified kept none of its band's area, and the slab with a band simplified gives up, no faces coming out of its fields at all.
+    - **The cost of holding** is small: by model the irregular vertices differ by up to a fifth, either way, and the quads and their angles are the same.
+
+30. **What Field Aligned leaves of the topology** (finding 7, step 5, Measurements). Counted on the 60 meshes of each kind at 64³, against the mesh each was given, as lines of open edges and of edges of more than two triangles:
+    - **Quads with triangles and pentagons, on contours:** 11 of the 60 gain lines of open edges, 74 between them: the three balls by three algorithms, and the turned and the new shapes by all four, where sheets meet and thin parts are. Manifold's and Occupancy's turned and new shapes gain lines of more than two triangles too, 4 meshes. Uniform's and Adaptive's lose theirs, as the sheets split them (decision 4).
+    - **Pieces** change both ways: Uniform's and Adaptive's turned and new shapes come apart along their sheets into more, and Manifold's and Occupancy's lose islands smaller than an edge length, as any detail under the length goes (finding 9).
+    - **Triangles** leave the most: 24 of 60 contours gain open lines and 31 gain lines of more than two triangles, the box and the slabs among them, where a triangular lattice meets a right angle and the faces walked round it overlap.
+    - **Quads alone** the fewest: 8 gain open lines and 4 lines of more than two triangles.
+    - **Simplified meshes** gain few: 8 of 60 gain open lines, 4 between them, as quads with triangles and pentagons.
+
+
 ## Design
 
 ### Settings
@@ -321,7 +346,7 @@ On `Voxelizer`, under a **Remeshing** header after Mesh Simplification, carried 
 - **`Voxelizer.simplify( )`** remeshes what it makes, so another detail or error is shown remeshed.
 - **`contourVertices`** asks for shared vertices when remeshing is on, and such a contour is not drawn straight from the GPU.
 - **`ContourStatistics`** gains the time the pass took, the size of the mesh that went in, how many faces of each number of sides came out, and what `MeshTopology` counts of the output that the input did not have (finding 7).
-- **When a technique cannot do its work** it gives the input back unchanged with the reason, which the statistics carry. Nothing throws and nothing half-made is shown. Isotropic gives up before it starts where the length would make more than 2²⁰ vertices (step 3).
+- **When a technique cannot do its work** it gives the input back unchanged with the reason, which the statistics carry. Nothing throws and nothing half-made is shown. Isotropic gives up before it starts where the length would make more than 2²⁰ vertices (step 3). Field Aligned gives up there too, where the mesh its fields are on would have more than 2²¹, which it finds as it splits, and where no faces come out of its fields (step 5).
 - **Burst only** (decision 8). Doubles, except Field Aligned's fields, which the paper says floats do for.
 
 ### What the three share
@@ -362,7 +387,7 @@ In `Assets/Scripts/Burst`, as jobs over native arrays of positions, normals and 
 
 ### Field Aligned
 
-Steps 1 to 4 are built (`BurstFields`, step 4), and are what QuadriFlow starts from too.
+Steps 1 to 4 are built (`BurstFields`, step 4), and are what QuadriFlow starts from too. Steps 5 to 8 are built (`BurstFieldAligned`, step 5).
 
 1. **Preparation:** the sheets, and every edge longer than min(ρ/2, 2 × the mean edge) split, longest first, at its midpoint (findings 3 and 11). The features are found on the sheets before the splits, and the splits carry them. At an edge length of 1 this makes about twelve times the input's vertices (finding 24).
 2. **The graph:** the vertices with the mesh's edges between them, uniform weights, and a normal and a Voronoi area for each.
@@ -375,12 +400,18 @@ Steps 1 to 4 are built (`BurstFields`, step 4), and are what QuadriFlow starts f
    - **The sum of the directions** keeps its own length from one neighbour to the next, as equation 3 has it. The code keeps it at the number of neighbours added.
    - **Rounding** goes to the nearest lattice point, which is what the paper says it does. Its appendix's formula for triangles rounds the two steps one by one, which is not always the nearest.
 5. **Extraction** as section 3.8 has it, with what the code adds where the paper is silent (finding 11): merging in order of distance, leaving out vertices too few inputs agree on, snapping within 0.3 ρ, taking out the diagonals of quads, walking the faces of three to eight sides, filling holes of up to six.
+   - **A step** between two lattice points is to one of the four neighbours of a square, or the six of a triangle. The code takes a step along both axes of a triangular lattice too, which is two triangles' height away (finding 11).
+   - **Spurious:** a vertex fewer than a tenth of the mean number of vertices went into, as the paper has it.
+   - **Back on the input:** every vertex at the nearest point of it that faces its way, before the faces are walked (finding 28).
+   - **A face** must face the way its corners' normals do, which a rim walked from outside does not (finding 27); a walk that comes round to a vertex twice is none.
 6. **Faces:**
    - **Triangles:** sixth turns and a triangular lattice.
    - **Quad Dominant:** quarter turns and a square lattice. Triangles and pentagons stay as they are, as polygons, where the code makes them fans round a new vertex.
    - **Quads:** the same at twice the edge length, then every face split into quads round its middle, so the edges come out at the length that was asked for. The code splits at the length asked for, which halves it.
-7. **Smoothing,** two rounds as the code has them: each vertex not on a crease or a held line to the middle of its neighbours, and back onto the input.
-8. **Out:** positions and normals as the weighted means of section 3.8, materials by area (finding 5), polygons as triangles with their flags.
+   - **A face cut down** loses the run of corners whose own face has the angles nearest a triangle's or a square's. The code scores a run by the angles of the face before it is cut, one corner along.
+7. **Smoothing,** two rounds as the code has them: each vertex not on a crease or a held line to the middle of its neighbours, and back onto the input, at its nearest point within an edge length. The code casts a ray from the middle along the neighbours' plane's normal, and keeps the middle where it hits nothing; a vertex with no point of the input in reach stays where it was.
+8. **Out:** positions; normals as Isotropic's, the input's or the faces' (finding 21, decision 11), the weighted means of section 3.8 serving only for the tangent planes of the extraction; materials by area (finding 5); polygons as triangles with their flags.
+   - **Materials by area:** every triangle of the mesh the fields are on maps to the vertex of the graph nearest its middle of those its corners went into, and there to the face whose corner it lies in, by its angle round the vertex. A face takes the sub-mesh most of the area that maps into it has, and one nothing maps into, the input's at its middle. A face cut down, or split into quads, gives its pieces its own.
 
 ### QuadriFlow
 
@@ -664,6 +695,33 @@ Each step compiles, passes every test, and is reviewed before the next one start
      - **Baselines after step 4:** edit mode 3738 of 3738 in 405 s, play mode 21 of 21, Unity in front; the 480 `Start` hashes are step 0's, byte for byte.
 
 5. **Field Aligned: the mesh (large).** Extraction, faces, holes, the split into quads, polygons, materials and normals out. Wired in. **Measured here:** everything under Tests' last point, and what the constraints do for lines between materials.
+   - **Done 2026-11-19,** on the user's "Alright, start on step 5." after committing step 3b as c24286d.
+     - **Built:**
+       - `Assets/Scripts/Burst/BurstFieldAligned.cs`: the faces (`Faces`: Triangles, Quad Dominant, Quads), its settings and what it did (`Report`); the graph read off the fields (`Graph`), with the links classified (`ClassifyJob`), merged into vertices (`ClusterJob`), tidied (`SnapJob`) and put back on the input (`PlaceJob`); the faces walked, holes filled, cut and split (`FacesJob`); materials by area (`MaterialsJob`); the smoothing (`NeighboursJob`, `SmoothJob`); the triangles with their flags (`WriteJob`, `fanOf`, `flagsOf`) and the normals out (`NormalsJob`); `remesh`, with profiler markers `Remeshing.FieldAligned.*`.
+       - `Remeshing.Technique.FieldAligned`, which replaces the stand-in: `FlatPairs` and `BurstRemeshing.FlatPairsJob` are gone. `Remeshing.Settings.faces`, the length of its faces (`facesOf`, `lengthOf`), the limit on the mesh the fields are on (`mostFieldVertices`, 2²¹), and its two ways of giving up. `Remeshing.Statistics.fieldAligned`.
+       - On `Voxelizer`, **Faces** (`remeshingFaces`, Quad Dominant), which the editor carries over and has in its remeshing signature.
+       - `BurstFields`: the split stops at a number of vertices (`Settings.mostVertices`, `Report.tooLarge`), and lines between materials can be left free, for the measurement only (`Settings.freeMaterials`).
+       - `BurstRemeshing.inputNormalAt`, the input's normal at a point of it, which Isotropic's `NormalsJob` had to itself.
+     - **Settled while building:**
+       - **Five choices of my own,** where the code does otherwise or the paper is silent: a step of a triangular lattice to one of its six neighbours; every vertex back on the input before the faces (finding 28); a face to face its corners' way (finding 27); a face cut down by its own angles; materials by area through the corners round each vertex, and from the input at a face's middle where nothing maps into it (Design). Smoothing back onto the input by the nearest point and not by a ray is a sixth, smaller one.
+       - **Spurious vertices** by the paper's rule, fewer than a tenth of the mean number of vertices of the mesh the fields are on that went into them; the code counts merges and leaves out a vertex of no more than a tenth.
+       - **The limit on the fields' mesh** is found as it is split: an estimate before splitting would have to guess what the split makes of the mesh. Two million vertices take about a gigabyte. At an edge length of 1 the largest contour at 128³ needs about a million (step 4).
+       - **The snapping stops after 64 rounds,** which no mesh measured comes near, so that a graph that never settled could not hang the editor (`Report.unsettled`).
+       - **A trap, not of the code:** twice a job compiled by Burst ran its code from before an edit, after a compile that had failed on a test and then one that went through. Its results were plausible and wrong: the split stopped after one edge, and a check was not made. A job run as plain C# beside it showed it. A trivial edit and a recompile cured it; the memory has how to tell.
+     - **Measured** (Measurements): the 15 models by every algorithm at 64³, contoured and simplified, as quads with triangles and pentagons, triangles, and quads alone, and with the lines between materials held and free: 480 meshes. The time by stage of Uniform from 32³ to 128³. It gave findings 27 to 30.
+     - **Tests:** 129 more in all: 135 new, and the stand-in's 6 gone; one test of 162 cases replaced.
+       - **`BurstFieldAlignedTest`, 49,** on graphs and meshes built by hand, every job compiled by Burst:
+         - the parts: steps of the lattice; the fan of a quad and of a pentagon, the flags of a fan, and the polygons its triangles give back; merges nearest first and a step that keeps two apart; a vertex at the weighted mean of its lattice points; a spurious group; a vertex fixed by a held vertex or a crease, and not by a hard line; snapping onto an edge and into its end; the diagonal of a quad; the faces of a grid turning the way its normals face; a square with its diagonal as two triangles; holes of four, six and eight sides; faces of five to eight sides cut into quads or triangles, and the run cut off first by its angles; quads alone round the middle of each face; a face by the area under it; a face nothing maps into; a triangle mapped through the nearest of its corners' vertices;
+         - the whole: a flat square as quads and as quads alone, a flat triangle as triangles, each its lattice exactly with every inner vertex regular; a box along the axes as 96 quads, either way, and closed as triangles; a band of a second material keeping its lines and its area; the normals out, the input's or the vertex's own; the limit on the fields' mesh; the same remesh twice.
+       - **`RemeshingTest`:** the stand-in's test of the frame becomes Field Aligned's, 162 cases: the flags of the mesh shown make the faces the remesh says it made, creased or split, reordered or not, read back from the GPU, with every edge left out by its one other triangle where the remesh is a manifold. New: what Field Aligned keeps of the mesh it is given, for every algorithm and implementation, contoured and simplified, 54; each kind of face on the mesh, 8; the edge length against the vertex count, for each kind of face, 21; each of its settings, 1.
+       - **`BurstRemeshingTest`:** the stand-in's six tests are gone, and a remesh of no faces gives the mesh back. **`BurstFieldsTest`, 1:** lines between materials left free.
+       - **Changed:** the other tests that used the stand-in now use Field Aligned (`WireframeTest`, `InteractiveEditorTest`, `BurstFieldsTest`), and the carry-over, the signature and the defaults have Faces.
+     - **Deliberate mistakes:** 58 were tried: 13 in the graph, 9 in the snapping, 2 in the placing, 14 in the faces, 4 in the materials, 3 in the smoothing, 4 in the output, 2 in the fields and 7 where it is wired in. 56 failed a test.
+       - **Seven passed at first,** and four tests were added and one sharpened for five of them: quads alone on a curved mesh, a face by the area under it, one nothing maps into, a triangle through the nearest of its corners' vertices, and the two rounds of smoothing. Three more had been added before the run, for what it was clear no test held: the run a cut takes off, a remesh of no faces, and lines between materials left free.
+       - **Checked by hand before calling any a gap:** the one that maps a triangle through its first corner changed 9 of the 15 models' 90 remeshes at 32³, by under a hundredth of an area on most, which is what the test added for it shows.
+       - **The two that pass** change nothing. A walk let on through a vertex of one neighbour comes straight back to the vertex before it, which the check against a vertex twice refuses (finding 27); and a walk let close at fewer sides than its pass asks for has always been walked at its own number first. Applied by hand, neither changes any of the 90 remeshes.
+       - **One did not compile** as first written, and was rewritten and run again with the one after it, since a failed compile is what left Burst stale.
+     - **Baselines after step 5:** edit mode 4295 of 4295 in 489 s, play mode 26 of 26, Unity in front. The `Start` hashes are now 768, the probabilistic solver's among them since its plan: step 0's 480 are among them byte for byte, and all 768 are those of the last baseline, taken after the QEF errors in doubles.
 6. **QuadriFlow: offsets and flow (large).** Offsets, the network, the flow solver with its tests, long offsets. **Measured here:** the size of the flow and the time it takes against the edge length; whether the paper's hierarchy of networks is needed.
 7. **QuadriFlow: the mesh (large).** Conjugate gradients, the greedy pass, the positions, extraction. Wired in. **Measured here:** turned triangles left after the greedy pass, which is what decision 6 waits for; vertices of other than four edges and holes, which say whether the code's work after extraction is wanted (finding 11); the rest as for step 5.
 8. **Scenes, tuning and documentation (medium).** The scenes, whatever the measurements show to cost most, a README section for each technique with its settings, what it keeps and what it does not, `AGENTS.md`, and this plan marked complete.
@@ -1044,6 +1102,75 @@ The cube, the cube turned about an axis, the plate, the ball across the bounds a
 
 - **The skeleton at scale costs nothing that shows:** it is a part of the build stage, which is a fortieth of the remesh.
 - **Not comparable with step 3's timings:** these ran about four and a half times slower than those, as the normals' measurement after step 3 did, with Normals at Faces here. The reason is still not known; A and B ran alike.
+
+### Field Aligned's mesh (step 5, 2026-11-19)
+
+**Setup:**
+- **Models:** step 3's 15, by every algorithm (Burst) at 64³, contoured and simplified at the voxelizer's defaults: 120 meshes, each remeshed four ways at an edge length of 1, as Quad Dominant, as Triangles and as Quads, and as Quad Dominant with the lines between materials left free: 480 remeshes. The Feature Angle is 40°, and the normals out are the input's, creased at 40°.
+- **Time:** Uniform from 32³ to 128³, contoured and simplified, each kind of face, the median of three after one to warm up.
+- **Measures:** faces by their sides; the inner vertices, those of no open edge, with four edges for quads or six for triangles; table 1 of the paper, over the faces of the kind asked for: their areas against the mean, and their angles against a square's or a triangle's, the least, the mean of each face's least, the most and the mean of each face's most; edges against the length; the distance of every vertex to the shapes, in cells; lines of open edges and of more than two triangles, and pieces, against the mesh given; how far lines between materials moved, from the middle of every edge between two materials to the nearest such edge of the other mesh, each way.
+- **The probe:** `FieldAlignedProbe.cs` in the probes folder (`Quality`, `Times`, and `Hand`, `Debug`, `Split`, `Square` and `AreaPatch` for the step's own questions), with `run_field_aligned_quality.sh`, `run_field_aligned_rest.sh` and `summarize_field_aligned.py`; the rows in `probes/remeshing-step5/`. Unity was in front throughout, and the runs were on the final code.
+
+**The faces,** the 60 meshes of each kind together, medians over the meshes:
+
+| Faces | Mesh | Vertices against the input's | Triangles / quads / pentagons | Regular inner vertices | Area σ, least, most | Angle σ | Least angle, mean least | Most angle, mean most | Edges against *l*, 5% / 50% / 95% | Time |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Quad Dominant | contour | 1.002 | 1.0% / 98.5% / 0.5% | 98.1% | 0.07, 0.51, 1.41 | 3.6° | 55°, 87° | 140°, 93° | 0.92 / 1.00 / 1.06 | 669 ms |
+| Quad Dominant | simplified | 1.022 | 4.2% / 93.8% / 2.1% | 91.8% | 0.12, 0.57, 1.36 | 4.7° | 65°, 86° | 117°, 94° | 0.82 / 1.00 / 1.11 | 69 ms |
+| Triangles | contour | 1.006 | all | 94.2% | 0.12, 0.004, 1.70 | 4.9° | 0.3°, 57° | 179°, 64° | 0.89 / 1.00 / 1.10 | 924 ms |
+| Triangles | simplified | 1.026 | all | 80.7% | 0.19, 0.26, 1.52 | 10.4° | 16°, 52° | 136°, 69° | 0.78 / 1.00 / 1.16 | 118 ms |
+| Quads | contour | 1.012 | all | 98.9% | 0.10, 0.32, 1.55 | 4.9° | 42°, 87° | 172°, 93° | 0.91 / 1.00 / 1.08 | 221 ms |
+| Quads | simplified | 1.056 | all | 95.7% | 0.19, 0.38, 1.50 | 8.5° | 45°, 83° | 136°, 97° | 0.71 / 0.98 / 1.13 | 26 ms |
+
+- **About as many vertices as the mesh given,** as decision 9 has it: on contours 0.97 to 1.07 times as many. On simplified meshes the spread is wider, up to twice as many as Quad Dominant and three times as quads alone on the smallest, such as the slab with a band, whose 16 vertices are fewer than its faces need.
+- **The paper's table 1** has the same columns for its own models, larger and scanned, as quad dominant: area σ 0.11 to 0.20, angle σ 4.4° to 12°, the mean least angle 79° to 86° and the mean most 94° to 100°. The contours here are in the same range or better, and the simplified meshes, of a few hundred vertices, alike.
+- **Triangles are the weakest:** the least angle of a contour's triangles is under a degree, and a fifth of a simplified mesh's inner vertices are irregular. A triangular lattice meets the right angles of these models at sixty degrees, and where it does not fit, faces of more than three sides are cut into triangles of whatever shape is left.
+- **Quads alone** are read off faces twice the length, split, and so are the most regular and the quickest, a third of the time of Quad Dominant: their fields are on a quarter of the vertices. On the simplified slab with a band they give up: no face comes out of the fields at twice its length.
+- **The distance to the shapes** is the mesh given's: every vertex out is on that mesh (finding 28). On contours 0.005 of a cell on the mean, and on simplified meshes 0.01.
+- **What the extraction meets,** over the 60 contours as Quad Dominant: 1,948 vertices of the graph spurious, 2,891 snapped onto an edge and 293 merged into a neighbour, 98 holes filled and 105 left, which are the open rims and the holes of more than six sides; no snapping that did not settle, and no vertex out of reach of the input. Two faces had nothing mapped into them.
+
+**Topology** (finding 30), lines of open edges and of more than two triangles against the mesh given:
+
+| Faces | Mesh | Meshes with more open lines, lines | with more lines of more than two triangles | Unfilled holes |
+|---|---|---|---|---|
+| Quad Dominant | contour | 11, 74 | 4 | 105 |
+| Quad Dominant | simplified | 8, 4 | 2 | 33 |
+| Triangles | contour | 24, 114 | 31 | 159 |
+| Triangles | simplified | 8, 7 | 11 | 36 |
+| Quads | contour | 8, 26 | 4 | 53 |
+| Quads | simplified | 8, −3 | 7 | 25 |
+
+**Lines between materials,** held and free (finding 29), as Quad Dominant, the medians over the four algorithms of each model's mean and furthest distance out to the input's lines, in cells:
+
+| Model | Contour, held | Contour, free | Simplified, held | Simplified, free |
+|---|---|---|---|---|
+| SlabWithBand | 0.001, 0.005 | 0.32, 0.44 | 0.41, 1.25 | band gone |
+| SlabAcrossBounds | 0.003, 0.06 | 0.28, 0.51 | 0.54, 1.13 | 3.7, 5.9 |
+| PlateAcrossBounds | 0.001, 0.006 | 0.26, 0.45 | 0.26, 0.51 | 1.2, 2.1 |
+| SphereCutaway | 0.004, 0.02 | 0.30, 0.44 | 0.07, 0.21 | 1.2, 1.8 |
+| TurnedShapes | 0.03, 0.32 | 0.26, 0.51 | 0.22, 1.0 | 1.0, 2.1 |
+| NewShapes | 0.08, 1.06 | 0.26, 1.28 | 0.22, 2.2 | 0.62, 2.2 |
+
+- **Triangles,** held, keep the lines within 0.01 of a cell on the median of contours and 0.28 at the furthest; **quads alone** within 0.01 and 0.06.
+
+**Time,** Uniform, the whole remesh with its fields, in ms, the median of the 15 models (and the most), with the shares of its stages: the sheets and the split, level 0 and the hierarchy, the two fields, the graph read off them, the faces, the materials and the smoothing, and the output:
+
+| Grid | Mesh | Faces | Vertices of the fields | Median | Most | Sheets, split | Graph, hierarchy | Fields | Extraction | Faces | Materials, smoothing | Out |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 32³ | contour | Quad Dominant | 29,200 | 202 | 323 | 17% | 14% | 55% | 9% | 2% | 3% | 0% |
+| 32³ | simplified | Quad Dominant | 2,610 | 48 | 110 | 8% | 6% | 79% | 4% | 1% | 2% | 0% |
+| 64³ | contour | Quad Dominant | 119,000 | 652 | 1,230 | 22% | 16% | 45% | 11% | 2% | 4% | 0% |
+| 64³ | simplified | Quad Dominant | 5,460 | 71 | 177 | 11% | 8% | 72% | 5% | 1% | 2% | 0% |
+| 128³ | contour | Quad Dominant | 483,000 | 2,625 | 5,440 | 26% | 17% | 40% | 12% | 2% | 4% | 0% |
+| 128³ | simplified | Quad Dominant | 10,700 | 106 | 277 | 14% | 11% | 64% | 6% | 1% | 3% | 0% |
+| 128³ | contour | Triangles | 408,000 | 3,418 | 6,827 | 17% | 12% | 56% | 11% | 2% | 3% | 0% |
+| 128³ | simplified | Triangles | 8,520 | 151 | 384 | 8% | 6% | 77% | 5% | 1% | 2% | 0% |
+| 128³ | contour | Quads | 124,000 | 776 | 1,548 | 19% | 14% | 44% | 12% | 5% | 5% | 1% |
+| 128³ | simplified | Quads | 2,680 | 50 | 117 | 8% | 6% | 75% | 5% | 2% | 3% | 1% |
+
+- **What step 5 adds to the fields** is a sixth to a fifth of a contour's time and a tenth or less of a simplified mesh's. The extraction is the largest part of it, and but for the links' classifying it is by one worker.
+- **Against Isotropic** (step 3), after simplification: 71 ms where it takes 8 at 64³, and 106 where it takes 12 at 128³. On a contour, 652 ms and 2.6 s where it takes 114 and 435.
+- **The fields' limit** of 2²¹ vertices is not met at an edge length of 1: the largest contour at 128³ puts them on about a million.
 
 ## Out of scope
 

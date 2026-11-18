@@ -621,7 +621,7 @@ public class BurstFieldsTest : TopologyTest {
     }
 
     // level 0 of a mesh as it is, without the sheets or the splits
-    private static void levelZero( HandBuiltMesh built, Action<BurstFields.Hierarchy, BurstFields.Report> then ) {
+    private static void levelZero( HandBuiltMesh built, Action<BurstFields.Hierarchy, BurstFields.Report> then, bool freeMaterials = false ) {
         using var positions = built.nativePositions( );
         using var normals   = built.nativeNormals( );
         using var triangles = built.nativeTriangles( );
@@ -635,7 +635,7 @@ public class BurstFieldsTest : TopologyTest {
 
         var report = new BurstFields.Report( );
 
-        BurstFields.graph( mesh, hierarchy, true, ref report );
+        BurstFields.graph( mesh, hierarchy, true, ref report, freeMaterials );
 
         then( hierarchy, report );
     }
@@ -689,6 +689,19 @@ public class BurstFieldsTest : TopologyTest {
                 }
             }
         } );
+    }
+
+    // with lines between materials left free, which is for measuring what holding them does, only open edges hold
+    [Test]
+    public void withMaterialsFreeOnlyOpenEdgesHold( ) {
+        var box = new HandBuiltMesh( ).box( Vector3Int.zero, new Vector3Int( 4, 2, 2 ), ( centre, axis, side ) => centre.x < 2.0f ? 0 : 1 );
+
+        levelZero( box, ( hierarchy, report ) => Assert.AreEqual( 0, report.held, "held on a closed box" ), freeMaterials: true );
+
+        var patch = new HandBuiltMesh( ).patch( 4, 4, ( i, j ) => i < 2 ? 0 : 1 );
+
+        levelZero( patch, ( hierarchy, report ) => Assert.AreEqual( 16, report.held, "held on an open patch: its rim alone" ), freeMaterials: true );
+        levelZero( patch, ( hierarchy, report ) => Assert.AreEqual( 16 + 3, report.held, "held on an open patch: its rim and the line inside it" ) );
     }
 
     // ---- the hierarchy and its colours ----
@@ -1519,7 +1532,7 @@ public class BurstFieldsTest : TopologyTest {
 
         try {
             var kept     = Remeshing.of( mesh, voxelizer.cellSize );
-            var length   = kept.lengthOf( symmetry == Symmetry.Quads ? Remeshing.Technique.FlatPairs : Remeshing.Technique.Isotropic, 1.0f );
+            var length   = kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, symmetry == Symmetry.Quads ? BurstFieldAligned.Faces.QuadDominant : BurstFieldAligned.Faces.Triangles );
             var settings = settingsOf( symmetry, length, measure: true );
 
             using var first  = new Solved( positions, normals, triangles, settings );

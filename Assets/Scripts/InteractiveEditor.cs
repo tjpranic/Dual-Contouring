@@ -254,6 +254,7 @@ public class InteractiveEditor : MonoBehaviour {
             to.remeshingFeatureAngle   = from.remeshingFeatureAngle;
             to.remeshingIterations     = from.remeshingIterations;
             to.remeshingAreaIterations = from.remeshingAreaIterations;
+            to.remeshingFaces          = from.remeshingFaces;
             to.remeshingNormals        = from.remeshingNormals;
 
             to.wireframe          = from.wireframe;
@@ -656,7 +657,7 @@ public class InteractiveEditor : MonoBehaviour {
 
         return voxelizer.remeshing != Remeshing.Technique.Off
             ? FormattableString.Invariant(
-                $"{voxelizer.remeshing},{voxelizer.remeshingEdgeLength:R},{voxelizer.remeshingFeatureAngle:R},{voxelizer.remeshingIterations},{voxelizer.remeshingAreaIterations},{voxelizer.remeshingNormals}"
+                $"{voxelizer.remeshing},{voxelizer.remeshingEdgeLength:R},{voxelizer.remeshingFeatureAngle:R},{voxelizer.remeshingIterations},{voxelizer.remeshingAreaIterations},{voxelizer.remeshingFaces},{voxelizer.remeshingNormals}"
             )
             : "";
     }

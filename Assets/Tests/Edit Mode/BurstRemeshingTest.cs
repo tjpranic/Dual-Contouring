@@ -9,9 +9,9 @@ using UnityEngine;
 
 using Object = UnityEngine.Object;
 
-// what every remeshing technique shares (BurstRemeshing, Remeshing) and the stand-in technique that tests the frame,
-// on meshes built by hand whose answers are known: the edge length that keeps a mesh's vertex count, its area, its
-// open and non-manifold edges, its faces by their sides, which triangles lie flat together, and the order of the flags
+// what every remeshing technique shares (BurstRemeshing, Remeshing), on meshes built by hand whose answers are known:
+// the edge length that keeps a mesh's vertex count, its area, its open and non-manifold edges, its faces by their
+// sides, and the order of the flags
 public class BurstRemeshingTest {
 
     // builds a mesh from triangles given by the positions of their corners. Corners at the same position are one vertex
@@ -199,22 +199,6 @@ public class BurstRemeshingTest {
         return mesh;
     }
 
-    // the stand-in's flags for the triangles, in their own order
-    private static byte[] flatPairsOf( Builder builder, out int pairs ) {
-        using var positions = builder.nativePositions( );
-        using var triangles = builder.nativeTriangles( );
-        using var sides     = new NativeArray<BurstRemeshing.Side>( triangles.Length * 3, Allocator.TempJob );
-        using var flags     = new NativeArray<byte>( triangles.Length, Allocator.TempJob );
-        using var count     = new NativeArray<int>( 1, Allocator.TempJob );
-
-        new BurstRemeshing.SidesJob { triangles = triangles, sides = sides }.Run( );
-        new BurstRemeshing.FlatPairsJob { positions = positions, triangles = triangles, sides = sides, flags = flags, pairs = count }.Run( );
-
-        pairs = count[0];
-
-        return flags.ToArray( );
-    }
-
     private static ( BurstRemeshing.Topology topology, BurstRemeshing.FaceCounts faces ) countsOf( Builder builder, byte[] flags = null ) {
         using var triangles = builder.nativeTriangles( );
         using var native    = new NativeArray<byte>( flags ?? Array.Empty<byte>( ), Allocator.TempJob );
@@ -222,20 +206,6 @@ public class BurstRemeshingTest {
         BurstRemeshing.count( triangles, native, out var topology, out var faces );
 
         return ( topology, faces );
-    }
-
-    // the edge of a triangle from corner k to k + 1, as the vertices of its two ends, the lower first
-    private static ( int, int ) edgeOf( BurstMesh.Triangle triangle, int k ) {
-        var a = BurstRemeshing.vertexOf( triangle, k );
-        var b = BurstRemeshing.vertexOf( triangle, ( k + 1 ) % 3 );
-        return a < b ? ( a, b ) : ( b, a );
-    }
-
-    // the edges each triangle leaves out
-    private static List<( int, int )>[] leftOut( Builder builder, byte[] flags ) {
-        return builder.triangles.Select(
-            ( triangle, index ) => Enumerable.Range( 0, 3 ).Where( ( k ) => ( flags[index] & ( 1 << k ) ) == 0 ).Select( ( k ) => edgeOf( triangle, k ) ).ToList( )
-        ).ToArray( );
     }
 
     // ---- the edge length ----
@@ -280,11 +250,15 @@ public class BurstRemeshingTest {
         var builder = model == "patch" ? new Builder( ).patch( 6, 5, 0.25f ) : new Builder( ).sphere( 24, 48 );
         var kept    = Remeshing.of( this.meshOf( builder ), 0.1f );
 
-        // the stand-in makes quads
-        var expected = Math.Sqrt( builder.area / builder.positions.Count );
+        // Field Aligned's quads, with or without triangles and pentagons among them, and triangles, its or Isotropic's
+        var quads     = Math.Sqrt( builder.area / builder.positions.Count );
+        var triangles = Math.Sqrt( builder.area / builder.positions.Count / ( Math.Sqrt( 3.0 ) / 2.0 ) );
 
-        Assert.AreEqual( expected,       kept.lengthOf( Remeshing.Technique.FlatPairs, 1.0f ), expected * 1e-5, "at 1" );
-        Assert.AreEqual( expected * 0.5, kept.lengthOf( Remeshing.Technique.FlatPairs, 0.5f ), expected * 1e-5, "at 0.5" );
+        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f ), quads * 1e-5, "quad dominant at 1" );
+        Assert.AreEqual( quads * 0.5, kept.lengthOf( Remeshing.Technique.FieldAligned, 0.5f ), quads * 1e-5, "quad dominant at 0.5" );
+        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, BurstFieldAligned.Faces.Quads ), quads * 1e-5, "quads at 1" );
+        Assert.AreEqual( triangles,   kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, BurstFieldAligned.Faces.Triangles ), triangles * 1e-5, "Field Aligned's triangles at 1" );
+        Assert.AreEqual( triangles,   kept.lengthOf( Remeshing.Technique.Isotropic, 1.0f ), triangles * 1e-5, "Isotropic's triangles at 1" );
     }
 
     // ---- edges and faces ----
@@ -371,101 +345,6 @@ public class BurstRemeshingTest {
         Assert.Greater( countsOf( square, new byte[] { 0b110, 0b111 } ).faces.inconsistent, 0, "an open edge left out" );
     }
 
-    // ---- the stand-in ----
-
-    [Test]
-    public void flatPairsMakesTheQuadsOfAPatch( ) {
-        var patch = new Builder( ).patch( 3, 3 );
-        var flags = flatPairsOf( patch, out var pairs );
-
-        Assert.AreEqual( 9, pairs, "pairs" );
-
-        var edges = leftOut( patch, flags );
-
-        for( var triangle = 0; triangle < edges.Length; ++triangle ) {
-            Assert.AreEqual( 1, edges[triangle].Count, $"edges triangle {triangle} leaves out" );
-
-            // the diagonal it was built with, from its first corner to its third
-            var built    = patch.triangles[triangle];
-            var diagonal = triangle % 2 == 0 ? edgeOf( built, 2 ) : edgeOf( built, 0 );
-
-            Assert.AreEqual( diagonal, edges[triangle][0], $"the edge triangle {triangle} leaves out" );
-        }
-
-        var faces = countsOf( patch, flags ).faces;
-
-        Assert.AreEqual( 9, faces.quads,        "quads" );
-        Assert.AreEqual( 0, faces.triangles,    "triangles" );
-        Assert.AreEqual( 0, faces.inconsistent, "flags that make no face" );
-    }
-
-    [Test]
-    public void flatPairsMakesTheQuadsOfABox( [Values( 1, 2 )] int length ) {
-        var box   = new Builder( ).box( Vector3Int.zero, new Vector3Int( length, 1, 1 ) );
-        var flags = flatPairsOf( box, out var pairs );
-
-        Assert.AreEqual( box.triangles.Count / 2, pairs, "pairs" );
-        Assert.AreEqual( pairs, countsOf( box, flags ).faces.quads, "quads" );
-    }
-
-    // across the longest edge first: of two squares side by side, each triangle pairs with the one across its diagonal,
-    // and not with the one across the side the squares share
-    [Test]
-    public void flatPairsPairsAcrossTheLongestEdgeFirst( ) {
-        var two   = new Builder( ).patch( 2, 1 );
-        var flags = flatPairsOf( two, out var pairs );
-
-        Assert.AreEqual( 2, pairs, "pairs" );
-
-        var ends   = new[] { two.vertex( Vector3.right ), two.vertex( new Vector3( 1, 1, 0 ) ) }.OrderBy( ( vertex ) => vertex ).ToArray( );
-        var middle = ( ends[0], ends[1] );
-
-        Assert.IsFalse( leftOut( two, flags ).Any( ( edges ) => edges.Contains( middle ) ), "the side the squares share is left out" );
-    }
-
-    [Test]
-    public void flatPairsLeavesWhatDoesNotLieFlatTogether( ) {
-        flatPairsOf( new Builder( ).octahedron( ), out var octahedron );
-
-        Assert.AreEqual( 0, octahedron, "an octahedron" );
-
-        // two triangles across the edge from the origin to (1, 0, 0), the second turned about it
-        Builder bent( float degrees, int secondSubMesh = 0, bool flipped = false ) {
-            var turn = Quaternion.AngleAxis( degrees, Vector3.right );
-            var far  = turn * new Vector3( 0.5f, -1, 0 );
-
-            var builder = new Builder( ).triangle( Vector3.zero, Vector3.right, new Vector3( 0.5f, 1, 0 ) );
-
-            return flipped ? builder.triangle( Vector3.zero, Vector3.right, far, secondSubMesh ) : builder.triangle( Vector3.right, Vector3.zero, far, secondSubMesh );
-        }
-
-        flatPairsOf( bent( 0.0f ), out var flat );
-        flatPairsOf( bent( 0.5f ), out var nearly );
-        flatPairsOf( bent( 2.0f ), out var folded );
-        flatPairsOf( bent( 0.0f, 1 ), out var materials );
-        flatPairsOf( bent( 0.0f, 0, true ), out var wound );
-
-        Assert.AreEqual( 1, flat,      "flat" );
-        Assert.AreEqual( 1, nearly,    "half a degree apart" );
-        Assert.AreEqual( 0, folded,    "two degrees apart" );
-        Assert.AreEqual( 0, materials, "of two materials" );
-        Assert.AreEqual( 0, wound,     "wound the other way" );
-
-        // a dart: flat and facing the same way, but the quad it would make bends in at (1, 0, 0)
-        var dart = new Builder( ).triangle( Vector3.zero, Vector3.right, new Vector3( 0.5f, 1, 0 ) ).triangle( Vector3.right, Vector3.zero, new Vector3( 2, -0.1f, 0 ) );
-
-        flatPairsOf( dart, out var concave );
-
-        Assert.AreEqual( 0, concave, "a quad that is not convex" );
-    }
-
-    [Test]
-    public void flatPairsGivesTheSameFlagsEveryTime( ) {
-        var box = new Builder( ).box( Vector3Int.zero, new Vector3Int( 3, 2, 2 ) );
-
-        CollectionAssert.AreEqual( flatPairsOf( box, out _ ), flatPairsOf( box, out _ ) );
-    }
-
     // ---- flags and meshes ----
 
     [Test]
@@ -479,25 +358,26 @@ public class BurstRemeshingTest {
     }
 
     // the flags a remesh gives are those of the mesh it gives, triangle for triangle in its index buffer, of whatever
-    // materials: each triangle leaves out the diagonal its partner leaves out
+    // materials: every edge a triangle leaves out is left out by the one other triangle on it, of the same sub-mesh
     [Test]
     public void aRemeshsFlagsAreThoseOfItsMesh( ) {
-        // squares of three materials, given in an order that the mesh's sub-meshes change
-        var patch = new Builder( ).patch( 3, 2, 1.0f, ( i, j ) => ( i + j ) % 3 );
+        // bands of three materials, given in an order that the mesh's sub-meshes change
+        var patch = new Builder( ).patch( 12, 12, 1.0f, ( i, j ) => ( i / 4 + j / 6 ) % 3 );
         var kept  = Remeshing.of( this.meshOf( patch ), 1.0f );
-        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out var flags, out var statistics );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
         Assert.IsNull( statistics.gaveUp, "gave up" );
-        Assert.AreEqual( 6, statistics.quads, "quads" );
+        Assert.Greater( statistics.quads, 50, "quads" );
+        Assert.AreEqual( 3, mesh.subMeshCount, "sub-meshes" );
 
         var vertices  = mesh.vertices;
-        var triangles = Enumerable.Range( 0, mesh.subMeshCount ).SelectMany( ( subMesh ) => mesh.GetTriangles( subMesh ) ).ToArray( );
+        var triangles = Enumerable.Range( 0, mesh.subMeshCount ).SelectMany( ( subMesh ) => mesh.GetTriangles( subMesh ).Select( ( index ) => ( index, subMesh ) ) ).ToArray( );
 
         Assert.AreEqual( triangles.Length / 3, flags.Length, "a flag for every triangle" );
 
-        var sides = new Dictionary<( Vector3, Vector3 ), int>( );
+        var sides = new Dictionary<( int, int ), List<int>>( );
 
         for( var triangle = 0; triangle < flags.Length; ++triangle ) {
             for( var k = 0; k < 3; ++k ) {
@@ -505,20 +385,23 @@ public class BurstRemeshingTest {
                     continue;
                 }
 
-                var a = vertices[triangles[( 3 * triangle ) + k]];
-                var b = vertices[triangles[( 3 * triangle ) + ( ( k + 1 ) % 3 )]];
+                var a   = triangles[( 3 * triangle ) + k].index;
+                var b   = triangles[( 3 * triangle ) + ( ( k + 1 ) % 3 )].index;
+                var key = a < b ? ( a, b ) : ( b, a );
 
-                // the longest side of a half square
-                Assert.AreEqual( Mathf.Sqrt( 2.0f ), ( b - a ).magnitude, 1e-5f, $"the edge triangle {triangle} leaves out" );
-
-                var key = a.x < b.x || ( a.x == b.x && a.y < b.y ) ? ( a, b ) : ( b, a );
-
-                sides[key] = sides.TryGetValue( key, out var count ) ? count + 1 : 1;
+                if( !sides.TryGetValue( key, out var list ) ) {
+                    sides.Add( key, list = new List<int>( ) );
+                }
+                list.Add( triangle );
             }
         }
 
-        Assert.AreEqual( 6, sides.Count, "diagonals left out" );
-        Assert.IsTrue( sides.Values.All( ( count ) => count == 2 ), "every diagonal left out by both its triangles" );
+        Assert.Greater( sides.Count, 50, "edges left out" );
+
+        foreach( var side in sides ) {
+            Assert.AreEqual( 2, side.Value.Count, $"triangles that leave out the edge {side.Key} at {vertices[side.Key.Item1]}" );
+            Assert.AreEqual( triangles[3 * side.Value[0]].subMesh, triangles[3 * side.Value[1]].subMesh, $"sub-meshes of the triangles across {side.Key}" );
+        }
     }
 
     // a technique that cannot do its work gives the mesh back as it came, without flags, and says why
@@ -527,7 +410,9 @@ public class BurstRemeshingTest {
         var octahedron = new Builder( ).octahedron( );
         var given      = this.meshOf( octahedron );
         var kept       = Remeshing.of( given, 0.5f );
-        var mesh       = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out var flags, out var statistics );
+
+        // edges of a thousandth of the octahedron's would make millions of vertices
+        var mesh = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 0.001f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
@@ -540,24 +425,45 @@ public class BurstRemeshingTest {
         Assert.AreEqual( 0, statistics.quads,     "faces: quads" );
     }
 
+    // Field Aligned gives up where no faces come out of its fields: an octahedron at four times its edge length has one
+    // lattice point for all of it
     [Test]
-    public void aRemeshSaysWhatItDid( ) {
-        var box   = new Builder( ).box( Vector3Int.zero, new Vector3Int( 2, 1, 1 ) );
-        var given = this.meshOf( box );
-        var kept  = Remeshing.of( given, 0.5f );
-        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 2.0f ), out _, out var statistics );
+    public void aFieldAlignedRemeshOfNoFacesGivesTheMeshAsItCame( ) {
+        var octahedron = new Builder( ).octahedron( );
+        var given      = this.meshOf( octahedron );
+        var kept       = Remeshing.of( given, 0.5f );
+        var mesh       = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 4.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
-        Assert.AreEqual( Remeshing.Technique.FlatPairs, statistics.technique );
-        Assert.AreEqual( given.vertexCount,             statistics.inputVertexCount,   "vertices given" );
-        Assert.AreEqual( box.triangles.Count,           statistics.inputTriangleCount, "triangles given" );
-        Assert.AreEqual( 0,                             statistics.triangles,          "faces: triangles" );
-        Assert.AreEqual( 10,                            statistics.quads,              "faces: quads" );
-        Assert.AreEqual( 0,                             statistics.largerFaces,        "faces: larger" );
-        Assert.AreEqual( 0,                             statistics.newOpenLines,       "new open lines" );
-        Assert.AreEqual( 0,                             statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
-        Assert.GreaterOrEqual( statistics.milliseconds, 0.0,                           "time" );
+        Assert.AreEqual( "no faces came out of the fields", statistics.gaveUp, "why it gave up" );
+        Assert.IsNull( flags, "flags" );
+        Assert.IsTrue( statistics.fieldAligned.HasValue, "what Field Aligned did" );
+
+        CollectionAssert.AreEqual( MeshComparison.trianglesOf( given ), MeshComparison.trianglesOf( mesh ), "triangles" );
+    }
+
+    [Test]
+    public void aRemeshSaysWhatItDid( ) {
+        var box   = new Builder( ).box( Vector3Int.zero, new Vector3Int( 8, 4, 4 ) );
+        var given = this.meshOf( box );
+        var kept  = Remeshing.of( given, 0.5f );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 2.0f ), out _, out var statistics );
+
+        this.made.Add( mesh );
+
+        Assert.AreEqual( Remeshing.Technique.FieldAligned, statistics.technique );
+        Assert.AreEqual( given.vertexCount,                statistics.inputVertexCount,    "vertices given" );
+        Assert.AreEqual( box.triangles.Count,              statistics.inputTriangleCount,  "triangles given" );
+        Assert.AreEqual( 0,                                statistics.newOpenLines,        "new open lines" );
+        Assert.AreEqual( 0,                                statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
+        Assert.GreaterOrEqual( statistics.milliseconds, 0.0,                              "time" );
+        Assert.IsTrue( statistics.fieldAligned.HasValue,                                  "what Field Aligned did" );
+        Assert.IsNull( statistics.isotropic,                                              "what Isotropic did" );
+
+        // the faces the mesh's flags make
+        Assert.Greater( statistics.quads, 20, "faces: quads" );
+        Assert.AreEqual( mesh.triangles.Length / 3, ( 2 * statistics.quads ) + statistics.triangles + ( 3 * statistics.largerFaces ), "triangles: two to a quad, three to a pentagon" );
 
         // twice the length that keeps the vertex count, in cells of half a unit
         Assert.AreEqual( 2.0 * Math.Sqrt( box.area / box.positions.Count ) / 0.5, statistics.edgeLength, 1e-5, "edge length in cells" );
@@ -569,7 +475,7 @@ public class BurstRemeshingTest {
     public void aRemeshCountsOnlyTheEdgesItAdds( [Values( "patch", "two boxes" )] string model ) {
         var builder = model == "patch" ? new Builder( ).patch( 3, 2 ) : new Builder( ).box( Vector3Int.zero, Vector3Int.one ).box( new Vector3Int( 1, 1, 0 ), Vector3Int.one );
         var kept    = Remeshing.of( this.meshOf( builder ), 1.0f );
-        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FlatPairs, 1.0f ), out _, out var statistics );
+        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 1.0f ), out _, out var statistics );
 
         this.made.Add( mesh );
 

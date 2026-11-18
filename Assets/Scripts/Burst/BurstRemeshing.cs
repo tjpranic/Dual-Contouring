@@ -6,9 +6,7 @@ using Unity.Mathematics;
 
 // what the remeshing techniques share (Documents/Plans/Remeshing.md): the length the edges of a remesh are measured
 // against, the faces a remeshed mesh is made of, which of a mesh's edges are open or have more than two triangles, and
-// the normals a mesh shows at the corners of its triangles, which a remeshed mesh takes its own from (finding 21).
-// And the stand-in technique that the frame around the techniques is tested with until the first of them is built,
-// which pairs triangles that lie flat together into quads. The plan takes it out again at step 5
+// the normals a mesh shows at the corners of its triangles, which a remeshed mesh takes its own from (finding 21)
 public static class BurstRemeshing {
 
     // the faces of a remeshed mesh are triangles, each with a byte that says which of its edges are edges of its face.
@@ -109,6 +107,36 @@ public static class BurstRemeshing {
             creasedNormals.Dispose( );
             creasedTriangles.Dispose( );
         }
+    }
+
+    // the normal the mesh a remesh was given shows at a point of one of its triangles: the normals at the triangle's
+    // corners (cornerNormalsOf), weighted by the barycentric coordinates of the point (Ericson, section 3.4). A triangle
+    // without area, or corners whose normals cancel, give the normal the caller has otherwise
+    public static double3 inputNormalAt( in SurfaceGrid grid, NativeArray<float3> cornerNormals, double3 point, int triangle, double3 otherwise ) {
+        var a  = grid.corners[triangle * 3];
+        var v0 = grid.corners[( triangle * 3 ) + 1] - a;
+        var v1 = grid.corners[( triangle * 3 ) + 2] - a;
+        var v2 = point - a;
+
+        var d00 = math.dot( v0, v0 );
+        var d01 = math.dot( v0, v1 );
+        var d11 = math.dot( v1, v1 );
+        var d20 = math.dot( v2, v0 );
+        var d21 = math.dot( v2, v1 );
+
+        var denominator = ( d00 * d11 ) - ( d01 * d01 );
+
+        if( !( denominator > 0.0 ) ) {
+            return otherwise;
+        }
+
+        var v = ( ( d11 * d20 ) - ( d01 * d21 ) ) / denominator;
+        var w = ( ( d00 * d21 ) - ( d01 * d20 ) ) / denominator;
+        var u = 1.0 - v - w;
+
+        var mixed = ( ( double3 )cornerNormals[triangle * 3] * u ) + ( ( double3 )cornerNormals[( triangle * 3 ) + 1] * v ) + ( ( double3 )cornerNormals[( triangle * 3 ) + 2] * w );
+
+        return math.lengthsq( mixed ) > 0.0 ? math.normalize( mixed ) : otherwise;
     }
 
     // the normals of a mesh's vertices at the corners of its triangles, three to a triangle
@@ -371,142 +399,6 @@ public static class BurstRemeshing {
 
         topology = topologyOut[0];
         faces    = facesOut[0];
-    }
-
-    // ---- the stand-in technique ----
-
-    // how far apart the normals of two triangles may be for them to lie flat together: a degree
-    public const double flatPairCosine = 0.99984769515639127; // cos 1°
-
-    private struct Candidate : IComparable<Candidate> {
-
-        public double length;
-        public int    side;
-
-        // the longest edges first, which are the diagonals of the quads their triangles would make, and then in the
-        // order of the sides
-        public int CompareTo( Candidate other ) {
-            return this.length != other.length ? other.length.CompareTo( this.length ) : this.side.CompareTo( other.side );
-        }
-
-    }
-
-    // pairs triangles across an edge into quads where they lie flat together: of the same sub-mesh, wound the same way,
-    // their normals within a degree, and the quad they make convex. Each triangle is in one pair at most, and the
-    // longest edges are paired first. Nothing moves: what changes is only which edges are drawn
-    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
-    public struct FlatPairsJob : IJob {
-
-        [ReadOnly] public NativeArray<float3>             positions;
-        [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
-        [ReadOnly] public NativeArray<Side>               sides;
-
-        // one byte for every triangle
-        [WriteOnly] public NativeArray<byte> flags;
-
-        // one: how many pairs were made
-        [WriteOnly] public NativeArray<int> pairs;
-
-        public void Execute( ) {
-            var candidates = new NativeList<Candidate>( Allocator.Temp );
-
-            for( var start = 0; start < this.sides.Length; ) {
-                var end = start + 1;
-                while( end < this.sides.Length && this.sides[end].key == this.sides[start].key ) {
-                    ++end;
-                }
-
-                if( end - start == 2 && this.flat( this.sides[start].corner, this.sides[start + 1].corner, out var length ) ) {
-                    candidates.Add( new Candidate { length = length, side = start } );
-                }
-
-                start = end;
-            }
-
-            candidates.Sort( );
-
-            var flags  = new NativeArray<byte>( this.triangles.Length, Allocator.Temp );
-            var paired = new NativeBitArray( math.max( this.triangles.Length, 1 ), Allocator.Temp );
-            var count  = 0;
-
-            for( var triangle = 0; triangle < flags.Length; ++triangle ) {
-                flags[triangle] = allEdges;
-            }
-
-            for( var index = 0; index < candidates.Length; ++index ) {
-                var candidate = candidates[index];
-                var first     = this.sides[candidate.side].corner;
-                var second = this.sides[candidate.side + 1].corner;
-
-                if( paired.IsSet( first / 3 ) || paired.IsSet( second / 3 ) ) {
-                    continue;
-                }
-
-                paired.Set( first / 3, true );
-                paired.Set( second / 3, true );
-
-                flags[first / 3]  = ( byte )( allEdges & ~( 1 << ( first % 3 ) ) );
-                flags[second / 3] = ( byte )( allEdges & ~( 1 << ( second % 3 ) ) );
-
-                ++count;
-            }
-
-            this.flags.CopyFrom( flags );
-            this.pairs[0] = count;
-
-            candidates.Dispose( );
-            flags.Dispose( );
-            paired.Dispose( );
-        }
-
-        private double3 at( int triangle, int corner ) {
-            return this.positions[vertexOf( this.triangles[triangle], corner % 3 )];
-        }
-
-        // the edge from first's corner runs from a to b in its triangle (a, b, c), and from b to a in the other's
-        // triangle (b, a, d). Their quad runs a, d, b, c, and is convex where the other diagonal, from c to d, cuts it
-        // into two triangles that face the way the first does
-        private bool flat( int first, int second, out double length ) {
-            length = 0.0;
-
-            var t1 = first / 3;
-            var t2 = second / 3;
-            var k1 = first % 3;
-            var k2 = second % 3;
-
-            if( t1 == t2 || this.triangles[t1].subMeshIndex != this.triangles[t2].subMeshIndex ) {
-                return false;
-            }
-
-            var a = this.at( t1, k1 );
-            var b = this.at( t1, k1 + 1 );
-            var c = this.at( t1, k1 + 2 );
-            var d = this.at( t2, k2 + 2 );
-
-            // wound the same way: the other runs the edge the other way round
-            if( vertexOf( this.triangles[t2], k2 ) != vertexOf( this.triangles[t1], ( k1 + 1 ) % 3 ) ) {
-                return false;
-            }
-
-            var n1 = math.cross( b - a, c - a );
-            var n2 = math.cross( a - b, d - b );
-
-            var l1 = math.length( n1 );
-            var l2 = math.length( n2 );
-
-            if( !( l1 > 0.0 ) || !( l2 > 0.0 ) || math.dot( n1, n2 ) < flatPairCosine * l1 * l2 ) {
-                return false;
-            }
-
-            if( math.dot( math.cross( a - c, d - c ), n1 ) <= 0.0 || math.dot( math.cross( b - d, c - d ), n1 ) <= 0.0 ) {
-                return false;
-            }
-
-            length = math.length( b - a );
-
-            return true;
-        }
-
     }
 
 }
