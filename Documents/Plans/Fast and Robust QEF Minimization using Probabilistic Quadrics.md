@@ -2,13 +2,13 @@
 
 Plan written 2026-11-18 for adding the QEF solve of *Fast and Robust QEF Minimization using Probabilistic Quadrics* (Trettner and Kobbelt, 2020; `Documents/Papers/Fast and Robust QEF Minimization using Probabilistic Quadrics.md`) as a third QEF solver, beside Simple and SVD, in the managed, Burst and GPU implementations.
 
-**Status:** draft. Nothing is built. The user decided four things on 2026-11-18:
+**Status:** in progress. Steps 0 to 2 were done on 2026-11-18: every algorithm on the CPU, managed and Burst, has the solver, and the GPU does not yet. Step 3 waits for review and for the questions under "Asked after step 2". The user decided four things on 2026-11-18:
 1. **A third solver,** not a replacement for SVD.
 2. **Managed, Burst and GPU.**
 3. **The default noise level is mine to choose.** It is 0.05 (finding 5).
 4. **Floats for now.** The sums of a QEF stay in floats, in octrees too.
 
-The smaller decisions at the end are open. Step 0 waits for the go-ahead.
+The user answered the decisions at the end on 2026-11-18 and gave the go-ahead: "1. The setting should be called Probabilistic. You can name anything else. 2 - 6. As you recommend." What decision 1 names is asked under it.
 
 The feasibility study behind the plan was done on 2026-11-18 with an experiment outside the repo. Its numbers are under Measurements.
 
@@ -78,7 +78,7 @@ Every voxelizer's **QEF Solver** setting has a third value, **Probabilistic**, w
 
    - **The setting's range is 0.02 to 1,** so that the worst case at 256³ is 0.03 cells.
    - **Blocks of 16 cells at 64³** are off by 0.013 cells at 0.03 and 0.11 at 0.01. Decision 4 accepts that.
-   - **Managed and Burst will differ by about this much too.** Mono keeps the intermediate results of an expression at a higher precision than Burst, the sums differ in their last bits, and the solve magnifies that by `1 / σ²`. `BurstQEFTest` allows 1e-5 relative and the contour comparisons 5e-3 cells. Step 1 measures what this solver needs and the tolerances for it are set there.
+   - **Managed and Burst will differ by about this much too.** Mono keeps the intermediate results of an expression at a higher precision than Burst, the sums differ in their last bits, and the solve magnifies that by `1 / σ²`. `BurstQEFTest` allows 1e-5 relative and the contour comparisons 5e-3 cells. Step 1 measured about 3.1e-8 / σ² between the two on `BurstQEFTest`'s samples, 7.8e-5 at 0.02 (step 1).
    - **A way out that stays in floats,** not planned: sums about the centre of the cell are 25 times closer in single cells. It would change what `add` is given, for this solver only.
 
 9. **It does not steady a moving shape.** I expected the hard 0.1 cut of the SVD solver to make vertices jump and this solver to be smoother. Measured, the large jumps are the same for both: they come from the mass point, when an edge starts or stops crossing the contour. At small `σ` it is worse: on a ball, vertices move 0.023 cells for each hundredth of a cell the ball moves at 0.05, against 0.011 for SVD and 0.041 at 0.03.
@@ -152,7 +152,7 @@ Each new test is shown to fail on a deliberate mistake, as in the earlier plans.
   - **The two ends:** at 0.02 a well-sampled corner is within a small distance of SVD's, and at 1 the vertex is most of the way to the mass point, each against the closed form.
   - **An edge:** the vertex is on the line of the edge, at the mass point's place along it. Nothing is infinite or not a number, for one sample, for samples in a plane and for samples on a line.
   - **A shallow ridge,** normals 10° apart: the vertex is nearer the ridge than SVD's.
-  - **Moved samples move the vertex with them:** the same samples far from the origin give the same vertex relative to them, within the float bound of finding 8. This catches a solve about the origin.
+  - **Moved samples move the vertex with them:** the same samples far from the origin give the same vertex relative to them, within the float bound of finding 8. This catches a pull toward the origin in place of the mass point.
   - **The error** is equation 1 of the dual contouring papers at the vertex.
   - **Combined QEFs** solve as the QEF of all their samples, with the mass point of all of them.
 - **Burst against Managed:** `BurstQEFTest` takes the new type, with the tolerance step 1 measures.
@@ -170,24 +170,155 @@ Each new test is shown to fail on a deliberate mistake, as in the earlier plans.
 
 Each step compiles, passes every test, and is reviewed before the next one starts. Nothing is committed for you.
 
-0. **Baseline (small).** Both suites green. The `Start` hashes and the Burst and GPU timings recorded with Unity in front.
-1. **The solve, managed and Burst (small).** `ProbabilisticQEF`, and the solve in `BurstQEF` as a function the tests can call, without the enum value yet. `ProbabilisticQEFTest`, and the Burst solve against the managed one. **Measured here:** how far Managed and Burst are apart at each deviation, which sets the tolerances (finding 8).
+0. **Baseline (small).** Both suites green. The `Start` hashes and the Burst and GPU timings recorded with Unity in front. **Done 2026-11-18:**
+   - **Suites:** edit mode 3781 of 3781 in 457 s, play mode 21 of 21.
+   - **`Start` hashes:** all 480 identical to those at the end of the remeshing plan's step 4. These are the baseline from here on.
+   - **Timings:** under Measurements, Baseline timings. Simple and SVD take the same time within the noise in every algorithm: the solve is too small a part of a contour to show.
+   - **Tooling,** kept in the probes folder outside the repo: `QEFTimingProbe.cs` and `run_qef_timing.sh` for the timings, `mutations_pq_step1.py` for step 1's deliberate mistakes.
+1. **The solve, managed and Burst (small).** `ProbabilisticQEF`, and the solve in `BurstQEF` as a function the tests can call, without the enum value yet. `ProbabilisticQEFTest`, and the Burst solve against the managed one. **Measured here:** how far Managed and Burst are apart at each deviation, which sets the tolerances (finding 8). **Done 2026-11-18:**
+   - **Built:**
+     - `Assets/Scripts/Managed/ProbabilisticQEF.cs`, a `QEFSolver`. It keeps the sums as `SVDQEF` does, and the mass point of every sample. `ProbabilisticQEF.minimize` is the authors' `minimizer()`, credited in a comment. Its constructor takes the deviation, and `minimizerIterations` is there for the interface only.
+     - `BurstQEF.solveProbabilistic( normalDeviation, ... )` and the private `minimizeProbabilistic`, the same operations in the same order.
+     - Nothing outside the tests calls either yet, so every contour is as it was.
+   - **Tests:**
+     - `ProbabilisticQEFTest`, 38 cases:
+       - the closed form for a face, an edge and a corner, square to the axes and turned, at 0.02, 0.05, 0.25 and 1;
+       - four degenerate sets of samples that must give the mass point: one sample, no normals, a slab, and planes turning about one line;
+       - the shallow ridge against `SVDQEF`;
+       - the moved samples;
+       - the error at the vertex;
+       - combined QEFs.
+     - **A correction to the plan:** it said the moved samples catch a solve about the origin, which was wrong. A solve about the origin gives the same vertex, within rounding. What the test catches is a pull toward the origin in place of the mass point.
+     - `BurstQEFTest.probabilisticQEFsSolveAsTheManagedOnesDo`, at the same four deviations. The body of `qefsSolveAsTheManagedOnesDo` became a helper that both use. Its job solves by the probabilistic solver when a flag is set, on QEFs made as SVD ones, which add normals as they are and keep the mass point of every sample. In step 2 the flag becomes the solver type.
+   - **Measured:**
+     - **Burst against managed:** vertices about 3.1e-8 / σ² apart at every deviation. That is 7.8e-5 at 0.02, 1.3e-5 at 0.05, 4.8e-7 at 0.25 and 3e-8 at 1. Errors are within 1.1e-6 of each other, relative, and mass points are the same to the bit. The tolerance for vertices is 1e-5 + 5e-8 / σ².
+     - **One sample at 0.02:** its vertex is 3.3e-5 from the sample, not on it. That is rounding of `AᵀA p` against `Aᵀb`, divided by a pull of 0.0004. The degenerate cases are held to 1e-4, as the closed form is.
+     - **Outside Unity,** in a dotnet console project around the same files, the closed form held to 4.6e-6 in all 24 cases, and the Burst struct gave the managed vertex to the bit.
+   - **Deliberate mistakes:** 15, 11 in the managed solver and 4 in Burst, all caught (`probabilistic-quadrics-step1/mutations.txt` in the probes folder):
+     - in the pull: one factor of the deviation, no count;
+     - in the right side: no `AᵀA p`, a pull toward the origin;
+     - in the LDLᵀ: four slips in the managed solve and one in Burst's;
+     - in the error: taken at the mass point;
+     - in `combine`: the mass point or the count left out.
+   - **Suites:** edit mode 3823 of 3823 in 405 s, which is 42 more than step 0, and play mode 21 of 21. The 480 `Start` hashes are identical to step 0's.
 2. **The solver in the CPU implementations (medium).** The enum value, the setting and its inspector, the managed `switch`es, `BurstSettings` and the five `create` calls. The 41 tests take it in. **Measured here,** on the project's models and shapes, against SVD:
    - distance of vertices from single shapes and from the edges and corners of cubes, upright and turned;
    - vertices outside their cells;
    - vertex counts of Adaptive and Manifold at the scenes' thresholds;
    - the suite's time.
 
-   The default of 0.05 is confirmed or changed here, and the questions under "Asked after step 2" are put.
-3. **GPU (medium).** `QEF.hlsl`, both shaders' configurations and drivers, the inspector's rule, the GPU tests.
+   The default of 0.05 is confirmed or changed here, and the questions under "Asked after step 2" are put. **Done 2026-11-18:**
+   - **Built:**
+     - `QEFSolver.Type.Probabilistic`, after `SVD`.
+     - `Voxelizer.normalDeviation`, labelled Normal Deviation, from 0.02 to 1 with a default of 0.05, and in the `SurfaceExtractor` interface beside the solver.
+     - **The inspector** leaves out Normal Deviation under Simple and SVD, and Minimizer Iterations under Probabilistic (decision 2). Checked with a probe for Uniform and Occupancy under each solver, since no test draws an inspector. Voxelizers selected together fall back to Unity's generic inspector, as they did before.
+     - **Managed:** the four `switch`es make a `ProbabilisticQEF` with the deviation.
+     - **Burst:** `BurstQEF` keeps its deviation from `create`, which all five callers give it. Its `combine` keeps the mass point of every sample for this solver, as for Simple, and `solve` dispatches to it. `BurstSettings` carries the deviation for Uniform, Adaptive and Manifold, and Occupancy's job and `BurstOccupancyCells.solve` take it as well. Step 1's public `solveProbabilistic` became a private part of `solve`.
+     - **GPU:** Uniform's driver takes the deviation, to fit the interface, and does nothing with it yet. The inspector still turns a GPU voxelizer's solver into SVD. Both change in step 3.
+   - **Tests:**
+     - **The 41 parametrized tests** took the new solver and passed without a change: the Burst-against-managed comparisons of all three algorithms, simplified or not, the topology tests and the tests of `placeVertex`. None needed a tolerance of its own (finding 13).
+     - `BurstQEFTest`: the solver at its default in `qefsSolveAsTheManagedOnesDo`, which solves two of each group of QEFs before combining them, and at 0.02, 0.25 and 1 in `probabilisticQEFsSolveAsTheManagedOnesDo`. The flag of step 1 became the type.
+     - `QEFSolverTest` makes the new solver, and `VoxelizerDefaultsTest` holds the default of 0.05.
+     - **`NormalDeviationTest`,** new, 24 cases, all on a turned cube, with Adaptive and Manifold simplifying at 2e-4:
+       - with the probabilistic solver, the contour changes between 0.05 and 0.5, in each of the seven CPU variants;
+       - with Simple and SVD, it stays the same to the bit;
+       - managed and Burst give the same contour at 0.5, for Uniform, Adaptive and Manifold. A QEF made with the default deviation in place of the setting changes nothing at the default, which is why this one is needed (see the mistakes).
+     - **`RotatedCubeTest`** runs for SVD and the probabilistic solver, 96 cases. Under the new solver, Adaptive and Manifold test their corners and edges without simplification, at SVD's tolerance; with it they missed corners by up to 0.14 cells (under Measurements, Step 2, The rotated cube). That is asked below.
+     - **The `Start` hash probe** hashes the new solver too, on the CPU: the 480 lines that were there are unchanged, and the new ones are the reference for the later steps.
+   - **Deliberate mistakes:** 18, all caught (`probabilistic-quadrics-step2/mutations.txt` and `mutations_again.txt` in the probes folder):
+     - the deviation dropped from the settings of each of Uniform, Adaptive, Manifold and Occupancy, or from `create`;
+     - a fixed 0.05 in each place a QEF is made, managed and Burst;
+     - the Burst solve falling through to SVD, managed Manifold making an SVD solver, another default.
+     - **Two survived the first run:** managed Adaptive with a fixed deviation for its leaves only, or for its nodes only. The QEFs made in the other place still moved the contour, and at the default nothing changed at all. The managed-and-Burst test at 0.5 was added for them and catches both, and four more mistakes of the kind in Burst.
+   - **Measured:** under Measurements, Step 2. The default of 0.05 stands:
+     - On single shapes at 32³, 0.05 is the lowest deviation that leaves no more vertices outside their cells than SVD does, within a quarter: 2.8% against 2.6%. At 0.03 it is 4.1%, at 0.02 6.9%, on the curved shapes.
+     - Corners and edges are off by a few thousandths of a cell more than with SVD. The most is 0.035 cells at the turned pyramid's tip, where four faces meet, against SVD's 0.017.
+     - The worst vertex off a shape is nearer than with SVD: 0.10 cells against 0.18, at the cone.
+     - **Where this solver was expected to win, these shapes give it no chance.** Their normals are exact, without noise, and at every edge of them the normals of the two faces are at least 60° apart, the hexagonal prism's being the closest. The shallow ridges of the feasibility study are not among them. `QEF.hlsl`, both shaders' configurations and drivers, the inspector's rule, the GPU tests.
+   - **Suites:** edit mode 4087 of 4087 in 432 s, play mode 21 of 21. That is 264 tests more than step 1 and 27 s longer. No test came near two minutes.
+   - **`Start` hashes:** 704 lines, the 480 of step 0 identical, and 224 for the probabilistic solver: Uniform, Adaptive and Manifold in Managed and Burst, and Occupancy in Burst. They are the reference for steps 3 to 5, in `probabilistic-quadrics-step2/hashes_step2.txt` in the probes folder.
 4. **Interactive editor and scenes (small).** `select`, the signature, the editor tests. The six scenes, with the user's go-ahead.
 5. **Timings and documentation (small).** Burst and GPU timings of the three solvers at 64³ and 128³, with Unity in front. README: the solver in the implementations section, what it is good and bad at (findings 4, 6 and 7), the setting, the paper and the MIT credit. `AGENTS.md`: the paper among the algorithms.
 
 ## Measurements
 
+### Baseline timings (step 0, 2026-11-18)
+
+A whole contour of the three balls, read back from the GPU, without mesh simplification or remeshing, normals creased at 180°. Median of 7 runs after one to warm up, in ms, with Unity in front for every call. "Simplified" is Adaptive's simplification and Manifold's clustering at 2e-4, which solve a QEF for every node of the octree.
+
+| Algorithm | Implementation | Contour | 64³ SVD | 64³ Simple | 128³ SVD | 128³ Simple |
+|---|---|---|---|---|---|---|
+| Uniform | Burst | plain | 8.0 | 7.9 | 39.2 | 43.1 |
+| Occupancy | Burst | plain | 15.0 | 14.7 | 64.3 | 65.6 |
+| Adaptive | Burst | plain | 46.6 | | 348.4 | |
+| Adaptive | Burst | simplified | 6.9 | 7.0 | 35.0 | 34.2 |
+| Manifold | Burst | plain | 15.0 | | 66.9 | |
+| Manifold | Burst | simplified | 8.0 | 8.0 | 36.8 | 35.4 |
+| Uniform | GPU | plain | 21.1 | | 124.9 | |
+| Occupancy | GPU | plain | 7.1 | | 24.4 | |
+
+Uniform Burst with Simple at 128³ had one slow run of 64 ms among its seven; its fastest was 37.2 ms.
+
+### Step 2 (2026-11-18)
+
+From the Burst implementations, which give the managed meshes within a few thousandths of a cell. Probes `PQMeasureProbe.cs` and `PQCubeProbe.cs`, with their rows in `probabilistic-quadrics-step2` in the probes folder. Distances are in cells.
+
+#### Single shapes
+
+The nine shapes of `ShapeContourTest` and a box and a ball, upright and turned, at 32³, Uniform Dual Contouring. Means are over the shapes, worst cases over all of them.
+
+| Solver | Off the shape, mean | worst | Corners from the nearest vertex, mean | Edges from the mesh, mean | worst | Vertices outside their cells |
+|---|---|---|---|---|---|---|
+| SVD | 0.0135 | 0.184 | 0.013 | 0.0045 | 0.017 | 2.56% |
+| 0.02 | 0.0135 | 0.079 | 0.013 | 0.0047 | 0.019 | 6.88% |
+| 0.03 | 0.0135 | 0.083 | 0.014 | 0.0049 | 0.022 | 4.10% |
+| 0.05 | 0.0133 | 0.104 | 0.018 | 0.0058 | 0.035 | 2.78% |
+| 0.07 | 0.0132 | 0.121 | 0.026 | 0.0077 | 0.056 | 2.54% |
+| 0.1 | 0.0130 | 0.131 | 0.045 | 0.0127 | 0.105 | 2.33% |
+
+- **The worst corner** is 0.26 cells for every solver: a corner of the turned box in a cell whose corners show two pieces of surface, which gets one vertex. Manifold Dual Contouring gives such a cell a vertex for each piece, and its worst corner is 0.021 with SVD and 0.035 at 0.05.
+- **Adaptive Dual Contouring** without simplification gives Uniform's numbers to the digit.
+- **Vertices outside their cells** at 0.02 and 0.03 are on the curved shapes. On the torus at 0.03 they are 78 of 1124 upright and 108 of 1198 turned, against SVD's 16 and 13. At 0.05 they are 31 and 34.
+- **Occupancy-Based Dual Contouring** hardly changes with the solver. Its corners are 0.28 cells from the nearest vertex on average and its edges up to 0.79 from the mesh, with SVD and at every deviation: its searches decide them, not the solve (finding 13 of its plan). It keeps every vertex in its cell.
+
+#### Vertex counts
+
+Adaptive and Manifold Dual Contouring at 32³ leaves, at four error thresholds. The test models, the turned shapes and new shapes of `TopologyTest`, a cube turned about a diagonal, and a cube of 0.6 at the origin. Manifold at 2e-4, the threshold of the scenes:
+
+| Model | SVD | Simple | 0.02 | 0.05 | 0.1 |
+|---|---|---|---|---|---|
+| Sphere | 415 | 415 | 415 | 415 | 415 |
+| Three balls | 852 | 936 | 852 | 852 | 884 |
+| Cubes and sphere | 440 | 688 | 440 | 440 | 488 |
+| Sphere cutaway | 872 | 1124 | 872 | 872 | 872 |
+| Turned shapes | 547 | 1048 | 542 | 637 | 701 |
+| New shapes | 1368 | 1767 | 1334 | 1385 | 1501 |
+| Turned cube | 104 | 579 | 124 | 251 | 325 |
+| Cube of 0.6 | 8 | 56 | 8 | 56 | 56 |
+
+- **Curved models** simplify as far as with SVD, and a little further at the smallest thresholds: the sphere keeps 1534 vertices at 1e-5 against SVD's 1578.
+- **Models with features** keep more, as finding 7 has it: the turned cube 2.4 times as many at 0.05.
+- **Adaptive** is alike: the turned cube keeps 497 against SVD's 453 at 2e-4, and the cube of 0.6 keeps 56 against 8.
+- **The simple solver** keeps the most in every model with features.
+
+#### The rotated cube
+
+`RotatedCubeTest`'s cube at 16³, simplified at 2e-4 as there. How far the farthest corner is from the nearest vertex:
+
+| Algorithm | Turn | SVD | 0.02 | 0.03 | 0.05 | 0.1 |
+|---|---|---|---|---|---|---|
+| Uniform | about an axis | 0.013 | 0.014 | 0.015 | 0.019 | 0.038 |
+| Uniform | about a diagonal | 0.012 | 0.013 | 0.014 | 0.018 | 0.045 |
+| Adaptive and Manifold | about an axis | 0.014 | 0.050 | 0.035 | 0.075 | 0.179 |
+| Adaptive and Manifold | about a diagonal | 0.012 | 0.032 | 0.053 | 0.136 | 0.071 |
+
+The edges are as far as the corners, but for 0.1 about a diagonal: 0.099 cells in Adaptive and 0.089 in Manifold. Under simplification nothing but the error threshold holds a cluster's vertex to the corner, which is why the numbers do not grow evenly with the deviation.
+
+### Feasibility
+
 All from the feasibility experiment of 2026-11-18, not from the Unity pipeline. It is a console program that compiles `BurstQEF.cs` unmodified and samples exact shapes as the project does: a 64³ grid one unit wide, six bisection steps, normals by central differences of 1e-4, all in floats. It is kept outside the repo, in the session's probes folder under `probabilistic-quadrics`. Distances are in cells.
 
-### Single cells, clean data
+#### Single cells, clean data
 
 Distance from the vertex to the true edge or corner, mean / worst.
 
@@ -202,7 +333,7 @@ Distance from the vertex to the true edge or corner, mean / worst.
 
 On a ball of radius 0.3, vertices are 0.010 cells from the surface on average with every solver.
 
-### Single cells, normals off by about 3°
+#### Single cells, normals off by about 3°
 
 Gaussian noise of 0.05 on each component of every normal. Share of vertices outside their cells, and how far the worst one is.
 
@@ -213,7 +344,7 @@ Gaussian noise of 0.05 on each component of every normal. Share of vertices outs
 
 The mean distance from the ball's surface is 0.014 for SVD and 0.013 from 0.03 upward.
 
-### Summed QEFs
+#### Summed QEFs
 
 Blocks of cells of a box turned 20°, 30° and 10° about the axes, each summed into one QEF. Share of blocks whose classical error at the vertex is under 1e-5, and the mean distance from the vertex to the block's edge or corner.
 
@@ -225,7 +356,7 @@ Blocks of cells of a box turned 20°, 30° and 10° about the axes, each summed 
 
 For a box along the axes every block is under 1e-5 up to `σ` = 0.05, and vertices are within 0.02 cells of their feature.
 
-### A moving shape
+#### A moving shape
 
 Each shape moved by a hundredth of a cell 150 times. How far a cell's vertex moves per step, on average.
 
@@ -236,7 +367,7 @@ Each shape moved by a hundredth of a cell 150 times. How far a cell's vertex mov
 
 Steps over half a cell on the turned box: 780 for SVD and 649 at 0.05, of 1.3 million.
 
-### The solve
+#### The solve
 
 Solve and error of one QEF of a single cell, under the .NET JIT: SVD 128 ns, Simple 88 ns, probabilistic 25 ns.
 
@@ -253,15 +384,24 @@ Solve and error of one QEF of a single cell, under the .NET JIT: SVD 128 ns, Sim
 
 ## Decisions
 
+Answered 2026-11-18. Decisions 2 to 6 as recommended.
+
 1. **Name and range of the setting.** Recommended: **Normal Deviation**, 0.02 to 1, default 0.05 (findings 5 and 8). The paper calls it `σ_n` and gives it in percent of the normal's length; 0.05 is its 5%.
-2. **What the inspector shows.** Recommended: Normal Deviation only under Probabilistic, and Minimizer Iterations hidden then, since neither means anything to the other solvers. The other way shows both always, which is simpler and leaves a dead setting in view.
-3. **The error for simplification and clustering.** Recommended: the classical QEF at the placed vertex (finding 11).
-4. **Port the authors' solve?** Recommended: yes, the 25 lines of `minimizer()`, credited in a comment and in the README. The licence is MIT, as this project's is.
-5. **Example scenes.** Recommended: six `Probabilistic Solve` scenes beside the `SVD Solve` ones. The other way is none, since the interactive editor shows the solver on any model.
-6. **Editor and README in this plan?** Recommended: yes, as steps 4 and 5.
+   - **Answer:** "The setting should be called Probabilistic. You can name anything else." The range and default stand.
+   - **Asked after step 1,** since it could be read two ways, and answered on 2026-11-18: "the setting" is the solver's value in QEF Solver, Probabilistic, and the deviation's name was left to me. It is Normal Deviation.
+2. **What the inspector shows.** Recommended: Normal Deviation only under Probabilistic, and Minimizer Iterations hidden then, since neither means anything to the other solvers. The other way shows both always, which is simpler and leaves a dead setting in view. **Answer:** as recommended.
+3. **The error for simplification and clustering.** Recommended: the classical QEF at the placed vertex (finding 11). **Answer:** as recommended.
+4. **Port the authors' solve?** Recommended: yes, the 25 lines of `minimizer()`, credited in a comment and in the README. The licence is MIT, as this project's is. **Answer:** as recommended. Ported in step 1.
+5. **Example scenes.** Recommended: six `Probabilistic Solve` scenes beside the `SVD Solve` ones. The other way is none, since the interactive editor shows the solver on any model. **Answer:** as recommended.
+6. **Editor and README in this plan?** Recommended: yes, as steps 4 and 5. **Answer:** as recommended.
 
 ### Asked after step 2
 
-- **The default,** if the project's models disagree with 0.05.
+Put to the user on 2026-11-18.
+
+- **The default,** if the project's models disagree with 0.05. They do not (step 2, Measured), so it stays, and nothing is asked.
 - **Tests that do not hold for this solver as written** (finding 13): which get a tolerance of their own and which leave the solver out.
-- **Whether Adaptive and Manifold should warn** in the inspector that this solver simplifies less than SVD.
+  - **Only one did not hold:** the corners and edges of `RotatedCubeTest` under simplification, which the plan's tests had added and the 41 parametrized tests are not among. They missed by up to 0.14 cells against 0.002.
+  - **Recommended, and how it is now:** test the new solver's corners and edges there without simplification, at SVD's tolerance, and keep its simplified contours in the closed-surface and on-the-cube tests. Under simplification only the error threshold holds a vertex to a corner, so no tolerance would follow from anything but the one model it was measured on.
+  - **The other way:** a tolerance of its own under simplification, a quarter of a cell, with the measured 0.14 behind it.
+- **Whether Adaptive and Manifold should warn** in the inspector that this solver simplifies less than SVD. Recommended: no warning in the inspector, which has none for anything else; the README says it in step 5, with the counts above.

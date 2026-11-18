@@ -9,7 +9,7 @@ using QEFSolverType      = QEFSolver.Type;
 // a cube turned about one axis and about a diagonal, contoured by every algorithm, which run for each implementation in
 // the fixtures at the end. Unlike the cubes of the other tests, its faces cross the grid at an angle and its edges and
 // corners lie anywhere in their cells. The SVD solver still has to put the vertices on its faces, edges and corners,
-// where Unity shows the turned cube
+// where Unity shows the turned cube, and so does the probabilistic solver at its default deviation
 public abstract class RotatedCubeTest : TopologyTest {
 
     public enum Algorithm {
@@ -36,6 +36,15 @@ public abstract class RotatedCubeTest : TopologyTest {
     // the error threshold of the "Simplification" scenes, at which flat parts of the surface collapse
     private const float errorThreshold = 2e-4f;
 
+    // whether the corners and edges are tested on the simplified contour. The probabilistic solver pulls the vertex of a
+    // cluster toward the mass point of its samples, off the corner or edge they share, and simplification keeps the
+    // cluster for as long as its error stays under the threshold: nothing else holds the vertex to the corner. At 2e-4 a
+    // corner was up to 0.14 cells from its vertex, and no closer at higher deviations. The probabilistic solver's corners
+    // and edges are tested where there are no clusters, which is where the solver itself places the vertices
+    private static bool simplifiedFeatures( QEFSolverType solver ) {
+        return solver != QEFSolverType.Probabilistic;
+    }
+
     private static Quaternion rotationOf( Turn turn ) {
         return turn switch {
             Turn.AboutAnAxis    => Quaternion.AngleAxis( 45.0f, Vector3.up  ),
@@ -44,27 +53,27 @@ public abstract class RotatedCubeTest : TopologyTest {
         };
     }
 
-    // 16^3 cells or leaves either way, simplifying as the "Simplification" scenes do
-    private Voxelizer create( Algorithm algorithm, Turn turn ) {
+    // 16^3 cells or leaves either way, simplifying as the "Simplification" scenes do unless told not to
+    private Voxelizer create( Algorithm algorithm, Turn turn, QEFSolverType solver, bool simplified = true ) {
         var shapes = new[] { cube( center, extent ).rotated( rotationOf( turn ) ) };
 
         switch( algorithm ) {
             case Algorithm.Uniform: {
-                return this.createUniformVoxelizer( 4, this.implementation, QEFSolverType.SVD, shapes );
+                return this.createUniformVoxelizer( 4, this.implementation, solver, shapes );
             }
             case Algorithm.Adaptive: {
-                var voxelizer = this.createVoxelizer<AdaptiveDualContouring>( 5, QEFSolverType.SVD, shapes );
+                var voxelizer = this.createVoxelizer<AdaptiveDualContouring>( 5, solver, shapes );
 
-                voxelizer.simplification = true;
+                voxelizer.simplification = simplified;
                 voxelizer.errorThreshold = errorThreshold;
                 voxelizer.topologySafe   = true;
 
                 return voxelizer;
             }
             case Algorithm.Manifold: {
-                var voxelizer = this.createVoxelizer<ManifoldDualContouring>( 5, QEFSolverType.SVD, shapes );
+                var voxelizer = this.createVoxelizer<ManifoldDualContouring>( 5, solver, shapes );
 
-                voxelizer.errorThreshold  = errorThreshold;
+                voxelizer.errorThreshold  = simplified ? errorThreshold : 0.0f;
                 voxelizer.enforceManifold = true;
 
                 return voxelizer;
@@ -101,8 +110,8 @@ public abstract class RotatedCubeTest : TopologyTest {
         return algorithm != Algorithm.Manifold;
     }
 
-    private ( Voxelizer voxelizer, Vector3[] vertices, int[] triangles, SurfaceExtractor.Voxel[] split ) contourWithCells( Algorithm algorithm, Turn turn ) {
-        var voxelizer    = this.create( algorithm, turn );
+    private ( Voxelizer voxelizer, Vector3[] vertices, int[] triangles, SurfaceExtractor.Voxel[] split ) contourWithCells( Algorithm algorithm, Turn turn, QEFSolverType solver, bool simplified = true ) {
+        var voxelizer    = this.create( algorithm, turn, solver, simplified );
         var voxelization = this.voxelize( voxelizer );
 
         // the cells left out where one vertex per cell is all there is to expect
@@ -114,8 +123,8 @@ public abstract class RotatedCubeTest : TopologyTest {
     }
 
     [Test]
-    public void surfaceIsClosed( [Values] Algorithm algorithm, [Values] Turn turn ) {
-        var topology = this.contour( this.create( algorithm, turn ) );
+    public void surfaceIsClosed( [Values] Algorithm algorithm, [Values] Turn turn, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        var topology = this.contour( this.create( algorithm, turn, solver ) );
 
         if( oneVertexPerCell( algorithm ) ) {
             assertClosed( topology );
@@ -126,8 +135,8 @@ public abstract class RotatedCubeTest : TopologyTest {
     }
 
     [Test]
-    public void everyVertexLiesOnTheCube( [Values] Algorithm algorithm, [Values] Turn turn ) {
-        var ( voxelizer, vertices, triangles, split ) = this.contourWithCells( algorithm, turn );
+    public void everyVertexLiesOnTheCube( [Values] Algorithm algorithm, [Values] Turn turn, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        var ( voxelizer, vertices, triangles, split ) = this.contourWithCells( algorithm, turn, solver );
 
         var used = triangles.Distinct( ).Select( ( index ) => vertices[index] ).Where(
             ( vertex ) => !split.Any( ( voxel ) => voxel.vertex == vertex )
@@ -143,8 +152,8 @@ public abstract class RotatedCubeTest : TopologyTest {
 
     // the cell around a corner sees the three faces that meet there, and the vertex goes where they meet
     [Test]
-    public void everyCornerOfTheCubeHasAVertex( [Values] Algorithm algorithm, [Values] Turn turn ) {
-        var ( voxelizer, vertices, triangles, _ ) = this.contourWithCells( algorithm, turn );
+    public void everyCornerOfTheCubeHasAVertex( [Values] Algorithm algorithm, [Values] Turn turn, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        var ( voxelizer, vertices, triangles, _ ) = this.contourWithCells( algorithm, turn, solver, simplifiedFeatures( solver ) );
 
         var used = triangles.Distinct( ).Select( ( index ) => vertices[index] ).ToArray( );
 
@@ -160,8 +169,8 @@ public abstract class RotatedCubeTest : TopologyTest {
     // along the edge all the same. The mesh only keeps away from an edge around a cell whose corners show several pieces
     // of surface, as far as the triangles of its vertex reach: into the cells next to it
     [Test]
-    public void theMeshRunsAlongEveryEdgeOfTheCube( [Values] Algorithm algorithm, [Values] Turn turn ) {
-        var ( voxelizer, vertices, triangles, split ) = this.contourWithCells( algorithm, turn );
+    public void theMeshRunsAlongEveryEdgeOfTheCube( [Values] Algorithm algorithm, [Values] Turn turn, [Values( QEFSolverType.SVD, QEFSolverType.Probabilistic )] QEFSolverType solver ) {
+        var ( voxelizer, vertices, triangles, split ) = this.contourWithCells( algorithm, turn, solver, simplifiedFeatures( solver ) );
 
         var corners = cornersOf( voxelizer );
 

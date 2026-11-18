@@ -26,6 +26,16 @@ public class BurstQEFTest {
     private const float vertexTolerance = 1e-5f;
     private const float errorTolerance  = 1e-5f;
 
+    // the voxelizer's default
+    private const float normalDeviation = 0.05f;
+
+    // the probabilistic solver divides what is left of AtB - AtA p by N s^2, so the last bits of the sums are magnified by
+    // one over the square of the deviation. Measured on these samples, Burst and managed vertices are about 3.1e-8 / s^2
+    // apart at every deviation, the most at 7.8e-5 for 0.02
+    private static float probabilisticVertexTolerance( float normalDeviation ) {
+        return vertexTolerance + ( 5e-8f / ( normalDeviation * normalDeviation ) );
+    }
+
     // the hermite samples of a QEF, the range of them in the sample arrays, and the cell they are in
     private struct Case {
 
@@ -39,6 +49,7 @@ public class BurstQEFTest {
     private struct QEFJob : IJob {
 
         public QEFSolverType type;
+        public float         normalDeviation;
 
         [ReadOnly] public NativeArray<float3> intersections;
         [ReadOnly] public NativeArray<float3> normals;
@@ -55,7 +66,7 @@ public class BurstQEFTest {
         public NativeArray<bool>   managed;
 
         private BurstQEF build( int index ) {
-            var qef = BurstQEF.create( this.type, minimizerIterations );
+            var qef = BurstQEF.create( this.type, minimizerIterations, this.normalDeviation );
 
             for( var sample = this.starts[index]; sample < this.starts[index] + this.counts[index]; ++sample ) {
                 qef.add( this.intersections[sample], this.normals[sample] );
@@ -90,7 +101,7 @@ public class BurstQEFTest {
                     qefs[member] = member < 2 ? solved : qef;
                 }
 
-                var combined = BurstQEF.create( this.type, minimizerIterations );
+                var combined = BurstQEF.create( this.type, minimizerIterations, this.normalDeviation );
                 for( var member = 0; member < 3; ++member ) {
                     combined.combine( qefs[member] );
                 }
@@ -140,12 +151,28 @@ public class BurstQEFTest {
         return ( intersections, normals, cases );
     }
 
-    private static QEFSolver createManaged( QEFSolverType type ) {
-        return type == QEFSolverType.Simple ? new SimpleQEF( minimizerIterations ) : new SVDQEF( minimizerIterations );
+    private static QEFSolver createManaged( QEFSolverType type, float normalDeviation ) {
+        return type switch {
+            QEFSolverType.Simple        => new SimpleQEF        ( minimizerIterations ),
+            QEFSolverType.SVD           => new SVDQEF           ( minimizerIterations ),
+            QEFSolverType.Probabilistic => new ProbabilisticQEF ( normalDeviation ),
+            _                           => throw new Exception( "Unknown solver type specified" )
+        };
     }
 
+    // the probabilistic solver at its default deviation
     [Test]
     public void qefsSolveAsTheManagedOnesDo( [Values] QEFSolverType type ) {
+        assertSolveAsTheManagedOnes( type, normalDeviation, type == QEFSolverType.Probabilistic ? probabilisticVertexTolerance( normalDeviation ) : vertexTolerance );
+    }
+
+    // and at the two ends of its range and one value between
+    [Test]
+    public void probabilisticQEFsSolveAsTheManagedOnesDo( [Values( 0.02f, 0.25f, 1.0f )] float normalDeviation ) {
+        assertSolveAsTheManagedOnes( QEFSolverType.Probabilistic, normalDeviation, probabilisticVertexTolerance( normalDeviation ) );
+    }
+
+    private static void assertSolveAsTheManagedOnes( QEFSolverType type, float normalDeviation, float vertexTolerance ) {
         var ( intersections, normals, cases ) = generate( new System.Random( 3 ) );
 
         var outputs = cases.Length + groups;
@@ -164,6 +191,7 @@ public class BurstQEFTest {
 
         new QEFJob {
             type               = type,
+            normalDeviation    = normalDeviation,
             intersections      = nativeIntersections,
             normals            = nativeNormals,
             starts             = starts,
@@ -187,7 +215,7 @@ public class BurstQEFTest {
         var expectedCounts          = new int[outputs];
 
         QEFSolver build( int index ) {
-            var qef = createManaged( type );
+            var qef = createManaged( type, normalDeviation );
             for( var sample = cases[index].start; sample < cases[index].start + cases[index].count; ++sample ) {
                 qef.add( intersections[sample], normals[sample] );
             }
@@ -212,7 +240,7 @@ public class BurstQEFTest {
                 members[member] = member < 2 ? qef : build( index );
             }
 
-            var combined = createManaged( type );
+            var combined = createManaged( type, normalDeviation );
             foreach( var member in members ) {
                 combined.combine( member );
             }

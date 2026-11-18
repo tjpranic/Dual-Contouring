@@ -356,6 +356,7 @@ public partial class UniformDualContouring : Voxelizer {
             this.binarySearchIterations,
             this.surfaceCorrectionIterations,
             this.qefSolverType,
+            this.normalDeviation,
             this.intersectionApproximation,
             this.contourVertices,
             this.creaseAngle,

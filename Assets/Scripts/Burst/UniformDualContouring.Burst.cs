@@ -352,6 +352,7 @@ public partial class UniformDualContouring {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
+            float                        normalDeviation,
             IntersectionApproximation    intersectionApproximation,
             ContourVertices              contourVertices,
             float                        creaseAngle,
@@ -365,6 +366,7 @@ public partial class UniformDualContouring {
                 binarySearchIterations      = binarySearchIterations,
                 surfaceCorrectionIterations = surfaceCorrectionIterations,
                 qefSolverType               = qefSolverType,
+                normalDeviation             = normalDeviation,
                 intersectionApproximation   = intersectionApproximation
             };
 

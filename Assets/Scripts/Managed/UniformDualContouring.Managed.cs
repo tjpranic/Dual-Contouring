@@ -33,6 +33,7 @@ public partial class UniformDualContouring {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolverType                qefSolverType,
+            float                        normalDeviation,
             IntersectionApproximation    intersectionApproximation,
             ContourVertices              contourVertices,
             float                        creaseAngle,
@@ -80,9 +81,10 @@ public partial class UniformDualContouring {
             foreach( var voxel in this.grid ) {
 
                 QEFSolver qef = qefSolverType switch {
-                    QEFSolverType.Simple => new SimpleQEF ( minimizerIterations ),
-                    QEFSolverType.SVD    => new SVDQEF    ( minimizerIterations ),
-                    _                    => throw new Exception( "Unknown solver type specified" )
+                    QEFSolverType.Simple        => new SimpleQEF        ( minimizerIterations ),
+                    QEFSolverType.SVD           => new SVDQEF           ( minimizerIterations ),
+                    QEFSolverType.Probabilistic => new ProbabilisticQEF ( normalDeviation ),
+                    _                           => throw new Exception( "Unknown solver type specified" )
                 };
 
                 var averageNormal = Vector3.zero;

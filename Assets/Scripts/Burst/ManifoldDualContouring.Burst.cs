@@ -352,7 +352,7 @@ public partial class ManifoldDualContouring {
 
             for( var index = 0; index < count; ++index ) {
                 var vertex        = first + index;
-                var qef           = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations );
+                var qef           = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations, this.settings.normalDeviation );
                 var averageNormal = float3.zero;
 
                 for( var edge = 0; edge < EdgeCount; ++edge ) {
@@ -597,7 +597,7 @@ public partial class ManifoldDualContouring {
 
                         var created = first + clusterIndex;
 
-                        this.qefs[created]    = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations );
+                        this.qefs[created]    = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations, this.settings.normalDeviation );
                         this.normals[created] = float3.zero;
                         this.eulers[created]  = 0;
                         this.parents[created] = -1;
@@ -1087,6 +1087,7 @@ public partial class ManifoldDualContouring {
             binarySearchIterations      = this.binarySearchIterations,
             surfaceCorrectionIterations = this.surfaceCorrectionIterations,
             qefSolverType               = this.qefSolverType,
+            normalDeviation             = this.normalDeviation,
             intersectionApproximation   = this.intersectionApproximation
         };
 

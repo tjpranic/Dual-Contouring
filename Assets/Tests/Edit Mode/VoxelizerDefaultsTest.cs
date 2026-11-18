@@ -20,6 +20,7 @@ public class VoxelizerDefaultsTest {
 
             Assert.AreEqual( implementation,    voxelizer.implementationType,          "implementation" );
             Assert.AreEqual( QEFSolverType.SVD, voxelizer.qefSolverType,               "solver" );
+            Assert.AreEqual( 0.05f,             voxelizer.normalDeviation,             "normal deviation" );
             Assert.AreEqual( 0,                 voxelizer.surfaceCorrectionIterations, "surface correction iterations" );
 
             Assert.AreEqual( VertexNormals.Creased, voxelizer.vertexNormals, "vertex normals" );

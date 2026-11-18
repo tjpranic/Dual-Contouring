@@ -46,6 +46,7 @@ public partial interface SurfaceExtractor {
             int                          binarySearchIterations,
             int                          surfaceCorrectionIterations,
             QEFSolver.Type               qefSolverType,
+            float                        normalDeviation,
             IntersectionApproximation    intersectionApproximation,
             ContourVertices              contourVertices,
             float                        creaseAngle,
@@ -153,6 +154,7 @@ public partial interface SurfaceExtractor {
     public int                       surfaceCorrectionIterations { get; set; }
     public Implementation.Type       implementationType          { get; set; }
     public QEFSolver.Type            qefSolverType               { get; set; }
+    public float                     normalDeviation             { get; set; }
     public IntersectionApproximation intersectionApproximation   { get; set; }
     public VertexNormals             vertexNormals               { get; set; }
 

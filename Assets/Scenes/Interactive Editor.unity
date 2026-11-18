@@ -466,12 +466,13 @@ MonoBehaviour:
   _binarySearchIterations: 6
   _surfaceCorrectionIterations: 0
   _implementation: 2
-  _qefSolver: 1
+  _qefSolver: 2
+  _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
   smoothNormals: 1
-  meshSimplification: 0
+  meshSimplification: 1
   simplificationError: 0.05
   lineQuadricWeight: 0.00001
   simplificationDetail: 0
@@ -519,6 +520,7 @@ MonoBehaviour:
   _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
+  _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
@@ -572,6 +574,7 @@ MonoBehaviour:
   _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
+  _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40
@@ -704,6 +707,7 @@ MonoBehaviour:
   _surfaceCorrectionIterations: 0
   _implementation: 2
   _qefSolver: 1
+  _normalDeviation: 0.05
   _intersectionApproximation: 0
   _vertexNormals: 0
   creaseAngle: 40

@@ -2,12 +2,12 @@ using Unity.Mathematics;
 
 using QEFSolverType = QEFSolver.Type;
 
-// a QEF that Burst code can keep in a struct, for either solver. The SVD solver is SVDQEF operation for operation. The
-// simple solver steps from the center of the voxel towards the planes of the hermite samples like SimpleQEF does, but
-// keeps the sums of AtA, AtB and BtB instead of the planes themselves: the step it takes, the sum over the planes of
-// their distance to the vertex times their normal, is AtA x - AtB, and its error is the same function of x as the SVD
-// solver's. That is the same math as SimpleQEF with different rounding, and it fits in a fixed size however many QEFs are
-// combined
+// a QEF that Burst code can keep in a struct, for any of the three solvers. The SVD and probabilistic solvers are SVDQEF
+// and ProbabilisticQEF operation for operation. The simple solver steps from the center of the voxel towards the planes
+// of the hermite samples like SimpleQEF does, but keeps the sums of AtA, AtB and BtB instead of the planes themselves:
+// the step it takes, the sum over the planes of their distance to the vertex times their normal, is AtA x - AtB, and its
+// error is the same function of x as the SVD solver's. That is the same math as SimpleQEF with different rounding, and it
+// fits in a fixed size however many QEFs are combined
 public struct BurstQEF {
 
     // SVDQEF.SVDTolerance and SVDQEF.PseudoInverseTolerance
@@ -16,6 +16,9 @@ public struct BurstQEF {
 
     public QEFSolverType type;
     public int           minimizerIterations;
+
+    // the noise in the normals that the probabilistic solver assumes, which the other solvers do not look at
+    public float normalDeviation;
 
     // AtA, of which only the upper triangle is kept, AtB and BtB
     public float  ata00, ata01, ata02, ata11, ata12, ata22;
@@ -30,10 +33,11 @@ public struct BurstQEF {
     public int    massPointCount;
     public int    massPointDimension;
 
-    public static BurstQEF create( QEFSolverType type, int minimizerIterations ) {
+    public static BurstQEF create( QEFSolverType type, int minimizerIterations, float normalDeviation ) {
         return new BurstQEF {
             type                = type,
-            minimizerIterations = minimizerIterations
+            minimizerIterations = minimizerIterations,
+            normalDeviation     = normalDeviation
         };
     }
 
@@ -71,9 +75,9 @@ public struct BurstQEF {
         this.btb               += other.btb;
         this.intersectionCount += other.intersectionCount;
 
-        // the simple solver's mass point is that of every intersection. The SVD solver merges mass points of the same
-        // dimension and keeps the one of the higher dimension of two that differ
-        if( this.type == QEFSolverType.Simple || other.massPointDimension == this.massPointDimension ) {
+        // the mass point of the simple and probabilistic solvers is that of every intersection. The SVD solver merges mass
+        // points of the same dimension and keeps the one of the higher dimension of two that differ
+        if( this.type != QEFSolverType.SVD || other.massPointDimension == this.massPointDimension ) {
             this.massPoint      += other.massPoint;
             this.massPointCount += other.massPointCount;
         }
@@ -93,6 +97,9 @@ public struct BurstQEF {
                 vertex -= ( this.ata( ).multiplyVector( vertex ) - this.atb ) / this.intersectionCount;
             }
         }
+        else if( this.type == QEFSolverType.Probabilistic ) {
+            vertex = this.minimizeProbabilistic( );
+        }
         else {
             var massPoint = this.massPoint / this.massPointCount;
 
@@ -109,9 +116,18 @@ public struct BurstQEF {
         error = this.calculateError( vertex );
     }
 
+    // ProbabilisticQEF.solve: the point that minimizes the probabilistic quadric of the samples, for noise of the QEF's
+    // deviation in their normals. Its mass point is that of every sample, which combine keeps for this solver
+    private readonly float3 minimizeProbabilistic( ) {
+        var massPoint = this.massPoint / this.intersectionCount;
+        var pull      = this.intersectionCount * this.normalDeviation * this.normalDeviation;
+
+        return minimizeProbabilistic( this.ata( ), this.atb - this.ata( ).multiplyVector( massPoint ), pull ) + massPoint;
+    }
+
     // the mass point of the intersections and the value of the QEF there
     public readonly void solveMassPoint( out float3 vertex, out float error ) {
-        vertex = this.type == QEFSolverType.Simple ? this.massPoint / this.intersectionCount : this.massPoint / this.massPointCount;
+        vertex = this.type == QEFSolverType.SVD ? this.massPoint / this.massPointCount : this.massPoint / this.intersectionCount;
         error  = this.calculateError( vertex );
     }
 
@@ -292,6 +308,51 @@ public struct BurstQEF {
             );
         }
 
+    }
+
+    // ProbabilisticQEF.minimize, operation for operation: the solution d of ( AtA + pull I ) d = r, by the unrolled LDLT
+    // of minimizer() in the authors' probabilistic-quadrics.hh (github.com/Philip-Trettner/probabilistic-quadrics,
+    // Copyright (c) 2020 Philip Trettner, MIT License), without its fused multiply-adds
+    private static float3 minimizeProbabilistic( SymmetricMatrix3x3 ata, float3 r, float pull ) {
+        var a00 = ata.m00 + pull;
+        var a10 = ata.m01;
+        var a20 = ata.m02;
+        var a11 = ata.m11 + pull;
+        var a21 = ata.m12;
+        var a22 = ata.m22 + pull;
+
+        var x0 = r.x;
+        var x1 = r.y;
+        var x2 = r.z;
+
+        var d0  = 1.0f / a00;
+        var l10 = a10 * -d0;
+        var l20 = a20 * -d0;
+
+        a11 = ( a10 * l10 ) + a11;
+        a21 = ( a20 * l10 ) + a21;
+        a22 = ( a20 * l20 ) + a22;
+
+        var d1  = 1.0f / a11;
+        var l21 = a21 * -d1;
+
+        a22 = ( a21 * l21 ) + a22;
+
+        var d2 = 1.0f / a22;
+
+        x1 = ( l10 * x0 ) + x1;
+        x2 = ( l20 * x0 ) + x2;
+        x2 = ( l21 * x1 ) + x2;
+
+        x0 *= d0;
+        x1 *= d1;
+        x2 *= d2;
+
+        x0 = ( l20 * x2 ) + x0;
+        x1 = ( l21 * x2 ) + x1;
+        x0 = ( l10 * x1 ) + x0;
+
+        return new float3( x0, x1, x2 );
     }
 
     // SVDQEF.SVD

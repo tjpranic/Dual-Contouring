@@ -125,7 +125,7 @@ public partial class AdaptiveDualContouring {
             var coordinates = this.octree.nodeOf( this.level, local );
             var node        = this.octree.nodeIndex( this.level, coordinates );
 
-            var qef           = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations );
+            var qef           = BurstQEF.create( this.settings.qefSolverType, this.settings.minimizerIterations, this.settings.normalDeviation );
             var averageNormal = float3.zero;
             var collapsible   = true;
 
@@ -549,6 +549,7 @@ public partial class AdaptiveDualContouring {
             binarySearchIterations      = this.binarySearchIterations,
             surfaceCorrectionIterations = this.surfaceCorrectionIterations,
             qefSolverType               = this.qefSolverType,
+            normalDeviation             = this.normalDeviation,
             intersectionApproximation   = this.intersectionApproximation
         };
 

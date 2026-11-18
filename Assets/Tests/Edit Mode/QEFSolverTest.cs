@@ -40,9 +40,10 @@ public class QEFSolverTest {
 
     private static QEFSolver create( QEFSolverType solver ) {
         QEFSolver qef = solver switch {
-            QEFSolverType.Simple => new SimpleQEF ( 6 ),
-            QEFSolverType.SVD    => new SVDQEF    ( 6 ),
-            _                    => throw new Exception( "Unknown solver type specified" )
+            QEFSolverType.Simple        => new SimpleQEF        ( 6 ),
+            QEFSolverType.SVD           => new SVDQEF           ( 6 ),
+            QEFSolverType.Probabilistic => new ProbabilisticQEF ( 0.05f ),
+            _                           => throw new Exception( "Unknown solver type specified" )
         };
 
         foreach( var ( intersection, normal ) in samples ) {

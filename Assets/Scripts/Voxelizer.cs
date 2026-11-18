@@ -62,6 +62,15 @@ public abstract class Voxelizer : ImmediateModeShapeDrawer, SurfaceExtractor {
         set { this._qefSolver = value; }
     }
 
+    // the noise in the normals that the probabilistic solver assumes (ProbabilisticQEF). Below the range the solve in
+    // floats loses its precision, and at zero it has no solution on flat faces
+    [SerializeField( ), Range( 0.02f, 1.0f ), Tooltip( "How uncertain the probabilistic solver takes the normals of the surface to be, as a standard deviation in each of their components. Lower keeps sharp and shallow features, higher pulls vertices toward the average of their samples and steadies them against noise" )]
+    private float _normalDeviation = 0.05f;
+    public float normalDeviation {
+        get { return this._normalDeviation;  }
+        set { this._normalDeviation = value; }
+    }
+
     [SerializeField( )]
     private IntersectionApproximation _intersectionApproximation = IntersectionApproximation.BinarySearch;
     public IntersectionApproximation intersectionApproximation {
@@ -961,6 +970,14 @@ public class VoxelizerEditor : Editor {
         get { return Array.Empty<string>( ); }
     }
 
+    // the settings of a QEF solver that the other solvers do not look at: the probabilistic solver has nothing to
+    // iterate, and only it has a deviation
+    private void leaveOutSolverSettings( HashSet<string> unused ) {
+        var solver = ( QEFSolverType )this.serializedObject.FindProperty( "_qefSolver" ).enumValueIndex;
+
+        unused.Add( solver == QEFSolverType.Probabilistic ? "_minimizerIterations" : "_normalDeviation" );
+    }
+
     public override void OnInspectorGUI( ) {
         this.serializedObject.Update( );
 
@@ -968,6 +985,8 @@ public class VoxelizerEditor : Editor {
         var sections  = new List<SerializedProperty>( );
         var debug     = new List<SerializedProperty>( );
         var unused    = new HashSet<string>( this.unused ) { useCullingMasks };
+
+        this.leaveOutSolverSettings( unused );
 
         // the properties come in the order their fields are declared, the voxelizer's before the subclass's
         var inSections = false;

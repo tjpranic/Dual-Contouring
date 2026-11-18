@@ -132,6 +132,7 @@ public struct BurstSettings {
     public int                       binarySearchIterations;
     public int                       surfaceCorrectionIterations;
     public QEFSolverType             qefSolverType;
+    public float                     normalDeviation;
     public IntersectionApproximation intersectionApproximation;
 
 }
@@ -331,7 +332,7 @@ public static class BurstCells {
         out float3                        vertex,
         out float3                        normal
     ) {
-        qef    = BurstQEF.create( settings.qefSolverType, settings.minimizerIterations );
+        qef    = BurstQEF.create( settings.qefSolverType, settings.minimizerIterations, settings.normalDeviation );
         vertex = float3.zero;
         normal = float3.zero;
 

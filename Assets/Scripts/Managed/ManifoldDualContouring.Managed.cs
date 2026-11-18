@@ -736,9 +736,10 @@ public partial class ManifoldDualContouring {
 
     private QEFSolver createQEF( ) {
         return this.qefSolverType switch {
-            QEFSolverType.Simple => new SimpleQEF ( this.minimizerIterations ),
-            QEFSolverType.SVD    => new SVDQEF    ( this.minimizerIterations ),
-            _                    => throw new Exception( "Unknown solver type specified" )
+            QEFSolverType.Simple        => new SimpleQEF        ( this.minimizerIterations ),
+            QEFSolverType.SVD           => new SVDQEF           ( this.minimizerIterations ),
+            QEFSolverType.Probabilistic => new ProbabilisticQEF ( this.normalDeviation ),
+            _                           => throw new Exception( "Unknown solver type specified" )
         };
     }
 

@@ -195,6 +195,7 @@ public partial class OccupancyDualContouring {
         public BurstOccupancy.Points points;
         public QEFSolverType         qefSolverType;
         public int                   minimizerIterations;
+        public float                 normalDeviation;
         public bool                  keepVerticesInCells;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>    vertexStarts;
@@ -230,6 +231,7 @@ public partial class OccupancyDualContouring {
                         this.points,
                         this.qefSolverType,
                         this.minimizerIterations,
+                        this.normalDeviation,
                         this.keepVerticesInCells,
                         this.materials,
                         out var position,
@@ -262,6 +264,7 @@ public partial class OccupancyDualContouring {
             in BurstOccupancy.Points   found,
             QEFSolverType              qefSolverType,
             int                        minimizerIterations,
+            float                      normalDeviation,
             bool                       keepVerticesInCells,
             NativeArray<MaterialIndex> materials,
             out float3                 position,
@@ -275,7 +278,7 @@ public partial class OccupancyDualContouring {
 
             var count = BurstOccupancy.planesOf( grid, cell, solid, lookup, vertex, found, materials, edges, points, normals );
 
-            var qef       = BurstQEF.create( qefSolverType, minimizerIterations );
+            var qef       = BurstQEF.create( qefSolverType, minimizerIterations, normalDeviation );
             var sum       = float3.zero;
             var direction = float3.zero;
 
@@ -781,6 +784,7 @@ public partial class OccupancyDualContouring {
                 points              = points,
                 qefSolverType       = this.qefSolverType,
                 minimizerIterations = this.minimizerIterations,
+                normalDeviation     = this.normalDeviation,
                 keepVerticesInCells = this.keepVerticesInCells,
                 vertexStarts        = vertexStarts,
                 positions           = positions,
