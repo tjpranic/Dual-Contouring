@@ -984,6 +984,131 @@ public class BurstIsotropicTest {
         }
     }
 
+    // the moves of a round, one after another in the order of the vertices, each where it turns none of its triangles
+    // over with the moves before it made (turnsOver), by a job compiled as the remesh's are
+    [Unity.Burst.BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    private struct OneAfterAnotherJob : IJob {
+
+        public BurstIsotropic.FeatureMesh mesh;
+        public SurfaceGrid                grid;
+        public double                     reach;
+
+        [Unity.Collections.ReadOnly] public Unity.Collections.NativeArray<double3> targets;
+        [Unity.Collections.ReadOnly] public Unity.Collections.NativeArray<byte>    moves;
+
+        public Unity.Collections.NativeArray<int> counts;
+
+        public void Execute( ) {
+            for( var vertex = 0; vertex < this.moves.Length; ++vertex ) {
+                if( this.moves[vertex] != 1 ) {
+                    continue;
+                }
+                if( BurstIsotropic.turnsOver( this.mesh, this.grid, vertex, this.targets[vertex], this.reach ) ) {
+                    ++this.counts[2];
+                    continue;
+                }
+                this.mesh.mesh.positions[vertex] = this.targets[vertex];
+                ++this.counts[0];
+            }
+        }
+
+    }
+
+    // a patch of 8 by 8 unit squares, at the height z = 0.6 sin( 1.3 x ) cos( 1.7 y ), with open edges all round
+    private static HandBuiltMesh bumpyPatch( ) {
+        var built = new HandBuiltMesh( );
+
+        Vector3 at( int i, int j ) {
+            return new Vector3( i, j, 0.6f * Mathf.Sin( 1.3f * i ) * Mathf.Cos( 1.7f * j ) );
+        }
+
+        for( var i = 0; i < 8; ++i )
+        for( var j = 0; j < 8; ++j ) {
+            built.quad( at( i, j ), at( i + 1, j ), at( i + 1, j + 1 ), at( i, j + 1 ) );
+        }
+        return built;
+    }
+
+    // a round's moves with each vertex's check guessed in parallel first (GuessJob) are those made one after another
+    // without guesses: moves that turn a triangle over among them, and moves after one that was refused, whose guess
+    // took it as made. Five rounds, so that faces are turned from how they came before they are checked; on the bumpy
+    // patch the moves leave the surface too
+    [Test]
+    public void aRoundsMovesAreThoseMadeOneAfterAnother( [Values( "flat", "bumpy" )] string surface, [Values( 0.6, 0.9, 1.5 )] double jitter ) {
+        var bumpy = surface == "bumpy";
+        var built = bumpy ? bumpyPatch( ) : new HandBuiltMesh( ).patch( 8, 8 );
+
+        using var guessed = new FeatureMeshRun( built, 40.0 );
+        using var plain   = new FeatureMeshRun( built, 40.0 );
+        using var grid    = SurfaceGrid.of( plain.mesh, 1.0, Unity.Collections.Allocator.TempJob );
+
+        var vertexCount = plain.vertexCount;
+        var random      = new Unity.Mathematics.Random( 20261119 );
+        var edges       = plain.edges( );
+
+        using var targets       = new Unity.Collections.NativeArray<double3>( vertexCount, Unity.Collections.Allocator.TempJob );
+        using var moves         = new Unity.Collections.NativeArray<byte>( vertexCount, Unity.Collections.Allocator.TempJob );
+        using var plainCounts   = new Unity.Collections.NativeArray<int>( 3, Unity.Collections.Allocator.TempJob );
+        using var guessedCounts = new Unity.Collections.NativeArray<int>( 3, Unity.Collections.Allocator.TempJob );
+        using var guesses       = new Unity.Collections.NativeArray<bool>( vertexCount, Unity.Collections.Allocator.TempJob );
+        using var refused       = new Unity.Collections.NativeArray<bool>( vertexCount, Unity.Collections.Allocator.TempJob );
+
+        var targetsOf    = targets;
+        var movesOf      = moves;
+        var refusedOf    = refused;
+        var afterRefused = 0;
+
+        for( var round = 0; round < 5; ++round ) {
+            // every vertex inside the patch is to move by up to the jitter along each axis (1 is SmoothJob's Moves)
+            for( var vertex = 0; vertex < vertexCount; ++vertex ) {
+                var position = plain.positionOf( vertex );
+                var start    = built.positions[vertex];
+                var inside   = start.x > 0.5f && start.x < 7.5f && start.y > 0.5f && start.y < 7.5f;
+
+                targetsOf[vertex] = position + new double3( random.NextDouble2( -jitter, jitter ), bumpy ? random.NextDouble( -jitter, jitter ) : 0.0 );
+                movesOf[vertex]   = ( byte )( inside ? 1 : 0 );
+                refusedOf[vertex] = false;
+            }
+
+            new OneAfterAnotherJob { mesh = plain.mesh, grid = grid, reach = 2.0, targets = targets, moves = moves, counts = plainCounts }.Run( );
+
+            new BurstIsotropic.GuessJob {
+                grid             = grid,
+                reach            = 2.0,
+                positions        = guessed.mesh.mesh.positions.AsArray( ),
+                firstCorners     = guessed.mesh.mesh.firstCorners.AsArray( ),
+                nextCorners      = guessed.mesh.mesh.nextCorners.AsArray( ),
+                triangles        = guessed.mesh.mesh.triangles.AsArray( ),
+                subMeshes        = guessed.mesh.mesh.subMeshes.AsArray( ),
+                referenceNormals = guessed.mesh.referenceNormals.AsArray( ),
+                targets          = targets,
+                moves            = moves,
+                guesses          = guesses
+            }.Schedule( vertexCount, 4 ).Complete( );
+
+            new BurstIsotropic.ApplyJob { mesh = guessed.mesh, grid = grid, reach = 2.0, targets = targets, moves = moves, guesses = guesses, refused = refused, counts = guessedCounts }.Run( );
+
+            // moves after a refused one in a triangle of theirs, whose guesses were made with the refused move made
+            for( var vertex = 0; vertex < vertexCount; ++vertex ) {
+                if( moves[vertex] == 1 && edges.Any( ( edge ) => ( edge.a == vertex || edge.b == vertex ) && ( edge.a == vertex ? edge.b : edge.a ) < vertex && refused[edge.a == vertex ? edge.b : edge.a] ) ) {
+                    ++afterRefused;
+                }
+            }
+
+            Assert.AreEqual( plainCounts[0], guessedCounts[0], $"moved, round {round}" );
+            Assert.AreEqual( plainCounts[2], guessedCounts[2], $"refused, round {round}" );
+
+            for( var vertex = 0; vertex < vertexCount; ++vertex ) {
+                Assert.AreEqual( plain.positionOf( vertex ), guessed.positionOf( vertex ), $"vertex {vertex}, round {round}" );
+            }
+        }
+
+        Debug.Log( $"{surface}, jitter {jitter}: {plainCounts[0]} moved, {plainCounts[2]} refused, {afterRefused} moves after a refused one, over five rounds" );
+
+        Assert.Greater( plainCounts[2], 0, "moves are refused" );
+        Assert.Greater( afterRefused, 0, "moves come after refused ones" );
+    }
+
     // a split puts its vertex on the input, where the edge it splits is not on it: here the diagonal a flip has made
     // across a ridge, whose middle is under the ridge
     [Test]

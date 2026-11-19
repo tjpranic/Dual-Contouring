@@ -42,5 +42,14 @@ Vertex normals are creased by angle on the finished mesh of any algorithm and im
 - **Tests:** they hold the Burst pass to answers known in closed form, and the GPU to Burst: the same groups, and normals within a tolerance, since Metal has no doubles.
 - **Test voxelizers:** they contour at a crease angle of 180° under Contour, which is the uncreased contour. Tests of creasing set the angle they test.
 
+## Remeshing
+A Burst pass after mesh simplification that rebuilds the finished mesh of any algorithm and implementation (`Remeshing`, `BurstRemeshing`). Two techniques are built:
+- **Isotropic:** section 4 of *A Remeshing Approach to Multiresolution Modeling* (`BurstIsotropic`): splits, collapses, flips and smoothing on the simplifier's lists. It keeps features and topology, which the paper leaves out; how is the plan's own.
+- **Field Aligned:** *Instant Field-Aligned Meshes* (`BurstFields`, `BurstFieldAligned`): the two fields on a hierarchy, and a mesh of triangles, mostly quads or only quads read off them. Where the paper is silent its authors' code decides (github.com/wjakob/instant-meshes, BSD 3-clause, with a clause that grants published enhancements of that code back to its authors). Follow it, credit it in a comment, and do not port it as a whole.
+
+A third, *QuadriFlow*, is planned and deferred (steps 6 and 7). Its authors' code (github.com/hjwdzh/QuadriFlow) is MIT. Isotropic and Field Aligned share the feature skeleton (`BurstFeatures`) and the search for the nearest point of the mesh given (`BurstSurfaceGrid`), and Field Aligned works on the mesh split into sheets (`BurstSheets`). There is no managed or GPU remesher, so the tests hold each piece to answers known in closed form and each technique to invariants: what it keeps of the surface, the features, the materials and, for Isotropic, the topology. `Documents/Plans/Remeshing.md` has where each departs from its paper, and why.
+
 # Unity
 You should be able to interact with the Unity editor via an MCP server backed by the Unity CLI. Prefer the MCP when you need to interact with the editor. Recompilation takes a while and the server will respond as busy while that happens, so if you do encounter that, try to wait it out. Sometimes the Unity editor may not respond for other reasons. Bringing the editor into focus can help unstick it.
+
+After a compile that failed, then one that succeeded, Burst has kept running a job's code from before the edit, which gave plausible and wrong results. Where a Burst job and the same job run as plain C# (`job.Execute( )` against `job.Run( )`) disagree, make any small change to the game assembly and compile again.

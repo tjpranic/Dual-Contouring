@@ -133,7 +133,7 @@ Every voxelizer has a **Vertex Normals** setting, with two more after it:
 - **Slivers:** where a triangle of the contour straddles a sharp edge, the edge shows a small notch, in every mode, Split included. That comes from where the vertices are placed, not from the normals.
 - **The GPU at 0°:** it can split triangles that lie in one plane, which Burst keeps together. The GPU's square root is not exact, and at 0° only exactly equal normals stay together.
 
-The interactive editor's scene and three of the Mesh Simplification scenes (CSG Operations, Half Detail and Multiple Materials) use creased normals.
+The interactive editor's scene, three of the Mesh Simplification scenes (CSG Operations, Half Detail and Multiple Materials) and the Remeshing scenes use creased normals.
 
 ## Wireframe
 Every voxelizer can draw the edges of its contour's triangles over the contour. Its inspector has a **Wireframe** section:
@@ -146,7 +146,7 @@ Every voxelizer can draw the edges of its contour's triangles over the contour. 
 - **Fill Color** is the fill under Lines Only.
 
 **How the lines are drawn:**
-- **Edges:** the lines are the edges of the triangles, so every quad shows its diagonal.
+- **Edges:** the lines are the edges of the triangles, so every quad of a contour shows its diagonal. A remeshed mesh is drawn with the edges of the faces the remesh made, so its quads and pentagons show none (see Remeshing).
 - **The contour:** it is drawn as before, by its renderer or straight from the GPU, and the lines go over it. Picking, materials and shadows stay as they were; under Lines Only the hidden surface still casts its shadows.
 - **Where it works:** every implementation, in play mode, and in the interactive editor in edit mode as well.
 - **No contouring:** the settings change only what is drawn, so changing them never contours again.
@@ -208,6 +208,91 @@ Its settings are in the **Mesh Simplification** section of the inspector:
 - **Memory:** the contour and its collapses are kept until the next contour, 4 MB at 128³ and 17 MB at 256³.
 
 Example scenes are in `Assets/Scenes/Mesh Simplification`, each a copy of a Burst scene on 64³ cells with simplification on and the wireframe drawn, so the triangles show.
+
+## Remeshing
+Every voxelizer can rebuild the mesh of its contour before it is shown, after mesh simplification if that is on and before its normals are creased or split. It works on the finished mesh, so it serves every algorithm and implementation alike. Two techniques are built, both Burst code:
+
+- **Isotropic** follows section 4 of *A Remeshing Approach to Multiresolution Modeling* (Botsch and Kobbelt, 2004): a loop that splits long edges, collapses short ones, flips edges towards vertices of six and smooths, about five times over. Its triangles come out close to equilateral and all about one size, and it keeps the mesh's sharp edges, open edges and lines between materials as lines, and its topology as it was.
+- **Field Aligned** follows *Instant Field-Aligned Meshes* (Jakob, Tarini, Panozzo and Sorkine-Hornung, 2015): a field of directions and a field of lattice points are smoothed over the surface, and a mesh is read off them. Its faces are triangles, mostly quads, or only quads, in rows that follow the shape's edges and curvature.
+
+A third technique, *QuadriFlow* (Huang, Zhou, Niessner, Shewchuk and Guibas, 2018), quads with fewer irregular vertices, is planned and not built.
+
+Its settings are in the **Remeshing** section of the inspector:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Technique | Off | **Off**, **Isotropic** or **Field Aligned**. Off, every mesh is what it was without this feature. |
+| Edge Length | 1 | How long the new edges are, against the mesh the pass is given. At 1 the result has about as many vertices as that mesh, at 0.5 about four times as many and at 2 about a quarter. |
+| Feature Angle | 40 | Two triangles that meet at more than this many degrees have a sharp edge between them, which is kept. Open edges, edges of more than two triangles and edges between materials are kept at any angle. |
+| Iterations | 5 | Isotropic only. How many times its loop runs: the paper's "about 5". |
+| Area Iterations | 5 | Isotropic only. How many rounds of smoothing by the vertices' areas follow the loop, which even out the sizes of the triangles. Zero leaves them out. |
+| Faces | Quad Dominant | Field Aligned only. **Triangles**; **Quad Dominant**, quads with triangles and pentagons where rows of faces begin and end; or **Quads**, quads only. |
+| Normals | Input | The normals the remeshed mesh starts from, before they are creased or split. **Input:** those the mesh it was given would show creased at the Crease Angle, where each vertex lies on it. **Faces:** those of each vertex's own triangles. Split vertex normals take Faces whatever this says. |
+
+**The edge length goes by the mesh it is given.** At 1 it is the length at which equilateral triangles, or squares, of that mesh's area would have its number of vertices.
+- **On a contour** that is about a cell.
+- **After simplification** it is several cells, more on flat shapes: the cube the simplifier leaves at 8 vertices is remeshed with edges of about 15 cells at 64³. So the simplifier's Error and Detail decide how many vertices there are, and the remesh how they are spread.
+
+**What it gives,** on 15 test models by every algorithm with Burst at 64³ cells, at the defaults, medians over the meshes:
+
+| Technique | Mesh | Vertices against the mesh given | Faces | Regular inner vertices | Smallest angle of a face, mean |
+|---|---|---|---|---|---|
+| Isotropic | contour | 1.01 | triangles | 85% | 53° |
+| Isotropic | simplified | 1.23 | triangles | 66% | 45° |
+| Field Aligned, Quad Dominant | contour | 1.00 | 98.5% quads, 1% triangles, 0.5% pentagons | 98% | 87° |
+| Field Aligned, Quad Dominant | simplified | 1.02 | 94% quads, 4% triangles, 2% pentagons | 92% | 86° |
+| Field Aligned, Triangles | contour | 1.01 | triangles | 94% | 57° |
+| Field Aligned, Quads | contour | 1.01 | quads | 99% | 87° |
+
+- **Regular** is six edges at a vertex for triangles and four for quads. A contour has half its inner vertices of six edges, and a simplified mesh a third to two fifths.
+- **The best angles** are 60° for a triangle and 90° for a quad.
+- **Triangles are Field Aligned's weakest faces:** a triangular lattice meets these models' right angles badly, and where it does not fit, larger faces are cut into triangles of whatever shape is left, down to slivers.
+
+**What both keep:**
+- **The surface:** every vertex is on the mesh they were given, to within rounding. With simplification on that is the simplified mesh, so a curved shape keeps the simplifier's facets, with new vertices spread over them.
+- **Features:** edges by the Feature Angle, and open edges, edges of more than two triangles and lines between materials at any angle. Features by angle are found at the scale of the edge length, but never more than a cell, which clears the noise a contour makes where an edge crosses the grid at an angle.
+
+**Isotropic** keeps more:
+- **Lines and corners:** a vertex on a line moves only along it, and a corner does not move. A line between two materials stays exactly where it was.
+- **Topology:** nothing joins, splits, opens or closes, as with the simplifier. Its collapses go through the same check.
+- **What it does not keep:** details smaller than the edge length, such as small hollows on a simplified flat face. Corners found by angle that are closer than four fifths of it can become one. Folds in the mesh it is given stay folded, and no move turns a triangle over.
+- **Simplified flat shapes** can get an edge length longer than their own edges. Two overlapping cubes, simplified to 18 vertices at 64³, get edges of 28 cells, and lose their shape. At an Edge Length of 0.25 their edges are 7 cells long, and they keep it exactly, the line between their materials too.
+
+**Field Aligned** keeps less:
+- **Lines:** rows of faces run along open edges and lines between materials, which hold both fields. On contours a line between materials stays within 0.004 of a cell of where it was on the median model. On a simplified mesh, whose edges are many cells long, it moves by about a quarter of a cell on the mean, and by up to a cell.
+- **Sharp edges** by angle steer the fields, so rows of faces run along them. Corners are not held, and end up near their place, not at it.
+- **Topology is not kept,** as its paper says. Faces are walked round the edges read off the fields, and holes of up to six sides are filled. On 11 of the 60 contours above it opened lines of edges the mesh did not have, all on the turned shapes, the new shapes and the three balls. The inspector warns when this happens.
+- **Edges of four triangles,** which Uniform and Adaptive Dual Contouring give where two sheets of surface meet, are split apart first, as the fields need. Such a contour comes out as a manifold whose sheets touch along a line.
+
+**When it gives up,** it shows the mesh as it came, and the statistics and the editor's inspector say why: Isotropic where its edge length would make more than 2²⁰ vertices, Field Aligned where the mesh its fields are on would have more than 2²¹, and where no faces come out of its fields. Quads alone give up on the smallest simplified meshes, such as a slab of 16 vertices, whose fields at twice the edge length have no faces in them.
+
+**The wireframe** draws the faces the remesh made: a quad without its diagonal, a pentagon without its two.
+
+**Changing a setting without contouring:** the voxelizer keeps the mesh it last gave the pass, whether remeshing is on or not, and `Voxelizer.remesh( )` shows it again under the remeshing settings as they are now. `Voxelizer.simplify( )` remeshes what it makes. The interactive editor does both by itself.
+
+**GPU contours** are read back to be remeshed, and are not drawn straight from the GPU. Their vertices come in a different order every time, so two contours of the same model remesh alike and not the same.
+
+**Cost,** the remesh alone with Burst, in the editor, the median and the slowest of 15 test models by Uniform Dual Contouring, in ms:
+
+| Cells | Mesh | Isotropic | Field Aligned, Quad Dominant | Field Aligned, Triangles | Field Aligned, Quads |
+|---|---|---|---|---|---|
+| 32³ | contour | 57 (140) | 170 (306) | 231 (419) | 58 (97) |
+| 32³ | simplified | 8 (57) | 26 (81) | 34 (106) | 12 (33) |
+| 64³ | contour | 209 (505) | 630 (1,207) | 842 (1,624) | 189 (340) |
+| 64³ | simplified | 17 (117) | 44 (146) | 59 (186) | 19 (56) |
+| 128³ | contour | 834 (2,113) | 2,608 (5,474) | 3,366 (6,828) | 741 (1,521) |
+| 128³ | simplified | 25 (192) | 77 (248) | 94 (310) | 29 (88) |
+
+- **After simplification,** which is what the pass is for, a remesh on most models takes less than the simplifying before it, which is 206 ms for the three balls at 128³.
+- **Without it,** a remesh takes many times the Burst contour, which is about 30 ms at 128³.
+- **Field Aligned's fields** are most of its time. They live on the vertices of the mesh it is given, split until no edge is longer than half the edge length, which is about twelve times as many vertices. A looser split would be quicker, and was measured to leave more holes.
+- **Quads alone** are solved at twice the edge length, on a quarter of the vertices, and are the quickest.
+
+Example scenes are in `Assets/Scenes/Remeshing`, each a copy of a Uniform Burst scene on 64³ cells with creased normals and the wireframe drawn, so the faces show:
+- **Isotropic Sphere** and **Isotropic Multiple Materials**, the second simplified first and remeshed at an Edge Length of 0.25;
+- **Field Aligned Union**, a cube and a ball as quads with triangles and pentagons, which leaves a small hole where the ball meets an edge of the cube;
+- **Field Aligned Multiple Materials**, the same with its line between materials held;
+- **Field Aligned Quads Sphere**, quads only.
 
 ## Manifold Dual Contouring
 `ManifoldDualContouring` follows *Manifold Dual Contouring* (Schaefer, Ju and Warren, 2007). Every piece of surface in a leaf of the octree has a vertex. On the way up the octree, the vertices that the surface connects inside a cell are clustered into one. A cluster stands in for the vertices below it when its error is within the threshold and, with Enforce Manifold, its piece of surface is a disk that crosses the edges of each face of its cell 0 or 2 times. However far that goes, the mesh stays closed and manifold.
@@ -304,6 +389,8 @@ How the mesh follows changes depends on the implementation:
 
 With **Mesh Simplification** on, the mesh follows its settings without contouring, with any implementation: another detail shows at once, and another error or line weight simplifies the last contour again. Turning simplification on or off is a contour, and waits for **Contour** with a managed implementation. The line under **Contour** then also has the size of the mesh before it was simplified.
 
+With **Remeshing** on, a change to its settings remeshes the last mesh again without contouring, with any implementation, and so do turning it on and off and changing the technique. Another detail or error of the simplifier remeshes what it gives. The lines under **Contour** then also have the size of the mesh the remesh was given, the faces it made and how long it took, with a warning where it gave the mesh back as it came, or left lines of open edges or of edges of more than two triangles that the mesh it was given did not have.
+
 Nothing contours by itself while Unity is not the active application, where everything runs many times slower. The mesh is not saved with the scene, so a Burst or GPU variant contours when the scene opens, and a Managed one waits for **Contour**.
 
 ## Code layout
@@ -311,9 +398,9 @@ Each algorithm is one component, such as `AdaptiveDualContouring`. Its class is 
 
 | Folder | Contents |
 |---|---|
-| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, the dual marching cubes table, and the sums in doubles that every QEF works its error out from (`QEFError.cs`). `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. |
+| `Assets/Scripts` | The components, with their settings, the switch between implementations and their inspectors. Also everything the implementations share: the voxelizer, the volumes, the density function and surface extractor interfaces, the dual marching cubes table, and the sums in doubles that every QEF works its error out from (`QEFError.cs`). `DensityFunction.Frame` works out once how a shape is turned, and all three implementations take positions into the shape's frame with the numbers it gives. The nine volume components (`Cuboid.cs` to `HexagonalPrism.cs`), each with its distance function, are here, and `DensityFunction.sample` chooses between them for the managed code. The interactive editor (`InteractiveEditor.cs`, with its inspector and shape outlines) and the scheduler that decides when it contours (`RemeshScheduler.cs`) are here too, as is the wireframe (`Wireframe.cs`), whose shader is `Assets/Resources/Shaders/RenderContourWireframe.shader`. `MeshSimplification.cs` is what a voxelizer keeps of a simplified contour: the contour as it came and the collapses that simplify it. `Remeshing.cs` is what it keeps for remeshing, the mesh the pass was last given, with the switch between the techniques. |
 | `Assets/Scripts/Managed` | The managed implementations (`<Algorithm>.Managed.cs`) and what only they use: the QEF solvers, the octree with its tables and topology checks, and the density, intersection and normal functions. |
-| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. So is the pass that creases the normals of the managed and Burst implementations' meshes, `BurstCreases.cs`. |
+| `Assets/Scripts/Burst` | The Burst implementations (`<Algorithm>.Burst.cs`) and the Burst code they share: ports of the QEF solvers, density functions, tables and topology checks, and the native grid, octree and mesh data. The searches of Occupancy-Based Dual Contouring are in `BurstOccupancy.cs`. The mesh simplifier is here as well, for every implementation: `BurstMeshSimplifier.cs`, with the error quadrics it adds up in `BurstQuadric.cs`. So is the pass that creases the normals of the managed and Burst implementations' meshes, `BurstCreases.cs`. So are the remeshing techniques: `BurstIsotropic.cs` and `BurstFieldAligned.cs`, which reads its mesh off the fields of `BurstFields.cs`, and what they share: the feature skeleton (`BurstFeatures.cs`), the search for the nearest point of the mesh given (`BurstSurfaceGrid.cs`), the split into sheets (`BurstSheets.cs`), and the lengths, faces and normals out (`BurstRemeshing.cs`). |
 | `Assets/Scripts/GPU` | The GPU implementations of Uniform and Occupancy-Based Dual Contouring (`<Algorithm>.GPU.cs`), the mesh readback they share, the layout they upload density functions in and the number the shaders know each QEF solver by (`QEFSolver.GPU.cs`). The compute shaders are in `Assets/Resources/Shaders`, one for each algorithm, with the shape functions both use in `DensityFunctions.hlsl` and the QEF solves in `QEF.hlsl`. Both crease their normals with `GPUCreases.cs` and its shader, `CreaseNormals.compute`. |
 
 Code that only one implementation uses goes in that implementation's folder; code that several of them use stays in `Assets/Scripts`. `SurfaceExtractor`, `QEFSolver` and `DensityFunction` are partial interfaces for the same reason: their managed and GPU members sit in those folders, and their shared members sit in `Assets/Scripts`.
@@ -350,6 +437,8 @@ This project implements academic algorithms for dual contouring. Refer to the or
 - *Topology Preserving Edge Contraction* by Dey, Edelsbrunner, Guha and Nekhayev.
 - *Occupancy-Based Dual Contouring* by Hwang and Sung.
 - *Fast and Robust QEF Minimization using Probabilistic Quadrics* by Trettner and Kobbelt.
+- *A Remeshing Approach to Multiresolution Modeling* by Botsch and Kobbelt.
+- *Instant Field-Aligned Meshes* by Jakob, Tarini, Panozzo and Sorkine-Hornung.
 
 The linear solve of the probabilistic QEF solver (`ProbabilisticQEF.minimize`, `BurstQEF.minimizeProbabilistic` and `minimizeProbabilistic` in `QEF.hlsl`) is ported from `minimizer()` in the authors' [probabilistic-quadrics](https://github.com/Philip-Trettner/probabilistic-quadrics), under this licence:
 
@@ -362,3 +451,4 @@ The linear solve of the probabilistic QEF solver (`ProbabilisticQEF.minimize`, `
 > The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 >
 > THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+Where *Instant Field-Aligned Meshes* is silent, Field Aligned remeshing follows its authors' code, [Instant Meshes](https://github.com/wjakob/instant-meshes) (copyright 2015 Wenzel Jakob, Daniele Panozzo, Marco Tarini and Olga Sorkine-Hornung, under a BSD 3-clause licence). None of it is ported as a whole. What is taken from it is listed at the top of `BurstFields.cs` and `BurstFieldAligned.cs`, and in `Documents/Plans/Remeshing.md`.

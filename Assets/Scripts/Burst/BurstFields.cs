@@ -1459,11 +1459,13 @@ public static class BurstFields {
     // the seed of the fields' random start. Any other gives fields as good and not the same
     public const uint seed = 0x9E3779B9;
 
-    // a level of fewer vertices is smoothed by one worker
-    public const int smallLevel = 4096;
+    // a level of fewer vertices is smoothed by one worker. Smoothing a vertex is work enough that a few dozen of one
+    // colour are worth sharing out: at 64^3 a simplified mesh's fields took half the time at 256 and 4 as at 4,096 and
+    // 64, and every remesh came out the same (step 8)
+    public const int smallLevel = 256;
 
     // how many vertices of a colour a worker takes at a time
-    private const int vertexBatch = 64;
+    private const int vertexBatch = 4;
 
     // what the fields were made of, and how long each stage took
     public struct Report {
@@ -1529,7 +1531,7 @@ public static class BurstFields {
     private static readonly ProfilerMarker positionMarker    = new( "Remeshing.Fields.Position" );
 
     // the edges of the mesh the fields are on may be no longer than this: the smaller of half the edge length and
-    // twice the mean edge of the mesh (finding 11, the code)
+    // twice the mean edge of the mesh (finding 11, the code). A longer limit is quicker and leaves more holes (finding 31)
     public static double longestEdge( double length, double meanEdge ) {
         return math.min( length * 0.5, meanEdge * 2.0 );
     }

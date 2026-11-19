@@ -982,6 +982,15 @@ public class VoxelizerEditor : Editor {
         unused.Add( solver == QEFSolverType.Probabilistic ? "_minimizerIterations" : "_normalDeviation" );
     }
 
+    private void leaveOutRemeshingSettings( HashSet<string> unused ) {
+        var technique = ( Remeshing.Technique )this.serializedObject.FindProperty( nameof( Voxelizer.remeshing ) ).intValue;
+
+        if( technique != Remeshing.Technique.Isotropic ) {
+            unused.Add( nameof( Voxelizer.remeshingIterations ) );
+            unused.Add( nameof( Voxelizer.remeshingAreaIterations ) );
+        }
+    }
+
     public override void OnInspectorGUI( ) {
         this.serializedObject.Update( );
 
@@ -991,6 +1000,7 @@ public class VoxelizerEditor : Editor {
         var unused    = new HashSet<string>( this.unused ) { useCullingMasks };
 
         this.leaveOutSolverSettings( unused );
+        this.leaveOutRemeshingSettings( unused );
 
         // the properties come in the order their fields are declared, the voxelizer's before the subclass's
         var inSections = false;

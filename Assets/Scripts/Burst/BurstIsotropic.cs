@@ -414,29 +414,55 @@ public static class BurstIsotropic {
     // Its inherited input normal also has to agree: a nearer opposing sheet, or no reference within reach, refuses
     // the edit rather than letting successive edits turn the face away from the input.
     public static bool facesInput( in FeatureMesh mesh, in SurfaceGrid grid, int triangle, double3 a, double3 b, double3 c, double reach ) {
+        return facesInput( mesh.referenceNormals.AsArray( ), mesh.mesh.subMeshes.AsArray( ), grid, triangle, a, b, c, reach );
+    }
+
+    private static bool facesInput(
+        NativeArray<double3> referenceNormals, NativeArray<int> subMeshes, in SurfaceGrid grid, int triangle, double3 a, double3 b, double3 c, double reach
+    ) {
         var normal = math.cross( b - a, c - a );
 
-        return mesh.facesInput( triangle, normal ) &&
-               grid.nearestOnSurface( ( a + b + c ) / 3.0, mesh.mesh.subMeshes[triangle], reach, out _, out var source ) &&
-               math.dot( grid.normals[source], mesh.referenceNormals[triangle] ) > 0.0 &&
+        return math.dot( referenceNormals[triangle], normal ) > 0.0 &&
+               grid.nearestOnSurface( ( a + b + c ) / 3.0, subMeshes[triangle], reach, out _, out var source ) &&
+               math.dot( grid.normals[source], referenceNormals[triangle] ) > 0.0 &&
                math.dot( grid.normals[source], normal ) > 0.0;
     }
 
     // Check the current faces and fan as well as the immutable input, with earlier moves already applied.
     public static bool turnsOver( in FeatureMesh feature, in SurfaceGrid grid, int vertex, double3 position, double reach ) {
-        var mesh   = feature.mesh;
-        var normal = double3.zero;
+        var mesh = feature.mesh;
 
-        for( var corner = mesh.firstCorners[vertex]; corner != -1; corner = mesh.nextCorners[corner] ) {
-            normal += BurstFeatures.normalOf( mesh, corner / 3 );
+        return turnsOver(
+            mesh.positions.AsArray( ), mesh.firstCorners.AsArray( ), mesh.nextCorners.AsArray( ), mesh.triangles.AsArray( ), mesh.subMeshes.AsArray( ), feature.referenceNormals.AsArray( ),
+            grid, vertex, position, reach, default, default
+        );
+    }
+
+    // turnsOver with the vertices before this one that are to move taken at their targets, where targets are given: as
+    // the moves made one after another find it once each of those before it was made (GuessJob)
+    private static bool turnsOver(
+        NativeArray<double3> positions, NativeArray<int> firstCorners, NativeArray<int> nextCorners, NativeArray<int3> triangles, NativeArray<int> subMeshes, NativeArray<double3> referenceNormals,
+        in SurfaceGrid grid, int vertex, double3 position, double reach, NativeArray<double3> targets, NativeArray<byte> moves
+    ) {
+        var guessed = targets.IsCreated;
+        var normal  = double3.zero;
+
+        for( var corner = firstCorners[vertex]; corner != -1; corner = nextCorners[corner] ) {
+            var corners = triangles[corner / 3];
+
+            var p0 = guessed ? at( positions, targets, moves, vertex, corners.x ) : positions[corners.x];
+            var p1 = guessed ? at( positions, targets, moves, vertex, corners.y ) : positions[corners.y];
+            var p2 = guessed ? at( positions, targets, moves, vertex, corners.z ) : positions[corners.z];
+
+            normal += math.cross( p1 - p0, p2 - p0 );
         }
 
-        for( var corner = mesh.firstCorners[vertex]; corner != -1; corner = mesh.nextCorners[corner] ) {
-            var corners = mesh.triangles[corner / 3];
+        for( var corner = firstCorners[vertex]; corner != -1; corner = nextCorners[corner] ) {
+            var corners = triangles[corner / 3];
 
-            var p0 = mesh.positions[corners.x];
-            var p1 = mesh.positions[corners.y];
-            var p2 = mesh.positions[corners.z];
+            var p0 = guessed ? at( positions, targets, moves, vertex, corners.x ) : positions[corners.x];
+            var p1 = guessed ? at( positions, targets, moves, vertex, corners.y ) : positions[corners.y];
+            var p2 = guessed ? at( positions, targets, moves, vertex, corners.z ) : positions[corners.z];
 
             var before = math.cross( p1 - p0, p2 - p0 );
 
@@ -447,11 +473,16 @@ public static class BurstIsotropic {
             var after = math.cross( p1 - p0, p2 - p0 );
 
             if( !( math.dot( before, after ) > 0.0 ) || !( math.dot( normal, after ) > 0.0 ) ||
-                !facesInput( feature, grid, corner / 3, p0, p1, p2, reach ) ) {
+                !facesInput( referenceNormals, subMeshes, grid, corner / 3, p0, p1, p2, reach ) ) {
                 return true;
             }
         }
         return false;
+    }
+
+    // where a vertex is when the moves before one vertex's have all been made
+    private static double3 at( NativeArray<double3> positions, NativeArray<double3> targets, NativeArray<byte> moves, int vertex, int other ) {
+        return other < vertex && moves[other] == Moves ? targets[other] : positions[other];
     }
 
     public static double lengthOf( in FeatureMesh mesh, int edge ) {
@@ -1095,7 +1126,8 @@ public static class BurstIsotropic {
     }
 
     // the moves of a round, made one vertex after another in their order: each where it turns none of the vertex's
-    // triangles over (turnsOver), with its neighbours where they are by then
+    // triangles over (turnsOver), with its neighbours where they are by then. That is GuessJob's answer, unless a move
+    // before it that the guess took as made was refused
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     public struct ApplyJob : IJob {
 
@@ -1105,6 +1137,10 @@ public static class BurstIsotropic {
 
         [ReadOnly] public NativeArray<double3> targets;
         [ReadOnly] public NativeArray<byte>    moves;
+        [ReadOnly] public NativeArray<bool>    guesses;
+
+        // the moves refused so far, all false to begin with
+        public NativeArray<bool> refused;
 
         // three, added to: moved, unplaced, held
         public NativeArray<int> counts;
@@ -1117,7 +1153,9 @@ public static class BurstIsotropic {
                 if( this.moves[vertex] != Moves ) {
                     continue;
                 }
-                if( turnsOver( this.mesh, this.grid, vertex, this.targets[vertex], this.reach ) ) {
+                if( this.refusedBefore( vertex ) ? turnsOver( this.mesh, this.grid, vertex, this.targets[vertex], this.reach ) : this.guesses[vertex] ) {
+                    this.refused[vertex] = true;
+
                     ++this.counts[2];
 
                     continue;
@@ -1127,6 +1165,47 @@ public static class BurstIsotropic {
 
                 ++this.counts[0];
             }
+        }
+
+        // whether a vertex of one of this vertex's triangles before it was to move and did not, which its guess took it
+        // to have done
+        private readonly bool refusedBefore( int vertex ) {
+            for( var corner = this.mesh.mesh.firstCorners[vertex]; corner != -1; corner = this.mesh.mesh.nextCorners[corner] ) {
+                var corners = this.mesh.mesh.triangles[corner / 3];
+
+                if( ( corners.x < vertex && this.refused[corners.x] ) || ( corners.y < vertex && this.refused[corners.y] ) || ( corners.z < vertex && this.refused[corners.z] ) ) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+    }
+
+    // whether each move would turn a triangle over as ApplyJob makes them, one after another in the order of the
+    // vertices, on the guess that every move before it was made (turnsOver). The searches of the input are most of a
+    // round's time, and this way they are made in parallel. Moves are seldom refused, and ApplyJob looks again only at
+    // a vertex where one before it in a triangle of its was, so the moves made are the same as without the guesses
+    [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
+    public struct GuessJob : IJobParallelFor {
+
+        public SurfaceGrid grid;
+        public double      reach;
+
+        [ReadOnly] public NativeArray<double3> positions;
+        [ReadOnly] public NativeArray<int>     firstCorners;
+        [ReadOnly] public NativeArray<int>     nextCorners;
+        [ReadOnly] public NativeArray<int3>    triangles;
+        [ReadOnly] public NativeArray<int>     subMeshes;
+        [ReadOnly] public NativeArray<double3> referenceNormals;
+        [ReadOnly] public NativeArray<double3> targets;
+        [ReadOnly] public NativeArray<byte>    moves;
+
+        [WriteOnly] public NativeArray<bool> guesses;
+
+        public void Execute( int vertex ) {
+            this.guesses[vertex] = this.moves[vertex] == Moves &&
+                turnsOver( this.positions, this.firstCorners, this.nextCorners, this.triangles, this.subMeshes, this.referenceNormals, this.grid, vertex, this.targets[vertex], this.reach, this.targets, this.moves );
         }
 
     }
@@ -1249,6 +1328,10 @@ public static class BurstIsotropic {
 
     // how many vertices a worker takes at a time in the smoothing
     private const int vertexBatch = 128;
+
+    // how many vertices a worker guesses the moves of at a time (GuessJob): each is a search of the input for each of
+    // its triangles
+    private const int guessBatch = 16;
 
     // remeshes a mesh of shared vertices into the lists, which are the caller's: the loop of section 4 for the set
     // number of iterations, then the rounds that equalize areas, on the mesh with its features and against the grid of
@@ -1427,7 +1510,24 @@ public static class BurstIsotropic {
             moves         = moves
         }.Schedule( vertexCount, vertexBatch ).Complete( );
 
-        new ApplyJob { mesh = mesh, grid = grid, reach = reach, targets = targets, moves = moves, counts = counts }.Run( );
+        using var guesses = new NativeArray<bool>( vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var refused = new NativeArray<bool>( vertexCount, Allocator.TempJob );
+
+        new GuessJob {
+            grid             = grid,
+            reach            = reach,
+            positions        = mesh.mesh.positions.AsArray( ),
+            firstCorners     = mesh.mesh.firstCorners.AsArray( ),
+            nextCorners      = mesh.mesh.nextCorners.AsArray( ),
+            triangles        = mesh.mesh.triangles.AsArray( ),
+            subMeshes        = mesh.mesh.subMeshes.AsArray( ),
+            referenceNormals = mesh.referenceNormals.AsArray( ),
+            targets          = targets,
+            moves            = moves,
+            guesses          = guesses
+        }.Schedule( vertexCount, guessBatch ).Complete( );
+
+        new ApplyJob { mesh = mesh, grid = grid, reach = reach, targets = targets, moves = moves, guesses = guesses, refused = refused, counts = counts }.Run( );
 
         report.moves    += counts[0];
         report.unplaced += counts[1];
