@@ -8,7 +8,7 @@ using Unity.Profiling;
 using Sharp    = BurstMeshSimplifier.Sharp;
 using Symmetry = BurstFields.Symmetry;
 
-// Field Aligned (Documents/Plans/Remeshing.md, step 5): the mesh read off the two fields of Instant Field-Aligned Meshes
+// Instant Meshes (Documents/Plans/Remeshing.md, step 5): the mesh read off the two fields of Instant Field-Aligned Meshes
 // (Jakob, Tarini, Panozzo and Sorkine-Hornung, section 3.8), which BurstFields solves on the mesh a remesh is given.
 // Two neighbours of the mesh the fields are on whose lattice points are one point become one vertex, nearest first,
 // and two whose lattice points are a step apart are joined by an edge; the faces are walked round the edges, cut down
@@ -21,7 +21,7 @@ using Symmetry = BurstFields.Symmetry;
 // every vertex put back on the input before its faces are found, faces of triangles and pentagons kept as polygons where
 // the code makes fans of them, quads only by splitting each face round its middle, no face from a walk that comes round
 // to a vertex twice or round the rim of an open mesh, materials by area, and the normals out as Isotropic gives them
-public static class BurstFieldAligned {
+public static class BurstInstantMeshes {
 
     // the faces of the mesh: triangles; quads with triangles and pentagons where rows of faces begin and end; or quads
     // only, from the faces of the second at twice the length, each split into quads round its middle (figure 1)
@@ -1705,10 +1705,10 @@ public static class BurstFieldAligned {
 
     // ---- the whole ----
 
-    private static readonly ProfilerMarker extractionMarker = new( "Remeshing.FieldAligned.Extraction" );
-    private static readonly ProfilerMarker facesMarker      = new( "Remeshing.FieldAligned.Faces" );
-    private static readonly ProfilerMarker smoothMarker     = new( "Remeshing.FieldAligned.Smooth" );
-    private static readonly ProfilerMarker outputMarker     = new( "Remeshing.FieldAligned.Output" );
+    private static readonly ProfilerMarker extractionMarker = new( "Remeshing.InstantMeshes.Extraction" );
+    private static readonly ProfilerMarker facesMarker      = new( "Remeshing.InstantMeshes.Faces" );
+    private static readonly ProfilerMarker smoothMarker     = new( "Remeshing.InstantMeshes.Smooth" );
+    private static readonly ProfilerMarker outputMarker     = new( "Remeshing.InstantMeshes.Output" );
 
     // how many vertices a worker takes at a time
     private const int vertexBatch = 128;

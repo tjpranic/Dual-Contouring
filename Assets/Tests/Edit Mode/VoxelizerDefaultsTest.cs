@@ -37,7 +37,7 @@ public class VoxelizerDefaultsTest {
             Assert.AreEqual( 40.0f,                   voxelizer.remeshingFeatureAngle,   "remeshing feature angle" );
             Assert.AreEqual( 5,                       voxelizer.remeshingIterations,     "remeshing iterations" );
             Assert.AreEqual( 5,                       voxelizer.remeshingAreaIterations, "remeshing area iterations" );
-            Assert.AreEqual( BurstFieldAligned.Faces.QuadDominant, voxelizer.remeshingFaces, "remeshing faces" );
+            Assert.AreEqual( BurstInstantMeshes.Faces.QuadDominant, voxelizer.remeshingFaces, "remeshing faces" );
             Assert.AreEqual( Remeshing.Normals.Input, voxelizer.remeshingNormals,        "remeshing normals" );
 
             Assert.AreEqual( Wireframe.Look.Off, voxelizer.wireframe,          "wireframe" );

@@ -7,16 +7,16 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 
-using Faces    = BurstFieldAligned.Faces;
-using Graph    = BurstFieldAligned.Graph;
+using Faces    = BurstInstantMeshes.Faces;
+using Graph    = BurstInstantMeshes.Graph;
 using Sharp    = BurstMeshSimplifier.Sharp;
 using Symmetry = BurstFields.Symmetry;
 
-// Field Aligned's mesh (BurstFieldAligned; Documents/Plans/Remeshing.md, step 5): the parts of the extraction on graphs
+// Instant Meshes' mesh (BurstInstantMeshes; Documents/Plans/Remeshing.md, step 5): the parts of the extraction on graphs
 // built by hand, each against what it is to do, and the whole on meshes whose remesh is known in closed form: a flat
 // square and a flat triangle give their lattices, a box along the axes its rows of quads, a band of a second material
 // its lines. Every job runs compiled by Burst
-public class BurstFieldAlignedTest {
+public class BurstInstantMeshesTest {
 
     private static readonly double featureCosine = math.cos( math.radians( 40.0 ) );
 
@@ -25,20 +25,20 @@ public class BurstFieldAlignedTest {
     [Test]
     public void aStepIsToANeighbourOfTheLattice( ) {
         foreach( var steps in new[] { new int2( 1, 0 ), new int2( 0, 1 ), new int2( -1, 0 ), new int2( 0, -1 ) } ) {
-            Assert.IsTrue( BurstFieldAligned.isStep( steps, Symmetry.Quads ),     $"{steps} for squares" );
-            Assert.IsTrue( BurstFieldAligned.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
+            Assert.IsTrue( BurstInstantMeshes.isStep( steps, Symmetry.Quads ),     $"{steps} for squares" );
+            Assert.IsTrue( BurstInstantMeshes.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
         }
 
         // the third side of a triangle of the lattice, which for squares is a diagonal
         foreach( var steps in new[] { new int2( 1, -1 ), new int2( -1, 1 ) } ) {
-            Assert.IsFalse( BurstFieldAligned.isStep( steps, Symmetry.Quads ),    $"{steps} for squares" );
-            Assert.IsTrue( BurstFieldAligned.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
+            Assert.IsFalse( BurstInstantMeshes.isStep( steps, Symmetry.Quads ),    $"{steps} for squares" );
+            Assert.IsTrue( BurstInstantMeshes.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
         }
 
         // a diagonal, the height of two triangles away, and further, and none
         foreach( var steps in new[] { new int2( 1, 1 ), new int2( -1, -1 ), new int2( 2, 0 ), new int2( 2, -1 ), int2.zero } ) {
-            Assert.IsFalse( BurstFieldAligned.isStep( steps, Symmetry.Quads ),     $"{steps} for squares" );
-            Assert.IsFalse( BurstFieldAligned.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
+            Assert.IsFalse( BurstInstantMeshes.isStep( steps, Symmetry.Quads ),     $"{steps} for squares" );
+            Assert.IsFalse( BurstInstantMeshes.isStep( steps, Symmetry.Triangles ), $"{steps} for triangles" );
         }
     }
 
@@ -61,7 +61,7 @@ public class BurstFieldAlignedTest {
         using var positions = new NativeArray<double3>( corners, Allocator.TempJob );
         using var indices   = new NativeArray<int>( Enumerable.Range( 0, corners.Length ).ToArray( ), Allocator.TempJob );
 
-        return BurstFieldAligned.fanOf( positions, indices, 0, corners.Length );
+        return BurstInstantMeshes.fanOf( positions, indices, 0, corners.Length );
     }
 
     [Test]
@@ -99,14 +99,14 @@ public class BurstFieldAlignedTest {
 
     [Test]
     public void theFlagsOfAFanAreTheEdgesOfItsPolygon( ) {
-        Assert.AreEqual( BurstRemeshing.allEdges, BurstFieldAligned.flagsOf( 1, 3 ), "a triangle" );
+        Assert.AreEqual( BurstRemeshing.allEdges, BurstInstantMeshes.flagsOf( 1, 3 ), "a triangle" );
 
-        Assert.AreEqual( 0b011, BurstFieldAligned.flagsOf( 1, 4 ), "a quad's first triangle" );
-        Assert.AreEqual( 0b110, BurstFieldAligned.flagsOf( 2, 4 ), "a quad's second triangle" );
+        Assert.AreEqual( 0b011, BurstInstantMeshes.flagsOf( 1, 4 ), "a quad's first triangle" );
+        Assert.AreEqual( 0b110, BurstInstantMeshes.flagsOf( 2, 4 ), "a quad's second triangle" );
 
-        Assert.AreEqual( 0b011, BurstFieldAligned.flagsOf( 1, 5 ), "a pentagon's first triangle" );
-        Assert.AreEqual( 0b010, BurstFieldAligned.flagsOf( 2, 5 ), "a pentagon's middle triangle" );
-        Assert.AreEqual( 0b110, BurstFieldAligned.flagsOf( 3, 5 ), "a pentagon's last triangle" );
+        Assert.AreEqual( 0b011, BurstInstantMeshes.flagsOf( 1, 5 ), "a pentagon's first triangle" );
+        Assert.AreEqual( 0b010, BurstInstantMeshes.flagsOf( 2, 5 ), "a pentagon's middle triangle" );
+        Assert.AreEqual( 0b110, BurstInstantMeshes.flagsOf( 3, 5 ), "a pentagon's last triangle" );
     }
 
     // the polygons the flags of triangles make: the triangles joined across edges that both leave out, and each face's
@@ -208,7 +208,7 @@ public class BurstFieldAlignedTest {
         using var triangles      = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
         using var flags          = new NativeList<byte>( Allocator.TempJob );
 
-        new BurstFieldAligned.WriteJob {
+        new BurstInstantMeshes.WriteJob {
             graphPositions = graphPositions, polygonStarts = starts, polygonCorners = corners, polygonFaces = faces, faceSubMeshes = subMeshes, positions = written, ownNormals = own, triangles = triangles, flags = flags
         }.Run( );
 
@@ -253,7 +253,7 @@ public class BurstFieldAlignedTest {
 
             foreach( var ( a, b, kind, distance ) in given ) {
                 lists[a].Add( ( b, kind, distance ) );
-                lists[b].Add( ( a, BurstFieldAligned.Apart, 0.0f ) );
+                lists[b].Add( ( a, BurstInstantMeshes.Apart, 0.0f ) );
             }
 
             var starts = new List<int> { 0 };
@@ -315,7 +315,7 @@ public class BurstFieldAlignedTest {
             using var clusters = new NativeArray<int>( this.positions.Length, Allocator.TempJob );
             using var numbers  = new NativeArray<int>( 6, Allocator.TempJob );
 
-            new BurstFieldAligned.ClusterJob {
+            new BurstInstantMeshes.ClusterJob {
                 positions   = this.positions,
                 normals     = this.normals,
                 lattice     = this.lattice,
@@ -356,9 +356,9 @@ public class BurstFieldAlignedTest {
         return neighbours;
     }
 
-    private const byte Apart = BurstFieldAligned.Apart;
-    private const byte Same  = BurstFieldAligned.Same;
-    private const byte Step  = BurstFieldAligned.Step;
+    private const byte Apart = BurstInstantMeshes.Apart;
+    private const byte Same  = BurstInstantMeshes.Same;
+    private const byte Step  = BurstInstantMeshes.Step;
 
     // vertices whose lattice points are one merge, the nearest first; but two already joined by an edge whose lattice
     // points are a step apart stay apart (section 3.8)
@@ -471,7 +471,7 @@ public class BurstFieldAlignedTest {
     private static int[] snap( Graph graph, double rho, bool quads ) {
         using var counts = new NativeArray<int>( 4, Allocator.TempJob );
 
-        new BurstFieldAligned.SnapJob { graph = graph, rho = rho, quads = quads, counts = counts }.Run( );
+        new BurstInstantMeshes.SnapJob { graph = graph, rho = rho, quads = quads, counts = counts }.Run( );
 
         return counts.ToArray( );
     }
@@ -544,7 +544,7 @@ public class BurstFieldAlignedTest {
         public Walked( Graph graph, Faces faces ) {
             using var numbers = new NativeArray<int>( 8, Allocator.TempJob );
 
-            new BurstFieldAligned.FacesJob {
+            new BurstInstantMeshes.FacesJob {
                 graph = graph, faces = faces, rimStarts = this.rimStarts, rim = this.rim, rimAngles = this.rimAngles, rimFaces = this.rimFaces,
                 polygonStarts = this.polygonStarts, polygonCorners = this.polygonCorners, polygonFaces = this.polygonFaces, counts = numbers
             }.Run( );
@@ -727,7 +727,7 @@ public class BurstFieldAlignedTest {
                 var at     = new double3( ring[( first + corner ) % 6], 0 );
                 var after  = new double3( ring[( first + ( ( corner + 1 ) % 4 ) ) % 6], 0 );
 
-                score += math.abs( math.degrees( BurstFieldAligned.angleBetween( before - at, after - at ) ) - 90.0 );
+                score += math.abs( math.degrees( BurstInstantMeshes.angleBetween( before - at, after - at ) ) - 90.0 );
             }
 
             return score;
@@ -770,7 +770,7 @@ public class BurstFieldAlignedTest {
 
     // ---- the whole ----
 
-    // a mesh remeshed straight by BurstFieldAligned, with the faces its flags make
+    // a mesh remeshed straight by BurstInstantMeshes, with the faces its flags make
     private sealed class Remeshed {
 
         public readonly double3[]            positions;
@@ -779,9 +779,9 @@ public class BurstFieldAlignedTest {
         public readonly byte[]               flags;
         public readonly List<int[]>          polygons;
 
-        public BurstFieldAligned.Report report;
+        public BurstInstantMeshes.Report report;
 
-        public Remeshed( HandBuiltMesh built, BurstFieldAligned.Settings settings, double cornerAngle = 0.0 ) {
+        public Remeshed( HandBuiltMesh built, BurstInstantMeshes.Settings settings, double cornerAngle = 0.0 ) {
             using var positions     = built.nativePositions( );
             using var normals       = built.nativeNormals( );
             using var triangles     = built.nativeTriangles( );
@@ -791,7 +791,7 @@ public class BurstFieldAlignedTest {
             using var outTriangles  = new NativeList<BurstMesh.Triangle>( Allocator.TempJob );
             using var outFlags      = new NativeList<byte>( Allocator.TempJob );
 
-            BurstFieldAligned.remesh( positions, normals, triangles, cornerNormals, settings, outPositions, outNormals, outTriangles, outFlags, out this.report );
+            BurstInstantMeshes.remesh( positions, normals, triangles, cornerNormals, settings, outPositions, outNormals, outTriangles, outFlags, out this.report );
 
             this.positions = outPositions.AsArray( ).Select( ( position ) => ( double3 )position ).ToArray( );
             this.normals   = outNormals.AsArray( ).Select( ( normal ) => ( double3 )normal ).ToArray( );
@@ -838,8 +838,8 @@ public class BurstFieldAlignedTest {
 
     }
 
-    private static BurstFieldAligned.Settings settingsOf( Faces faces, double length ) {
-        return new BurstFieldAligned.Settings { faces = faces, length = length, featureCosine = featureCosine };
+    private static BurstInstantMeshes.Settings settingsOf( Faces faces, double length ) {
+        return new BurstInstantMeshes.Settings { faces = faces, length = length, featureCosine = featureCosine };
     }
 
     // a point that is a whole number of lengths along each axis
@@ -874,8 +874,8 @@ public class BurstFieldAlignedTest {
 
         // two rounds of smoothing (the code), each of which moves every vertex off the rim, which is held: to where
         // it is, as the middle of its neighbours is
-        Assert.AreEqual( BurstFieldAligned.smoothingRounds * ( side - 2 ) * ( side - 2 ), remeshed.report.moves, "moves" );
-        Assert.AreEqual( 2, BurstFieldAligned.smoothingRounds, "rounds of smoothing" );
+        Assert.AreEqual( BurstInstantMeshes.smoothingRounds * ( side - 2 ) * ( side - 2 ), remeshed.report.moves, "moves" );
+        Assert.AreEqual( 2, BurstInstantMeshes.smoothingRounds, "rounds of smoothing" );
     }
 
     // a flat triangle of equal sides, of so many small ones a side, its rim open
@@ -1055,7 +1055,7 @@ public class BurstFieldAlignedTest {
 
         using var inputPositions = new NativeArray<float3>( new[] { new float3( 0, 0, 0 ), new float3( 1, 0, 0 ), new float3( 1, 1, 0 ), new float3( 0, 1, 0 ) }, Allocator.TempJob );
         using var inputTriangles = new NativeArray<BurstMesh.Triangle>( new[] { new BurstMesh.Triangle( 0, 1, 2, firstInput ), new BurstMesh.Triangle( 0, 2, 3, secondInput ) }, Allocator.TempJob );
-        using var grid           = BurstFieldAligned.gridOf( inputPositions, inputTriangles, Allocator.TempJob );
+        using var grid           = BurstInstantMeshes.gridOf( inputPositions, inputTriangles, Allocator.TempJob );
 
         using var positions = new NativeArray<double3>( corners, Allocator.TempJob );
         using var triangles = new NativeArray<int3>( new[] { new int3( 0, 1, 2 ) }, Allocator.TempJob );
@@ -1064,7 +1064,7 @@ public class BurstFieldAlignedTest {
         using var faces     = new NativeArray<int>( 2, Allocator.TempJob );
         using var unmapped  = new NativeArray<int>( 1, Allocator.TempJob );
 
-        new BurstFieldAligned.MaterialsJob {
+        new BurstInstantMeshes.MaterialsJob {
             graph          = graph,
             rimStarts      = walked.rimStarts.AsArray( ),
             rimAngles      = walked.rimAngles.AsArray( ),

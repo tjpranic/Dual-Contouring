@@ -19,8 +19,8 @@ public class Remeshing {
         Isotropic = 1,
 
         // triangles, or mostly quads, or only quads, in rows that follow the shape's edges and curvature
-        // (BurstFieldAligned)
-        FieldAligned = 2
+        // (BurstInstantMeshes)
+        InstantMeshes = 2
     }
 
     // where the normals of a remeshed mesh come from, which its creasing or splitting then starts from (finding 21,
@@ -36,21 +36,21 @@ public class Remeshing {
 
     // how a mesh is remeshed: the technique, the edge length against the mesh's own (decision 9), and what the
     // techniques take besides: among it the normals out, the crease angle the input is shown at for Normals.Input, and
-    // the faces Field Aligned makes
+    // the faces Instant Meshes makes
     public readonly struct Settings {
 
-        public readonly Technique              technique;
-        public readonly float                  edgeLength;
-        public readonly float                  featureAngle;   // degrees
-        public readonly int                    iterations;
-        public readonly int                    areaIterations;
-        public readonly Normals                normals;
-        public readonly float                  creaseAngle;    // degrees
-        public readonly BurstFieldAligned.Faces faces;
+        public readonly Technique                technique;
+        public readonly float                    edgeLength;
+        public readonly float                    featureAngle;   // degrees
+        public readonly int                      iterations;
+        public readonly int                      areaIterations;
+        public readonly Normals                  normals;
+        public readonly float                    creaseAngle;    // degrees
+        public readonly BurstInstantMeshes.Faces faces;
 
         public Settings(
             Technique technique, float edgeLength, float featureAngle = 40.0f, int iterations = 5, int areaIterations = 5, Normals normals = Normals.Input, float creaseAngle = 40.0f,
-            BurstFieldAligned.Faces faces = BurstFieldAligned.Faces.QuadDominant
+            BurstInstantMeshes.Faces faces = BurstInstantMeshes.Faces.QuadDominant
         ) {
             this.technique      = technique;
             this.edgeLength     = edgeLength;
@@ -68,7 +68,7 @@ public class Remeshing {
     // vertices take about half a gigabyte in the lists
     public const int mostVertices = 1 << 20;
 
-    // the most vertices the mesh Field Aligned's fields are on may have, which is the mesh given with its edges split
+    // the most vertices the mesh Instant Meshes' fields are on may have, which is the mesh given with its edges split
     // to half the edge length: about twelve times the vertices out (finding 24). Two million take about a gigabyte in
     // the lists and the hierarchy
     public const int mostFieldVertices = 1 << 21;
@@ -102,15 +102,15 @@ public class Remeshing {
         // what Isotropic did, stage by stage, where it remeshed
         public readonly BurstIsotropic.Report? isotropic;
 
-        // what Field Aligned did, stage by stage, where it got as far as solving its fields
-        public readonly BurstFieldAligned.Report? fieldAligned;
+        // what Instant Meshes did, stage by stage, where it got as far as solving its fields
+        public readonly BurstInstantMeshes.Report? instantMeshes;
 
         public Statistics(
             Technique technique, double milliseconds, int inputVertexCount, int inputTriangleCount, double edgeLength, int triangles, int quads, int largerFaces, int newOpenLines,
-            int newNonManifoldLines, string gaveUp, BurstIsotropic.Report? isotropic = null, BurstFieldAligned.Report? fieldAligned = null
+            int newNonManifoldLines, string gaveUp, BurstIsotropic.Report? isotropic = null, BurstInstantMeshes.Report? instantMeshes = null
         ) {
             this.isotropic           = isotropic;
-            this.fieldAligned        = fieldAligned;
+            this.instantMeshes       = instantMeshes;
             this.technique           = technique;
             this.milliseconds        = milliseconds;
             this.inputVertexCount    = inputVertexCount;
@@ -161,15 +161,15 @@ public class Remeshing {
         }
     }
 
-    // the faces a technique makes, which its edge length is worked out for: Isotropic's triangles, and Field Aligned's
+    // the faces a technique makes, which its edge length is worked out for: Isotropic's triangles, and Instant Meshes'
     // triangles or quads, which quads with a few triangles and pentagons among them count as
-    public static BurstRemeshing.Faces facesOf( Technique technique, BurstFieldAligned.Faces faces = BurstFieldAligned.Faces.QuadDominant ) {
-        return technique == Technique.FieldAligned && faces != BurstFieldAligned.Faces.Triangles ? BurstRemeshing.Faces.Quads : BurstRemeshing.Faces.Triangles;
+    public static BurstRemeshing.Faces facesOf( Technique technique, BurstInstantMeshes.Faces faces = BurstInstantMeshes.Faces.QuadDominant ) {
+        return technique == Technique.InstantMeshes && faces != BurstInstantMeshes.Faces.Triangles ? BurstRemeshing.Faces.Quads : BurstRemeshing.Faces.Triangles;
     }
 
     // the length of the edges a technique makes at an edge length, in the units of the mesh: the setting times the length
     // at which its faces would be as many vertices as the mesh has (decision 9)
-    public double lengthOf( Technique technique, float edgeLength, BurstFieldAligned.Faces faces = BurstFieldAligned.Faces.QuadDominant ) {
+    public double lengthOf( Technique technique, float edgeLength, BurstInstantMeshes.Faces faces = BurstInstantMeshes.Faces.QuadDominant ) {
         using var positions = new NativeArray<float3>( this.positions, Allocator.TempJob );
         using var triangles = new NativeArray<BurstMesh.Triangle>( this.triangles, Allocator.TempJob );
 
@@ -222,11 +222,11 @@ public class Remeshing {
         var length = settings.edgeLength * BurstRemeshing.lengthOf( this.area, this.usedVertexCount, kind );
 
         Mesh                       mesh;
-        string                     gaveUp = null;
+        string                     gaveUp  = null;
         BurstRemeshing.Topology    topology;
         BurstRemeshing.FaceCounts  faces;
         BurstIsotropic.Report?     report  = null;
-        BurstFieldAligned.Report?  aligned = null;
+        BurstInstantMeshes.Report? instant = null;
 
         // the mesh as it came, every triangle a face, where a technique gives up
         void asItCame( out Mesh given, out byte[] noFlags, out BurstRemeshing.Topology itsTopology, out BurstRemeshing.FaceCounts itsFaces ) {
@@ -284,7 +284,7 @@ public class Remeshing {
 
                 break;
             }
-            case Technique.FieldAligned: {
+            case Technique.InstantMeshes: {
                 gaveUp = this.tooManyVertices( length, kind );
 
                 if( gaveUp != null ) {
@@ -300,12 +300,12 @@ public class Remeshing {
                     ? BurstRemeshing.cornerNormalsOf( positions, normals, triangles, settings.creaseAngle, Allocator.TempJob )
                     : new NativeArray<float3>( 0, Allocator.TempJob );
 
-                BurstFieldAligned.remesh(
+                BurstInstantMeshes.remesh(
                     positions,
                     normals,
                     triangles,
                     cornerNormals,
-                    new BurstFieldAligned.Settings {
+                    new BurstInstantMeshes.Settings {
                         faces         = settings.faces,
                         length        = length,
                         featureCosine = math.cos( math.radians( ( double )settings.featureAngle ) ),
@@ -316,12 +316,12 @@ public class Remeshing {
                     outNormals,
                     outTriangles,
                     outFlags,
-                    out var fieldAligned
+                    out var instantMeshes
                 );
 
-                aligned = fieldAligned;
+                instant = instantMeshes;
 
-                if( fieldAligned.fields.tooLarge ) {
+                if( instantMeshes.fields.tooLarge ) {
                     gaveUp = $"edges of {length / this.cellSize:G3} cells would put the fields on more than {mostFieldVertices:N0} vertices";
                 }
                 else if( outTriangles.Length == 0 ) {
@@ -358,7 +358,7 @@ public class Remeshing {
             Math.Max( 0, topology.nonManifoldLines - this.topology.nonManifoldLines ),
             gaveUp,
             report,
-            aligned
+            instant
         );
 
         return mesh;

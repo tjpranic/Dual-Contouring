@@ -15,7 +15,7 @@ using QEFSolverType      = QEFSolver.Type;
 // the frame the remeshing techniques go into (Documents/Plans/Remeshing.md, step 1), through Voxelizer.contour,
 // simplify and remesh: which meshes are kept for remeshing, that a remesh is what a fresh contour under the same
 // settings shows, and that the flags of the faces follow the mesh through creasing, splitting and reordering, for every
-// algorithm and implementation. Field Aligned stands for the techniques where any will do, since it makes quads
+// algorithm and implementation. Instant Meshes stands for the techniques where any will do, since it makes quads
 public class RemeshingTest : TopologyTest {
 
     public enum Algorithm {
@@ -76,7 +76,7 @@ public class RemeshingTest : TopologyTest {
     // 16^3 cells for the uniform grids, 16^3 leaves for the octrees
     private const int resolution = 4;
 
-    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased, Remeshing.Technique technique = Remeshing.Technique.FieldAligned ) {
+    private Voxelizer create( Variant variant, IEnumerable<Shape> shapes, VertexNormals normals = VertexNormals.Creased, Remeshing.Technique technique = Remeshing.Technique.InstantMeshes ) {
         Voxelizer voxelizer = variant.algorithm switch {
             Algorithm.Uniform   => this.createVoxelizer<UniformDualContouring>  ( resolution,     QEFSolverType.SVD, shapes ),
             Algorithm.Adaptive  => this.createVoxelizer<AdaptiveDualContouring> ( resolution + 1, QEFSolverType.SVD, shapes ),
@@ -244,7 +244,7 @@ public class RemeshingTest : TopologyTest {
 
     // ---- a technique through the frame ----
 
-    // Field Aligned's faces through the frame: the flags of the mesh shown make the faces the remesh says it made, as
+    // Instant Meshes' faces through the frame: the flags of the mesh shown make the faces the remesh says it made, as
     // the mesh is shown, creased or split, its vertices reordered or not, of one material or two. A GPU contour is read
     // back to be remeshed. Its faces are quads, with triangles and pentagons among them
     [Test]
@@ -261,8 +261,8 @@ public class RemeshingTest : TopologyTest {
         var remeshing = statistics.remeshing.Value;
 
         Assert.IsNull( remeshing.gaveUp, "gave up" );
-        Assert.AreEqual( Remeshing.Technique.FieldAligned, remeshing.technique );
-        Assert.IsTrue( remeshing.fieldAligned.HasValue, "what Field Aligned did" );
+        Assert.AreEqual( Remeshing.Technique.InstantMeshes, remeshing.technique );
+        Assert.IsTrue( remeshing.instantMeshes.HasValue, "what Instant Meshes did" );
 
         var faces = countsOf( mesh, voxelizer.shownEdgeFlags );
 
@@ -345,7 +345,7 @@ public class RemeshingTest : TopologyTest {
             Assert.AreEqual( HideFlags.DontSaveInEditor | HideFlags.DontSaveInBuild, shown( voxelizer ).hideFlags, $"{what}: the mesh is not saved with the scene" );
         }
 
-        voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         assertShowsWhatAFreshContourShows( "turned on" );
 
@@ -420,7 +420,7 @@ public class RemeshingTest : TopologyTest {
         Assert.IsNull( shown( voxelizer ), "drawn straight from the GPU" );
         Assert.IsFalse( voxelizer.remesh( ).HasValue, "after a contour drawn straight from the GPU" );
 
-        voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         Assert.AreEqual( ContourVertices.Shared, voxelizer.contourVertices, "asked for with remeshing on" );
 
@@ -492,7 +492,7 @@ public class RemeshingTest : TopologyTest {
     // split, a mesh has three vertices for every triangle, which passes 65,535 at 21,845 triangles. The flags still
     // follow its triangles
     [Test]
-    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( [Values( Remeshing.Technique.FieldAligned, Remeshing.Technique.Isotropic )] Remeshing.Technique technique ) {
+    public void aRemeshedContourOfManyTrianglesIsSplitWithThirtyTwoBitIndices( [Values( Remeshing.Technique.InstantMeshes, Remeshing.Technique.Isotropic )] Remeshing.Technique technique ) {
         var voxelizer = this.createVoxelizer<UniformDualContouring>( 6, QEFSolverType.SVD, shapesOf( Model.ThreeBalls ) );
 
         voxelizer.implementationType   = ImplementationType.Burst;
@@ -1040,7 +1040,7 @@ public class RemeshingTest : TopologyTest {
         }
     }
 
-    // ---- Field Aligned ----
+    // ---- Instant Meshes ----
 
     private static double areaOf( Mesh mesh, int subMesh ) {
         var vertices = mesh.vertices;
@@ -1054,23 +1054,23 @@ public class RemeshingTest : TopologyTest {
         return area;
     }
 
-    // what Field Aligned keeps of the mesh it is given, for every algorithm and implementation, contoured and
+    // what Instant Meshes keeps of the mesh it is given, for every algorithm and implementation, contoured and
     // simplified, as quads with triangles and pentagons among them: every vertex on that mesh, the area of every
     // material to within a tenth or so, about as many vertices, mostly quads, and the same remesh every time. Its
     // topology is counted and not held to the input's (finding 7)
     [Test]
-    public void theFieldAlignedRemeshKeepsTheSurfaceAndItsAreas( [ValueSource( nameof( variants ) )] Variant variant, [Values] Surface surface, [Values] bool simplified ) {
+    public void theInstantMeshesRemeshKeepsTheSurfaceAndItsAreas( [ValueSource( nameof( variants ) )] Variant variant, [Values] Surface surface, [Values] bool simplified ) {
         var voxelizer = this.create( variant, shapesOf( surface ), VertexNormals.Creased, Remeshing.Technique.Off );
 
         voxelizer.meshSimplification = simplified;
 
-        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.FieldAligned );
+        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.InstantMeshes );
         var cellSize                       = ( double )voxelizer.cellSize;
 
         Debug.Log( $"{variant} {surface} {( simplified ? "simplified" : "contour" )}: {output.vertexCount} vertices from {input.vertexCount}, {statistics.quads} quads, {statistics.triangles} triangles, {statistics.largerFaces} larger, {statistics.newOpenLines} new open lines, {statistics.newNonManifoldLines} new lines of more than two triangles" );
 
         Assert.IsNull( statistics.gaveUp, "gave up" );
-        Assert.AreEqual( 0, statistics.fieldAligned.Value.offInput, "vertices without a point of the mesh within reach" );
+        Assert.AreEqual( 0, statistics.instantMeshes.Value.offInput, "vertices without a point of the mesh within reach" );
         Assert.Greater( statistics.quads, statistics.triangles + statistics.largerFaces, "mostly quads" );
 
         // on the mesh it was given
@@ -1110,15 +1110,15 @@ public class RemeshingTest : TopologyTest {
         CollectionAssert.AreEqual( flags, voxelizer.shownEdgeFlags, "the second remesh's flags" );
     }
 
-    // Field Aligned's triangles and its quads alone, which are split from faces of twice the length, are on the mesh too
+    // Instant Meshes' triangles and its quads alone, which are split from faces of twice the length, are on the mesh too
     [Test]
-    public void everyVertexOfEachKindOfFaceIsOnTheMesh( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] bool simplified, [Values( BurstFieldAligned.Faces.Triangles, BurstFieldAligned.Faces.Quads )] BurstFieldAligned.Faces faces ) {
+    public void everyVertexOfEachKindOfFaceIsOnTheMesh( [Values( Algorithm.Uniform, Algorithm.Occupancy )] Algorithm algorithm, [Values] bool simplified, [Values( BurstInstantMeshes.Faces.Triangles, BurstInstantMeshes.Faces.Quads )] BurstInstantMeshes.Faces faces ) {
         var voxelizer = this.create( new( algorithm, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.Off );
 
         voxelizer.meshSimplification = simplified;
         voxelizer.remeshingFaces     = faces;
 
-        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.FieldAligned );
+        var ( input, output, statistics ) = this.remeshedOf( voxelizer, Remeshing.Technique.InstantMeshes );
         var cellSize                       = ( double )voxelizer.cellSize;
 
         Assert.IsNull( statistics.gaveUp, "gave up" );
@@ -1136,15 +1136,15 @@ public class RemeshingTest : TopologyTest {
         }
     }
 
-    // the edge length sets how many vertices Field Aligned makes, in each of its faces: a fourth as many at twice the
+    // the edge length sets how many vertices Instant Meshes makes, in each of its faces: a fourth as many at twice the
     // length and four times at half
     [Test]
-    public void theEdgeLengthSetsHowManyVerticesFieldAlignedMakes( [ValueSource( nameof( cpuVariants ) )] Variant variant, [Values] BurstFieldAligned.Faces faces ) {
+    public void theEdgeLengthSetsHowManyVerticesInstantMeshesMakes( [ValueSource( nameof( cpuVariants ) )] Variant variant, [Values] BurstInstantMeshes.Faces faces ) {
         var voxelizer = this.create( variant, shapesOf( Model.ThreeBalls ), VertexNormals.Creased, Remeshing.Technique.Off );
         var counts    = new Dictionary<float, int>( );
 
         voxelizer.creaseAngle    = 180.0f;
-        voxelizer.remeshing      = Remeshing.Technique.FieldAligned;
+        voxelizer.remeshing      = Remeshing.Technique.InstantMeshes;
         voxelizer.remeshingFaces = faces;
 
         voxelizer.contour( drawFromGPU: false );
@@ -1165,10 +1165,10 @@ public class RemeshingTest : TopologyTest {
         Assert.That( counts[2.0f] / ( double )counts[1.0f], Is.InRange( 0.2, 0.33 ), "at twice the length" );
     }
 
-    // each of Field Aligned's settings changes what it makes, and those it does not take, Isotropic's, change nothing
+    // each of Instant Meshes' settings changes what it makes, and those it does not take, Isotropic's, change nothing
     [Test]
-    public void eachOfFieldAlignedsSettingsChangesTheRemesh( ) {
-        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.FieldAligned );
+    public void eachOfInstantMeshesSettingsChangesTheRemesh( ) {
+        var voxelizer = this.create( new( Algorithm.Uniform, ImplementationType.Burst ), shapesOf( Model.CubesAndSphere ), VertexNormals.Creased, Remeshing.Technique.InstantMeshes );
 
         voxelizer.contour( drawFromGPU: false );
 
@@ -1176,8 +1176,8 @@ public class RemeshingTest : TopologyTest {
         var flags    = voxelizer.shownEdgeFlags.ToArray( );
 
         foreach( var ( what, change, back ) in new ( string, Action, Action )[] {
-            ( "triangles",                                     ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.Triangles, ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.QuadDominant ),
-            ( "quads only",                                    ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.Quads,     ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.QuadDominant ),
+            ( "triangles",                                     ( ) => voxelizer.remeshingFaces = BurstInstantMeshes.Faces.Triangles, ( ) => voxelizer.remeshingFaces = BurstInstantMeshes.Faces.QuadDominant ),
+            ( "quads only",                                    ( ) => voxelizer.remeshingFaces = BurstInstantMeshes.Faces.Quads,     ( ) => voxelizer.remeshingFaces = BurstInstantMeshes.Faces.QuadDominant ),
             ( "a feature angle above the cubes' right angles", ( ) => voxelizer.remeshingFeatureAngle = 100.0f, ( ) => voxelizer.remeshingFeatureAngle = 40.0f ),
             ( "the normals of the faces",                      ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Faces, ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Input )
         } ) {

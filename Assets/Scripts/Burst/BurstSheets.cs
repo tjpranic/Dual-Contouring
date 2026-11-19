@@ -6,7 +6,7 @@ using Unity.Mathematics;
 
 // a mesh split into sheets (Documents/Plans/Remeshing.md, decision 4 and finding 18): along its edges of more than two
 // triangles and at its vertices of several fans, so that what is left is a manifold. The two field techniques work on
-// the sheets: QuadriFlow cannot take such edges, and Field Aligned breaks down around them (finding 4).
+// the sheets: QuadriFlow cannot take such edges, and Instant Meshes breaks down around them (finding 4).
 //
 // Round every edge its triangles are paired, and two triangles that are paired share the edge's two vertices in the
 // sheets. Every triangle of a vertex has two edges at it, and at most one partner across each, so the triangles of a

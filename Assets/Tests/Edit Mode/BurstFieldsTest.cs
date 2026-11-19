@@ -1532,7 +1532,7 @@ public class BurstFieldsTest : TopologyTest {
 
         try {
             var kept     = Remeshing.of( mesh, voxelizer.cellSize );
-            var length   = kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, symmetry == Symmetry.Quads ? BurstFieldAligned.Faces.QuadDominant : BurstFieldAligned.Faces.Triangles );
+            var length   = kept.lengthOf( Remeshing.Technique.InstantMeshes, 1.0f, symmetry == Symmetry.Quads ? BurstInstantMeshes.Faces.QuadDominant : BurstInstantMeshes.Faces.Triangles );
             var settings = settingsOf( symmetry, length, measure: true );
 
             using var first  = new Solved( positions, normals, triangles, settings );

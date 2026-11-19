@@ -207,7 +207,7 @@ public class InteractiveEditorTest {
         uniform.remeshingFeatureAngle       = 55.0f;
         uniform.remeshingIterations         = 3;
         uniform.remeshingAreaIterations     = 7;
-        uniform.remeshingFaces              = BurstFieldAligned.Faces.Triangles;
+        uniform.remeshingFaces              = BurstInstantMeshes.Faces.Triangles;
         uniform.remeshingNormals            = Remeshing.Normals.Faces;
 
         editor.select( algorithm );
@@ -240,7 +240,7 @@ public class InteractiveEditorTest {
         Assert.AreEqual( 55.0f,                                          octree.remeshingFeatureAngle );
         Assert.AreEqual( 3,                                              octree.remeshingIterations );
         Assert.AreEqual( 7,                                              octree.remeshingAreaIterations );
-        Assert.AreEqual( BurstFieldAligned.Faces.Triangles,              octree.remeshingFaces );
+        Assert.AreEqual( BurstInstantMeshes.Faces.Triangles,             octree.remeshingFaces );
         Assert.AreEqual( Remeshing.Normals.Faces,                        octree.remeshingNormals );
 
         editor.select( Algorithm.Uniform );
@@ -2099,7 +2099,7 @@ public class InteractiveEditorTest {
             Assert.IsFalse( work.remeshed,  "remeshed with remeshing off" );
         }
 
-        editor.voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        editor.voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         using( var work = new Work( ) ) {
             editor.contour( );
@@ -2136,7 +2136,7 @@ public class InteractiveEditorTest {
         Assert.IsNull( contour.remeshing, "remeshed with remeshing off" );
 
         using( var work = new Work( ) ) {
-            editor.voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+            editor.voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
             this.tickAt( editor, 1.0 );
 
@@ -2188,7 +2188,7 @@ public class InteractiveEditorTest {
     public void aChangeOfDetailRemeshesTheMeshAtTheDetail( [Values( ImplementationType.Managed, ImplementationType.Burst )] ImplementationType implementation ) {
         var editor = this.createSimplifying( new( Algorithm.Uniform, implementation ) );
 
-        editor.voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        editor.voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         this.time = 0.0;
 
@@ -2257,7 +2257,7 @@ public class InteractiveEditorTest {
         Assert.IsFalse( work.contoured, "contoured with nothing changed" );
         Assert.AreSame( mesh, shown( editor ) );
 
-        editor.voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        editor.voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         this.tickAt( editor, 3.0, 3.0 + editor.debounce );
 
@@ -2289,7 +2289,7 @@ public class InteractiveEditorTest {
 
         using var work = new Work( );
 
-        editor.voxelizer.remeshing           = Remeshing.Technique.FieldAligned;
+        editor.voxelizer.remeshing           = Remeshing.Technique.InstantMeshes;
         editor.voxelizer.remeshingEdgeLength = 0.5f;
 
         this.tickAt( editor, 1.0, 2.0, 3.0 );
@@ -2315,7 +2315,7 @@ public class InteractiveEditorTest {
 
         Assert.AreEqual( "", editor.remeshingSignature( ), "with remeshing off, at another edge length" );
 
-        voxelizer.remeshing = Remeshing.Technique.FieldAligned;
+        voxelizer.remeshing = Remeshing.Technique.InstantMeshes;
 
         var remeshing = editor.remeshingSignature( );
 
@@ -2333,7 +2333,7 @@ public class InteractiveEditorTest {
             ( "feature angle",   ( ) => voxelizer.remeshingFeatureAngle = 30.0f ),
             ( "iterations",      ( ) => voxelizer.remeshingIterations = 2 ),
             ( "area iterations", ( ) => voxelizer.remeshingAreaIterations = 9 ),
-            ( "faces",           ( ) => voxelizer.remeshingFaces = BurstFieldAligned.Faces.Quads ),
+            ( "faces",           ( ) => voxelizer.remeshingFaces = BurstInstantMeshes.Faces.Quads ),
             ( "normals",         ( ) => voxelizer.remeshingNormals = Remeshing.Normals.Faces )
         } ) {
             change( );

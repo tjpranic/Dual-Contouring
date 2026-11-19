@@ -9,7 +9,7 @@ using FeatureMesh = BurstIsotropic.FeatureMesh;
 using Sharp       = BurstMeshSimplifier.Sharp;
 
 // the two fields of Instant Field-Aligned Meshes (Jakob, Tarini, Panozzo and Sorkine-Hornung, sections 3.1 to 3.5 and
-// 3.7), which Field Aligned reads its mesh off and QuadriFlow starts from (Documents/Plans/Remeshing.md): on every
+// 3.7), which Instant Meshes reads its mesh off and QuadriFlow starts from (Documents/Plans/Remeshing.md): on every
 // vertex of the mesh a direction in its tangent plane, up to quarter or sixth turns, and a point of a lattice of the
 // edge length in that plane, lined up with the direction. Both are smoothed vertex by vertex against the neighbours,
 // each time by whichever turn or lattice step brings a neighbour nearest, measured in space and not within the surface

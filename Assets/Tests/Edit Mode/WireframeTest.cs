@@ -767,10 +767,10 @@ public class WireframeTest : ContouringTest {
         this.assertColors( image, points, ( point ) => look == Look.OverSurface ? lineColor : materialColors[0], "points on edges" );
     }
 
-    // the cube's contour remeshed into quads by Field Aligned, with its flags
+    // the cube's contour remeshed into quads by Instant Meshes, with its flags
     private ( Mesh mesh, byte[] flags ) quadsOfTheCube( ) {
         var contour = this.contour( cubeModel );
-        var mesh    = Remeshing.of( contour, 1.0f / 16.0f ).remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 1.0f ), out var flags, out var statistics );
+        var mesh    = Remeshing.of( contour, 1.0f / 16.0f ).remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( contour );
         this.made.Add( mesh );
@@ -834,7 +834,7 @@ public class WireframeTest : ContouringTest {
     public void voxelizerDrawsTheFacesOfItsRemeshedContour( [Values( Look.OverSurface, Look.LinesOnly )] Look look ) {
         this.view( perspective: false );
 
-        var voxelizer = this.voxelizerShowing( Remeshing.Technique.FieldAligned, cubeModel, materialColors[0] );
+        var voxelizer = this.voxelizerShowing( Remeshing.Technique.InstantMeshes, cubeModel, materialColors[0] );
         var mesh      = voxelizer.GetComponent<MeshFilter>( ).sharedMesh;
         var surface   = this.render( Look.Off );
         var image     = this.render( look );

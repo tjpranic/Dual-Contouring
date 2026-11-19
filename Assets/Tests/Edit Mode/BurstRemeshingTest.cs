@@ -250,14 +250,14 @@ public class BurstRemeshingTest {
         var builder = model == "patch" ? new Builder( ).patch( 6, 5, 0.25f ) : new Builder( ).sphere( 24, 48 );
         var kept    = Remeshing.of( this.meshOf( builder ), 0.1f );
 
-        // Field Aligned's quads, with or without triangles and pentagons among them, and triangles, its or Isotropic's
+        // Instant Meshes' quads, with or without triangles and pentagons among them, and triangles, its or Isotropic's
         var quads     = Math.Sqrt( builder.area / builder.positions.Count );
         var triangles = Math.Sqrt( builder.area / builder.positions.Count / ( Math.Sqrt( 3.0 ) / 2.0 ) );
 
-        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f ), quads * 1e-5, "quad dominant at 1" );
-        Assert.AreEqual( quads * 0.5, kept.lengthOf( Remeshing.Technique.FieldAligned, 0.5f ), quads * 1e-5, "quad dominant at 0.5" );
-        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, BurstFieldAligned.Faces.Quads ), quads * 1e-5, "quads at 1" );
-        Assert.AreEqual( triangles,   kept.lengthOf( Remeshing.Technique.FieldAligned, 1.0f, BurstFieldAligned.Faces.Triangles ), triangles * 1e-5, "Field Aligned's triangles at 1" );
+        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.InstantMeshes, 1.0f ), quads * 1e-5, "quad dominant at 1" );
+        Assert.AreEqual( quads * 0.5, kept.lengthOf( Remeshing.Technique.InstantMeshes, 0.5f ), quads * 1e-5, "quad dominant at 0.5" );
+        Assert.AreEqual( quads,       kept.lengthOf( Remeshing.Technique.InstantMeshes, 1.0f, BurstInstantMeshes.Faces.Quads ), quads * 1e-5, "quads at 1" );
+        Assert.AreEqual( triangles,   kept.lengthOf( Remeshing.Technique.InstantMeshes, 1.0f, BurstInstantMeshes.Faces.Triangles ), triangles * 1e-5, "Instant Meshes' triangles at 1" );
         Assert.AreEqual( triangles,   kept.lengthOf( Remeshing.Technique.Isotropic, 1.0f ), triangles * 1e-5, "Isotropic's triangles at 1" );
     }
 
@@ -364,7 +364,7 @@ public class BurstRemeshingTest {
         // bands of three materials, given in an order that the mesh's sub-meshes change
         var patch = new Builder( ).patch( 12, 12, 1.0f, ( i, j ) => ( i / 4 + j / 6 ) % 3 );
         var kept  = Remeshing.of( this.meshOf( patch ), 1.0f );
-        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 1.0f ), out var flags, out var statistics );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 1.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
@@ -412,7 +412,7 @@ public class BurstRemeshingTest {
         var kept       = Remeshing.of( given, 0.5f );
 
         // edges of a thousandth of the octahedron's would make millions of vertices
-        var mesh = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 0.001f ), out var flags, out var statistics );
+        var mesh = kept.remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 0.001f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
@@ -425,20 +425,20 @@ public class BurstRemeshingTest {
         Assert.AreEqual( 0, statistics.quads,     "faces: quads" );
     }
 
-    // Field Aligned gives up where no faces come out of its fields: an octahedron at four times its edge length has one
+    // Instant Meshes gives up where no faces come out of its fields: an octahedron at four times its edge length has one
     // lattice point for all of it
     [Test]
-    public void aFieldAlignedRemeshOfNoFacesGivesTheMeshAsItCame( ) {
+    public void anInstantMeshesRemeshOfNoFacesGivesTheMeshAsItCame( ) {
         var octahedron = new Builder( ).octahedron( );
         var given      = this.meshOf( octahedron );
         var kept       = Remeshing.of( given, 0.5f );
-        var mesh       = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 4.0f ), out var flags, out var statistics );
+        var mesh       = kept.remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 4.0f ), out var flags, out var statistics );
 
         this.made.Add( mesh );
 
         Assert.AreEqual( "no faces came out of the fields", statistics.gaveUp, "why it gave up" );
         Assert.IsNull( flags, "flags" );
-        Assert.IsTrue( statistics.fieldAligned.HasValue, "what Field Aligned did" );
+        Assert.IsTrue( statistics.instantMeshes.HasValue, "what Instant Meshes did" );
 
         CollectionAssert.AreEqual( MeshComparison.trianglesOf( given ), MeshComparison.trianglesOf( mesh ), "triangles" );
     }
@@ -448,18 +448,18 @@ public class BurstRemeshingTest {
         var box   = new Builder( ).box( Vector3Int.zero, new Vector3Int( 8, 4, 4 ) );
         var given = this.meshOf( box );
         var kept  = Remeshing.of( given, 0.5f );
-        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 2.0f ), out _, out var statistics );
+        var mesh  = kept.remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 2.0f ), out _, out var statistics );
 
         this.made.Add( mesh );
 
-        Assert.AreEqual( Remeshing.Technique.FieldAligned, statistics.technique );
-        Assert.AreEqual( given.vertexCount,                statistics.inputVertexCount,    "vertices given" );
-        Assert.AreEqual( box.triangles.Count,              statistics.inputTriangleCount,  "triangles given" );
-        Assert.AreEqual( 0,                                statistics.newOpenLines,        "new open lines" );
-        Assert.AreEqual( 0,                                statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
-        Assert.GreaterOrEqual( statistics.milliseconds, 0.0,                              "time" );
-        Assert.IsTrue( statistics.fieldAligned.HasValue,                                  "what Field Aligned did" );
-        Assert.IsNull( statistics.isotropic,                                              "what Isotropic did" );
+        Assert.AreEqual( Remeshing.Technique.InstantMeshes, statistics.technique );
+        Assert.AreEqual( given.vertexCount,                 statistics.inputVertexCount,    "vertices given" );
+        Assert.AreEqual( box.triangles.Count,               statistics.inputTriangleCount,  "triangles given" );
+        Assert.AreEqual( 0,                                 statistics.newOpenLines,        "new open lines" );
+        Assert.AreEqual( 0,                                 statistics.newNonManifoldLines, "new lines of edges of more than two triangles" );
+        Assert.GreaterOrEqual( statistics.milliseconds, 0.0,                                "time" );
+        Assert.IsTrue( statistics.instantMeshes.HasValue,                                   "what Instant Meshes did" );
+        Assert.IsNull( statistics.isotropic,                                                "what Isotropic did" );
 
         // the faces the mesh's flags make
         Assert.Greater( statistics.quads, 20, "faces: quads" );
@@ -475,7 +475,7 @@ public class BurstRemeshingTest {
     public void aRemeshCountsOnlyTheEdgesItAdds( [Values( "patch", "two boxes" )] string model ) {
         var builder = model == "patch" ? new Builder( ).patch( 3, 2 ) : new Builder( ).box( Vector3Int.zero, Vector3Int.one ).box( new Vector3Int( 1, 1, 0 ), Vector3Int.one );
         var kept    = Remeshing.of( this.meshOf( builder ), 1.0f );
-        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.FieldAligned, 1.0f ), out _, out var statistics );
+        var mesh    = kept.remesh( new Remeshing.Settings( Remeshing.Technique.InstantMeshes, 1.0f ), out _, out var statistics );
 
         this.made.Add( mesh );
 
