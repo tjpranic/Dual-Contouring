@@ -98,14 +98,15 @@ Every voxelizer has a **Vertex Normals** setting, with two more after it:
 |---|---|---|
 | Vertex Normals | Creased | **Creased:** smooth across curved surfaces and broken at sharp edges. **Split:** flat, every triangle with vertices of its own. |
 | Crease Angle | 40 | With creased normals, triangles around a vertex that meet at more than this many degrees get vertices of their own. At 180 nothing is split. |
-| Smooth Normals | Contour | With creased normals, the normal of a vertex whose triangles all meet within the angle. **Contour** keeps the normal the contour gave it, where that is within the angle of every one of its triangles. **Faces** takes the normal of its triangles. |
+| Smooth Normals | Contour | With creased normals, the normal of a vertex whose triangles all meet within the angle. **Contour** keeps the normal the contour gave it, where that is within the angle of every one of its triangles and among their normals. **Faces** takes the normal of its triangles. |
 
 **Why creased:** a vertex that the faces of a sharp edge share has one normal, halfway between them, and every triangle around it shades towards that normal. The edge comes out smeared across a cell, and where it crosses the grid at an angle, as a sawtooth. On a simplified mesh, or one an octree simplified, the large triangles smear it across whole faces. Split normals keep every edge sharp but facet every curved surface.
 
 **How it creases:**
-- **Grouping:** around every vertex its triangles go into groups by their normals, the largest corner first. Each triangle joins the group whose normal is nearest, if that is within the crease angle, and starts a group otherwise.
-- **Normals:** each group becomes a vertex of its own, whose normal is the group's triangles' normals weighted by their angles at the vertex.
-- **Why the group's normal:** comparing with it, and not with the triangle next to it, keeps a run of triangles that turn a little at a time, such as a cone's tip, from becoming one group.
+- **Grouping:** around every vertex its triangles go into groups by their normals, the largest corner first. Each triangle joins the group whose mean is nearest, if that is within the crease angle, and starts a group otherwise. A group's mean weighs its triangles' normals by their angles at the vertex.
+- **Normals:** each group becomes a vertex of its own, whose normal weighs the group's triangles' normals by their angles at the vertex times their areas, so that a sliver with a wide corner has little say in it.
+- **Why the group's mean:** comparing with it, and not with the triangle next to it, keeps a run of triangles that turn a little at a time, such as a cone's tip, from becoming one group.
+- **Which contour normals stay:** under Contour, a normal that leans outside its triangles' normals gives way to theirs, even within the crease angle. Near an edge the contour's normals lean towards the surface across it, and on the faces beside it they made streaks.
 - **No corner ends up further than the crease angle from its triangle.** Should a group's normal move too far from a triangle in it as others join, that triangle gets a group of its own.
 - **Flat triangles:** a triangle too flat to have a normal has no say in any group. Its angles are all within 0.06° of 0° or 180°, as along the edge of a polygon Occupancy-Based Dual Contouring splits.
 
@@ -118,11 +119,11 @@ Every voxelizer has a **Vertex Normals** setting, with two more after it:
 | Model | Uncreased | Creased | Split |
 |---|---|---|---|
 | Three balls | 52,224 | 53,581 | 313,500 |
-| The new shapes | 45,270 | 49,089 | 272,184 |
-| Three balls, simplified | 2,268 | 2,732 | 13,764 |
+| The new shapes | 45,270 | 49,104 | 272,184 |
+| Three balls, simplified | 2,268 | 2,734 | 13,764 |
 
 **Cost:** about what splitting costs.
-- **Burst:** 7 ms at 128³ and 28 ms at 256³ on the three balls, against Burst contours of 28 and 173 ms.
+- **Burst:** 9 ms at 128³ and 35 ms at 256³ on the three balls under Contour, 8 and 31 ms under Faces, against Burst contours of 30 and 178 ms.
 - **GPU, Occupancy-Based Dual Contouring:** about 1 ms at 128³ and 5 ms at 256³.
 - **GPU, Uniform Dual Contouring:** too little to see beside its own contour of 100 to 250 ms at 128³. That implementation also reads back two numbers after its contour to size the crease, which waits for the GPU to finish.
 

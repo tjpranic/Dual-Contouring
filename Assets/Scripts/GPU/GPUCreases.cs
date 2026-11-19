@@ -22,6 +22,7 @@ public class GPUCreases {
     private readonly int finishKernel;
 
     private ComputeBuffer facesBuffer;
+    private ComputeBuffer areasBuffer;
     private ComputeBuffer weightsBuffer;
     private ComputeBuffer cornerCountsBuffer;
     private ComputeBuffer cursorsBuffer;
@@ -101,24 +102,26 @@ public class GPUCreases {
         // every vertex once for each of its groups, and a vertex no triangle uses once
         var creasedCapacity = vertexCapacity + cornerCapacity;
 
-        reserve( ref this.facesBuffer,           triangleCapacity, Marshal.SizeOf( typeof( Vector3 ) ) );
-        reserve( ref this.weightsBuffer,         cornerCapacity,   sizeof( float ) );
-        reserve( ref this.cornerCountsBuffer,    vertexCapacity,   sizeof( uint ) );
-        reserve( ref this.cursorsBuffer,         vertexCapacity,   sizeof( uint ) );
-        reserve( ref this.runStartsBuffer,       vertexCapacity,   sizeof( uint ) );
-        reserve( ref this.runsBuffer,            cornerCapacity,   sizeof( uint ) );
-        reserve( ref this.sumsBuffer,            cornerCapacity,   Marshal.SizeOf( typeof( Vector3 ) ) );
-        reserve( ref this.groupOfCornersBuffer,  cornerCapacity,   sizeof( uint ) );
-        reserve( ref this.basesBuffer,           vertexCapacity,   sizeof( uint ) );
-        reserve( ref this.totalsBuffer,          2,                sizeof( uint ) );
-        reserve( ref this.creasedVerticesBuffer, creasedCapacity,  Marshal.SizeOf( typeof( Vector3 ) ) );
-        reserve( ref this.creasedNormalsBuffer,  creasedCapacity,  Marshal.SizeOf( typeof( Vector3 ) ) );
-        reserve( ref this.creasedCountsBuffer,   2,                sizeof( uint ) );
+        reserve( ref this.facesBuffer,           triangleCapacity,   Marshal.SizeOf( typeof( Vector3 ) ) );
+        reserve( ref this.areasBuffer,           triangleCapacity,   sizeof( float ) );
+        reserve( ref this.weightsBuffer,         cornerCapacity,     sizeof( float ) );
+        reserve( ref this.cornerCountsBuffer,    vertexCapacity,     sizeof( uint ) );
+        reserve( ref this.cursorsBuffer,         vertexCapacity,     sizeof( uint ) );
+        reserve( ref this.runStartsBuffer,       vertexCapacity,     sizeof( uint ) );
+        reserve( ref this.runsBuffer,            cornerCapacity,     sizeof( uint ) );
+        reserve( ref this.sumsBuffer,            cornerCapacity * 2, Marshal.SizeOf( typeof( Vector3 ) ) );
+        reserve( ref this.groupOfCornersBuffer,  cornerCapacity,     sizeof( uint ) );
+        reserve( ref this.basesBuffer,           vertexCapacity,     sizeof( uint ) );
+        reserve( ref this.totalsBuffer,          2,                  sizeof( uint ) );
+        reserve( ref this.creasedVerticesBuffer, creasedCapacity,    Marshal.SizeOf( typeof( Vector3 ) ) );
+        reserve( ref this.creasedNormalsBuffer,  creasedCapacity,    Marshal.SizeOf( typeof( Vector3 ) ) );
+        reserve( ref this.creasedCountsBuffer,   2,                  sizeof( uint ) );
 
         this.totalsBuffer.SetData( new uint[] { 0, 0 } );
 
         this.shader.SetFloat( "cosine",        cosineOf( angle ) );
         this.shader.SetInt  ( "smoothNormals", ( int )smoothNormals );
+        this.shader.SetFloat( "slack",         ( float )( BurstCreases.contourSlack * Math.PI / 180.0 ) );
 
         foreach( var kernel in new[] { this.clearVerticesKernel, this.triangleFacesKernel, this.countCornersKernel, this.placeRunsKernel, this.scatterCornersKernel, this.groupCornersKernel, this.rewriteKernel, this.finishKernel } ) {
             this.shader.SetBuffer( kernel, "vertices",        vertices );
@@ -126,6 +129,7 @@ public class GPUCreases {
             this.shader.SetBuffer( kernel, "counts",          counts );
             this.shader.SetBuffer( kernel, "quads",           quads );
             this.shader.SetBuffer( kernel, "faces",           this.facesBuffer );
+            this.shader.SetBuffer( kernel, "areas",           this.areasBuffer );
             this.shader.SetBuffer( kernel, "weights",         this.weightsBuffer );
             this.shader.SetBuffer( kernel, "cornerCounts",    this.cornerCountsBuffer );
             this.shader.SetBuffer( kernel, "cursors",         this.cursorsBuffer );
@@ -142,6 +146,7 @@ public class GPUCreases {
 
         // the read-only views groupCorners reads through
         this.shader.SetBuffer( this.groupCornersKernel, "facesRead",        this.facesBuffer );
+        this.shader.SetBuffer( this.groupCornersKernel, "areasRead",        this.areasBuffer );
         this.shader.SetBuffer( this.groupCornersKernel, "weightsRead",      this.weightsBuffer );
         this.shader.SetBuffer( this.groupCornersKernel, "cornerCountsRead", this.cornerCountsBuffer );
         this.shader.SetBuffer( this.groupCornersKernel, "runStartsRead",    this.runStartsBuffer );
@@ -164,6 +169,7 @@ public class GPUCreases {
     // the next crease makes them all anew
     public void release( ) {
         this.facesBuffer?.Release( );
+        this.areasBuffer?.Release( );
         this.weightsBuffer?.Release( );
         this.cornerCountsBuffer?.Release( );
         this.cursorsBuffer?.Release( );
@@ -178,6 +184,7 @@ public class GPUCreases {
         this.creasedCountsBuffer?.Release( );
 
         this.facesBuffer           = null;
+        this.areasBuffer           = null;
         this.weightsBuffer         = null;
         this.cornerCountsBuffer    = null;
         this.cursorsBuffer         = null;

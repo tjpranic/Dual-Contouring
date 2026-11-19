@@ -12,12 +12,15 @@ using SmoothNormals = SurfaceExtractor.SmoothNormals;
 // normals, and each group becomes a vertex of its own with the normal of its triangles. The pass runs on the finished
 // mesh of any algorithm and implementation, simplified or not (Documents/Plans/Creased Normals.md).
 //
-// The groups are made around each vertex, largest corner first: a triangle joins the group whose normal is nearest, if
-// that is within the crease angle, and otherwise starts a group. Comparing with a group's normal, and not with the
-// triangle next to it, keeps a run of triangles that turn a little at a time from joining two faces into one group
-// (finding 6). A group's normal moves as triangles join it, so afterwards any triangle that ended up further than the
-// angle from its group's normal is given a group of its own (finding 11). No corner of the creased mesh then has a
-// normal further than the angle from its own triangle's.
+// The groups are made around each vertex, largest corner first: a triangle joins the group whose mean is nearest, if
+// that is within the crease angle, and otherwise starts a group. A group's mean weighs its triangles by their angles at
+// the vertex. Comparing with it, and not with the triangle next to it, keeps a run of triangles that turn a little at a
+// time from joining two faces into one group (finding 6).
+//
+// A group's normal weighs its triangles by their angles at the vertex times their areas, so that a sliver with a wide
+// corner has little say in it (finding 19). It moves as triangles join the group, so afterwards any triangle that ended
+// up further than the angle from its group's normal is given a group of its own (finding 11). No corner of the creased
+// mesh then has a normal further than the angle from its own triangle's.
 //
 // Normals and angles are worked out in doubles with a normalize of the pass's own. Vector3.Normalize, and
 // BurstSurfaceExtractor.normalize which matches it, leave vectors shorter than 1e-5 at zero, and the cross product
@@ -60,6 +63,10 @@ public static class BurstCreases {
         return angle >= 180.0 ? -2.0 : math.cos( math.radians( math.max( angle, 0.0 ) ) );
     }
 
+    // how much further than the furthest of its triangles a contour's normal may be from its group's normal and stay, in
+    // degrees: room for rounding, so that a normal that is right on a flat face stays (finding 18)
+    public const double contourSlack = 0.1;
+
     // the largest sine of an angle of a triangle under which it is too flat to have a normal: all its angles are then
     // within 0.06 degrees of 0 or 180. Occupancy splits polygons around a point on an edge between two vertices, which
     // lies on the line between them as nearly as the positions are rounded, and the triangle along that line takes its
@@ -70,6 +77,11 @@ public static class BurstCreases {
     // the angle opposite its longest side, twice its area over the product of its two other sides, and the normal is
     // taken there, where the cross product is the least rounded
     public static double3 faceOf( double3 a, double3 b, double3 c ) {
+        return faceOf( a, b, c, out _ );
+    }
+
+    // and its area, which is zero when it is too flat to have a normal
+    public static double3 faceOf( double3 a, double3 b, double3 c, out double area ) {
         var ab = math.lengthsq( b - a );
         var bc = math.lengthsq( c - b );
         var ca = math.lengthsq( a - c );
@@ -92,11 +104,25 @@ public static class BurstCreases {
 
         var length = math.length( cross );
 
-        return length > flatness * sides ? cross / length : double3.zero;
+        if( length > flatness * sides ) {
+            area = length / 2.0;
+
+            return cross / length;
+        }
+
+        area = 0.0;
+
+        return double3.zero;
     }
 
-    // the unit normal of every triangle, and the angle at each of its corners, which weighs its normal at that corner
-    // (Thürmer and Wüthrich). A triangle too flat to have a normal has a zero normal and corners that weigh nothing
+    // the angle between two vectors, in radians
+    private static double angleBetween( double3 a, double3 b ) {
+        return math.atan2( math.length( math.cross( a, b ) ), math.dot( a, b ) );
+    }
+
+    // the unit normal and the area of every triangle, and the angle at each of its corners, which weighs its normal at
+    // that corner (Thürmer and Wüthrich). A triangle too flat to have a normal has a zero normal and area, and corners
+    // that weigh nothing
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct FacesJob : IJobParallelFor {
 
@@ -104,6 +130,7 @@ public static class BurstCreases {
         [ReadOnly] public NativeArray<BurstMesh.Triangle> triangles;
 
         [WriteOnly] public NativeArray<double3> faces;
+        [WriteOnly] public NativeArray<double>  areas;
 
         [WriteOnly, NativeDisableParallelForRestriction] public NativeArray<double> weights;
 
@@ -122,9 +149,10 @@ public static class BurstCreases {
             var b = ( double3 )this.positions[t.b];
             var c = ( double3 )this.positions[t.c];
 
-            var face = faceOf( a, b, c );
+            var face = faceOf( a, b, c, out var area );
 
             this.faces[triangle] = face;
+            this.areas[triangle] = area;
 
             var hasArea = math.any( face != double3.zero );
 
@@ -183,20 +211,25 @@ public static class BurstCreases {
 
     // the groups around every vertex. A vertex's run is sorted in place, largest corner first, and its groups' sums
     // and normals are kept in the slots of its run, which has at least as many slots as the vertex has groups. Every
-    // corner gets the number of its group
+    // corner gets the number of its group. A group has two sums of its triangles' normals: weighed by their angles at
+    // the vertex, which decides which group a triangle joins, and by their angles times their areas, which is the
+    // group's normal
     [BurstCompile( CompileSynchronously = true, FloatMode = BurstFloats.mode, FloatPrecision = BurstFloats.precision )]
     private struct GroupJob : IJobParallelFor {
 
         [ReadOnly] public NativeArray<float3>  normals;
         [ReadOnly] public NativeArray<double3> faces;
+        [ReadOnly] public NativeArray<double>  areas;
         [ReadOnly] public NativeArray<double>  weights;
         [ReadOnly] public NativeArray<int>     starts;
 
         public double        cosine;
+        public double        slack;
         public SmoothNormals smoothNormals;
 
         [NativeDisableParallelForRestriction] public NativeArray<int>     runs;
         [NativeDisableParallelForRestriction] public NativeArray<double3> sums;
+        [NativeDisableParallelForRestriction] public NativeArray<double3> normalSums;
         [NativeDisableParallelForRestriction] public NativeArray<float3>  groupNormals;
         [NativeDisableParallelForRestriction] public NativeArray<int>     groupOfCorners;
 
@@ -240,6 +273,11 @@ public static class BurstCreases {
             return math.any( this.faces[corner / 3] != double3.zero );
         }
 
+        // a corner's say in its group's normal
+        private readonly double3 weighedForNormal( int corner ) {
+            return this.faces[corner / 3] * ( this.weights[corner] * this.areas[corner / 3] );
+        }
+
         public void Execute( int vertex ) {
             var start = this.starts[vertex];
             var end   = this.starts[vertex + 1];
@@ -272,8 +310,9 @@ public static class BurstCreases {
                 // corners without area come last, and join the first group without changing its normal
                 if( !this.hasArea( corner ) ) {
                     if( groupCount == 0 ) {
-                        this.sums[start] = double3.zero;
-                        groupCount       = 1;
+                        this.sums[start]       = double3.zero;
+                        this.normalSums[start] = double3.zero;
+                        groupCount             = 1;
                     }
                     this.groupOfCorners[corner] = 0;
                     continue;
@@ -295,17 +334,20 @@ public static class BurstCreases {
                 if( best == -1 ) {
                     best = groupCount++;
 
-                    this.sums[start + best] = double3.zero;
+                    this.sums[start + best]       = double3.zero;
+                    this.normalSums[start + best] = double3.zero;
                 }
 
-                this.sums[start + best]    += face * this.weights[corner];
-                this.groupOfCorners[corner] = best;
+                this.sums[start + best]       += face * this.weights[corner];
+                this.normalSums[start + best] += this.weighedForNormal( corner );
+                this.groupOfCorners[corner]    = best;
             }
 
-            // the guard: a corner further than the angle from its group's normal leaves the group for one of its own,
-            // which moves the normal of the group it left, until no corner is. Every pass takes a corner out of a group
-            // of more than one, so it ends. A corner alone in its group stays, even when rounding puts the group's
-            // normal a hair from its own: at an angle of 0 it would otherwise leave for a group of its own forever
+            // the guard: a corner further than the angle from its group's normal, the one its creased vertex gets, leaves
+            // the group for one of its own, which moves the normal of the group it left, until no corner is. Every pass
+            // takes a corner out of a group of more than one, so it ends. A corner alone in its group stays, even when
+            // rounding puts the group's normal a hair from its own: at an angle of 0 it would otherwise leave for a
+            // group of its own forever
             var guarded = 0;
             var moved   = true;
 
@@ -322,15 +364,18 @@ public static class BurstCreases {
                     var face  = this.faceOf( corner );
                     var group = this.groupOfCorners[corner];
 
-                    if( math.dot( face, unit( this.sums[start + group] ) ) >= this.cosine || this.membersOf( start, end, group ) == 1 ) {
+                    if( math.dot( face, unit( this.normalSums[start + group] ) ) >= this.cosine || this.membersOf( start, end, group ) == 1 ) {
                         continue;
                     }
 
-                    var weighted = face * this.weights[corner];
+                    var weighted  = face * this.weights[corner];
+                    var forNormal = this.weighedForNormal( corner );
 
-                    this.sums[start + group]      -= weighted;
-                    this.sums[start + groupCount]  = weighted;
-                    this.groupOfCorners[corner]    = groupCount;
+                    this.sums[start + group]            -= weighted;
+                    this.sums[start + groupCount]        = weighted;
+                    this.normalSums[start + group]      -= forNormal;
+                    this.normalSums[start + groupCount]  = forNormal;
+                    this.groupOfCorners[corner]          = groupCount;
 
                     ++groupCount;
                     ++guarded;
@@ -342,13 +387,13 @@ public static class BurstCreases {
             // a group whose triangles have no area between them, or whose normals cancel, has no normal of its own and
             // takes the contour's
             for( var group = 0; group < groupCount; ++group ) {
-                var normal = unit( this.sums[start + group] );
+                var normal = unit( this.normalSums[start + group] );
 
                 this.groupNormals[start + group] = math.all( normal == double3.zero ) ? this.normals[vertex] : ( float3 )normal;
             }
 
             if( groupCount == 1 && this.smoothNormals == SmoothNormals.Contour ) {
-                var keep = this.contourNormalFits( vertex, start, end );
+                var keep = this.contourNormalFits( vertex, start, end, unit( this.normalSums[start] ) );
 
                 if( keep ) {
                     this.groupNormals[start] = this.normals[vertex];
@@ -376,14 +421,18 @@ public static class BurstCreases {
         }
 
         // whether the contour's normal of a vertex of one group may stay: it is within the angle of every triangle
-        // with area at the vertex. At 180 degrees it always stays, zero or not, which gives the mesh back unchanged.
-        // When no triangle at the vertex has area, nothing speaks against it
-        private readonly bool contourNormalFits( int vertex, int start, int end ) {
+        // with area at the vertex, and no further from the group's normal than the furthest of those triangles is, plus
+        // the slack. The first keeps every corner within the angle; the second keeps a normal that leans towards
+        // a surface next to the vertex, as the contour's do near an edge, from shading triangles that all face one
+        // way (finding 18). At 180 degrees it always stays, zero or not, which gives the mesh back unchanged. When no
+        // triangle at the vertex has area, or their normals cancel, nothing speaks against it
+        private readonly bool contourNormalFits( int vertex, int start, int end, double3 normal ) {
             if( this.cosine < -1.0 ) {
                 return true;
             }
 
             var contour = unit( ( double3 )this.normals[vertex] );
+            var spread  = 0.0;
 
             for( var slot = start; slot < end; ++slot ) {
                 var corner = this.runs[slot];
@@ -395,8 +444,11 @@ public static class BurstCreases {
                 if( math.all( contour == double3.zero ) || math.dot( contour, this.faceOf( corner ) ) < this.cosine ) {
                     return false;
                 }
+
+                spread = math.max( spread, angleBetween( this.faceOf( corner ), normal ) );
             }
-            return true;
+
+            return math.all( normal == double3.zero ) || angleBetween( contour, normal ) <= spread + this.slack;
         }
 
     }
@@ -567,10 +619,12 @@ public static class BurstCreases {
         var cornerCount = triangles.Length * 3;
 
         using var faces          = new NativeArray<double3>( triangles.Length, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var areas          = new NativeArray<double>( triangles.Length, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var weights        = new NativeArray<double>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var starts         = new NativeArray<int>( vertexCount + 1, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var runs           = new NativeArray<int>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var sums           = new NativeArray<double3>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
+        using var normalSums     = new NativeArray<double3>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var groupNormals   = new NativeArray<float3>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var groupOfCorners = new NativeArray<int>( cornerCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
         using var groupCounts    = new NativeArray<int>( vertexCount, Allocator.TempJob, NativeArrayOptions.UninitializedMemory );
@@ -584,6 +638,7 @@ public static class BurstCreases {
                 positions = positions,
                 triangles = triangles,
                 faces     = faces,
+                areas     = areas,
                 weights   = weights
             }.Schedule( triangles.Length, triangleBatch ).Complete( );
         }
@@ -600,12 +655,15 @@ public static class BurstCreases {
             new GroupJob {
                 normals        = normals,
                 faces          = faces,
+                areas          = areas,
                 weights        = weights,
                 starts         = starts,
                 cosine         = cosineOf( angle ),
+                slack          = math.radians( contourSlack ),
                 smoothNormals  = smoothNormals,
                 runs           = runs,
                 sums           = sums,
+                normalSums     = normalSums,
                 groupNormals   = groupNormals,
                 groupOfCorners = groupOfCorners,
                 groupCounts    = groupCounts,

@@ -30,19 +30,21 @@ StructuredBuffer<uint>   counts;
 RWStructuredBuffer<Quad> quads;
 
 RWStructuredBuffer<float3> faces;          // for every triangle, its unit normal
+RWStructuredBuffer<float>  areas;          // for every triangle, its area
 RWStructuredBuffer<float>  weights;        // for every corner, its angle
 RWStructuredBuffer<uint>   cornerCounts;   // for every vertex, how many corners it has
 RWStructuredBuffer<uint>   cursors;        // for every vertex, how many of its corners are in its run so far
 RWStructuredBuffer<uint>   runStarts;      // for every vertex, where its run of corners starts
 RWStructuredBuffer<uint>   runs;           // the corners of every vertex together
-RWStructuredBuffer<float3> sums;           // the sums of the groups of a vertex, in the slots of its run
+RWStructuredBuffer<float3> sums;           // the sums of the groups of a vertex, two to a slot of its run (sumOf, normalSumOf)
 RWStructuredBuffer<uint>   groupOfCorners; // for every corner, the number of its group among its vertex's
 RWStructuredBuffer<uint>   bases;          // for every vertex, its first creased vertex
 RWStructuredBuffer<uint>   totals;         // [0] corners placed in runs, [1] creased vertices
 
-// four of the buffers above again, read-only, for groupCorners: a kernel may write to at most eight buffers, and it
+// five of the buffers above again, read-only, for groupCorners: a kernel may write to at most eight buffers, and it
 // writes to seven others
 StructuredBuffer<float3> facesRead;
+StructuredBuffer<float>  areasRead;
 StructuredBuffer<float>  weightsRead;
 StructuredBuffer<uint>   cornerCountsRead;
 StructuredBuffer<uint>   runStartsRead;
@@ -55,6 +57,10 @@ RWStructuredBuffer<uint>   creasedCounts;
 // the cosine of the crease angle, below -1 at 180 degrees and above, and SmoothNormals
 float cosine;
 uint  smoothNormals;
+
+// how much further than the furthest of its triangles a contour's normal may be from its group's normal and stay, in
+// radians, BurstCreases.contourSlack
+float slack;
 
 // thread groups of 64 along x in a dispatch, which goes on along y past 65,535 groups
 uint groupsX;
@@ -81,9 +87,9 @@ uint vertexOf( uint corner ) {
 // the largest sine of an angle of a triangle under which it is too flat to have a normal, BurstCreases.flatness
 #define FLATNESS 1e-3f
 
-// the unit normal of a triangle, or zero when it is too flat to have one, taken at the corner opposite its longest side
-// as BurstCreases.faceOf takes it
-float3 faceOf( float3 a, float3 b, float3 c ) {
+// the unit normal of a triangle and its area, or zero for both when it is too flat to have a normal, taken at the corner
+// opposite its longest side as BurstCreases.faceOf takes it
+float3 faceOf( float3 a, float3 b, float3 c, out float area ) {
     float ab = dot( b - a, b - a );
     float bc = dot( c - b, c - b );
     float ca = dot( a - c, a - c );
@@ -104,9 +110,17 @@ float3 faceOf( float3 a, float3 b, float3 c ) {
         sides  = sqrt( bc * ca );
     }
 
-    float size = length( across );
+    float  size   = length( across );
+    bool   normal = size > FLATNESS * sides;
 
-    return size > FLATNESS * sides ? across / size : float3( 0.0f, 0.0f, 0.0f );
+    area = normal ? size / 2.0f : 0.0f;
+
+    return normal ? across / size : float3( 0.0f, 0.0f, 0.0f );
+}
+
+// the angle between two vectors, in radians
+float angleBetween( float3 a, float3 b ) {
+    return atan2( length( cross( a, b ) ), dot( a, b ) );
 }
 
 float angleAt( float3 corner, float3 next, float3 previous ) {
@@ -140,9 +154,11 @@ void triangleFaces( uint3 id : SV_DispatchThreadID ) {
     float3 b = vertices[vertexOf( ( face * 3 ) + 1 )];
     float3 c = vertices[vertexOf( ( face * 3 ) + 2 )];
 
-    float3 normal = faceOf( a, b, c );
+    float  size;
+    float3 normal = faceOf( a, b, c, size );
 
     faces[face] = normal;
+    areas[face] = size;
 
     bool area = hasArea( normal );
 
@@ -219,6 +235,22 @@ bool before( uint corner, uint other ) {
     return earlier;
 }
 
+// a group's sum of its triangles' normals weighed by their angles at the vertex, which decides which group a triangle
+// joins, and its sum of them weighed by their angles times their areas, which is its normal: the two of the group in
+// slot s of a run are sums[2s] and sums[2s + 1]
+uint sumOf( uint slot ) {
+    return slot * 2;
+}
+
+uint normalSumOf( uint slot ) {
+    return ( slot * 2 ) + 1;
+}
+
+// a corner's say in its group's normal
+float3 weighedForNormal( uint corner ) {
+    return facesRead[corner / 3] * ( weightsRead[corner] * areasRead[corner / 3] );
+}
+
 // the corners of a group of a vertex that have area
 uint membersOf( uint start, uint end, uint group ) {
     uint members = 0;
@@ -233,21 +265,31 @@ uint membersOf( uint start, uint end, uint group ) {
     return members;
 }
 
-// whether the contour's normal of a vertex of one group may stay: within the angle of every triangle with area at it
-bool contourNormalFits( uint vertex, uint start, uint end ) {
+// whether the contour's normal of a vertex of one group may stay: within the angle of every triangle with area at it,
+// and no further from the group's normal than the furthest of those triangles, plus the slack
+bool contourNormalFits( uint vertex, uint start, uint end, float3 normal ) {
     bool fits = true;
 
     if( cosine >= -1.0f ) {
         float3 contour = unit( normals[vertex] );
+        float  spread  = 0.0f;
 
         for( uint slot = start; slot < end; ++slot ) {
             float3 face = facesRead[runs[slot] / 3];
 
-            if( hasArea( face ) && ( !hasArea( contour ) || dot( contour, face ) < cosine ) ) {
+            if( !hasArea( face ) ) {
+                continue;
+            }
+
+            if( !hasArea( contour ) || dot( contour, face ) < cosine ) {
                 fits = false;
                 break;
             }
+
+            spread = max( spread, angleBetween( face, normal ) );
         }
+
+        fits = fits && ( !hasArea( normal ) || angleBetween( contour, normal ) <= spread + slack );
     }
     return fits;
 }
@@ -294,8 +336,9 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
 
         if( !hasArea( face ) ) {
             if( groupCount == 0 ) {
-                sums[start] = float3( 0.0f, 0.0f, 0.0f );
-                groupCount  = 1;
+                sums[sumOf( start )]       = float3( 0.0f, 0.0f, 0.0f );
+                sums[normalSumOf( start )] = float3( 0.0f, 0.0f, 0.0f );
+                groupCount                 = 1;
             }
             groupOfCorners[corner] = 0;
             continue;
@@ -305,7 +348,7 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
         float nearest = cosine;
 
         for( uint candidate = 0; candidate < groupCount; ++candidate ) {
-            float along = dot( face, unit( sums[start + candidate] ) );
+            float along = dot( face, unit( sums[sumOf( start + candidate )] ) );
 
             if( along >= nearest ) {
                 nearest = along;
@@ -314,12 +357,14 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
         }
 
         if( best == groupCount ) {
-            sums[start + best] = float3( 0.0f, 0.0f, 0.0f );
+            sums[sumOf( start + best )]       = float3( 0.0f, 0.0f, 0.0f );
+            sums[normalSumOf( start + best )] = float3( 0.0f, 0.0f, 0.0f );
             ++groupCount;
         }
 
-        sums[start + best]    += face * weightsRead[corner];
-        groupOfCorners[corner] = best;
+        sums[sumOf( start + best )]       += face * weightsRead[corner];
+        sums[normalSumOf( start + best )] += weighedForNormal( corner );
+        groupOfCorners[corner]             = best;
     }
 
     // the guard. Every pass but the last moves a corner into a group of its own, which it never leaves, so there are
@@ -341,15 +386,18 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
 
             uint group = groupOfCorners[corner];
 
-            if( dot( face, unit( sums[start + group] ) ) >= cosine || membersOf( start, end, group ) == 1 ) {
+            if( dot( face, unit( sums[normalSumOf( start + group )] ) ) >= cosine || membersOf( start, end, group ) == 1 ) {
                 continue;
             }
 
-            float3 weighted = face * weightsRead[corner];
+            float3 weighted  = face * weightsRead[corner];
+            float3 forNormal = weighedForNormal( corner );
 
-            sums[start + group]      -= weighted;
-            sums[start + groupCount]  = weighted;
-            groupOfCorners[corner]    = groupCount;
+            sums[sumOf( start + group )]            -= weighted;
+            sums[sumOf( start + groupCount )]        = weighted;
+            sums[normalSumOf( start + group )]      -= forNormal;
+            sums[normalSumOf( start + groupCount )]  = forNormal;
+            groupOfCorners[corner]                   = groupCount;
 
             ++groupCount;
 
@@ -357,7 +405,7 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
         }
     }
 
-    bool keep = groupCount == 1 && smoothNormals == CONTOUR_NORMALS && contourNormalFits( vertex, start, end );
+    bool keep = groupCount == 1 && smoothNormals == CONTOUR_NORMALS && contourNormalFits( vertex, start, end, unit( sums[normalSumOf( start )] ) );
 
     uint first;
     InterlockedAdd( totals[1], groupCount, first );
@@ -365,7 +413,7 @@ void groupCorners( uint3 id : SV_DispatchThreadID ) {
     bases[vertex] = first;
 
     for( uint index = 0; index < groupCount; ++index ) {
-        float3 normal = unit( sums[start + index] );
+        float3 normal = unit( sums[normalSumOf( start + index )] );
 
         creasedVertices[first + index] = vertices[vertex];
         creasedNormals[first + index]  = keep || !hasArea( normal ) ? normals[vertex] : normal;

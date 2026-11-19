@@ -4,6 +4,8 @@ Plan written 2026-11-14 for the TODO item "Edges on shared vertex meshes look ho
 
 **Status:** complete. Steps 0 to 5 were done on 2026-11-14. Every algorithm and implementation creases its normals by angle, Burst on the CPU and the GPU on the GPU, after mesh simplification too, and so does the interactive editor. The README describes it. The investigation behind the plan was done on 2026-11-14 with a probe outside the repo. It is summarized under Findings, and its pictures are described there.
 
+A follow-up on 2026-11-19 changed two of the rules, which contour normals stay and how a group's normal weighs its triangles, after lighting anomalies were still seen (Follow-up: shading, findings 18 to 20).
+
 The user decided three things on 2026-11-14, in their words:
 1. "Yes, replace the Shared setting". The new mode takes the place of Shared Vertex Normals.
 2. "Both, selectable with an option". A vertex that is not split can keep the contourer's normal or take one made from its faces.
@@ -151,7 +153,7 @@ On `Voxelizer`, next to Vertex Normals, in the voxelizer's inspector:
 3. **Grouping,** in parallel over vertices:
    - the vertex's corners are sorted by corner angle, largest first, then by their triangle's normal, x, y and z, then by corner index (finding 15);
    - they are grouped as in finding 6, with the guard of finding 11;
-   - each group's normal is the sum of its faces' normals times their corner angles, normalized.
+   - each group's normal is the sum of its faces' normals times their corner angles, normalized. Since the follow-up, times their corner angles and areas (finding 19).
 4. **Output:**
    - a prefix sum over group counts numbers the new vertices, in the order of the old vertices and then of their groups, so the output is deterministic;
    - positions are copied, normals are written by Smooth Normals (finding 10), and the triangles are rewritten with their sub-meshes;
@@ -474,6 +476,87 @@ Each step compiles, passes every test, and is reviewed before the next one start
        - `BurstCreases.cs`, `GPUCreases.cs` and `CreaseNormals.compute` in the code layout.
      - **`AGENTS.md`:** a short Creased Normals section on the two implementations and how their tests work.
      - **Verification:** no code changed in this step, and no test loads a scene, so step 4's runs stand: edit mode 3326 of 3326, play mode 21 of 21. The open scene stayed unmodified.
+
+## Follow-up: shading
+
+On 2026-11-19 the user still saw bad normals under Creased, which made for odd lighting, and asked what in the implementation causes them and how to improve it. A probe outside the repo (`CreaseAnomalyProbe.cs`) measured every corner's normal against the true normal of the shapes a quarter of the way into its triangle. It used the four voxelizers of the interactive editor's scene at 128³ and 36 configurations of the tests' models. It found five deficiencies, and the user asked for the first three to be built. Two were built; the third made shading worse and was left out (finding 20).
+
+### Findings
+
+18. **Contour normals stayed too easily.** Under Contour, a vertex of one group kept the contourer's normal wherever it was within the crease angle of every triangle at the vertex. So a normal up to 40° wrong stayed.
+    - **What it looked like:** streaks on the flat face around the capsule in the editor's scene. They came from vertices whose triangles lie exactly in one plane and whose contour normal leans 26.6° towards the capsule, an average of the Hermite normals of a cell that holds both surfaces.
+    - **The rule now:** the contour's normal must also be no further from the group's normal than the furthest of the vertex's triangles is, plus a slack of 0.1° (`BurstCreases.contourSlack`). A normal among its triangles' normals stays, as on a smooth curved surface; one that leans outside them gives way to theirs.
+    - **The slack** is room for rounding only. Without it, normals that are right on a flat face would give way to ones a hair different, and the GPU and Burst would disagree about which. At 0.01°, 0.1° and 0.5° every measure was the same, while 8,610, 3,587 and 1,414 normals of about 83,000 gave way.
+19. **A sliver had as much say in a normal as a full triangle.** A group's normal weighed its triangles by their angles at the vertex alone, so a sliver with a wide corner there counted as much as a large triangle. Occupancy's slivers made 2.5% of the flat area of the editor's scene shade more than 2° off.
+    - **The rule now:** the normal weighs each triangle by its angle times its area.
+    - **The grouping keeps the angles.** Which group a triangle joins is still decided by the group's mean weighed by angles alone, and corners are still taken largest angle first. Weighing the grouping by area too made the large triangles of a simplified mesh draw the small ones next to them into their groups: in the editor's scene Uniform's root mean square error rose from 1.14° to 1.79° and Adaptive's from 1.26° to 1.83°.
+    - **The guard checks the normal** a vertex gets, the one weighed by area, so no corner is still further than the crease angle from its triangle (finding 11). A group keeps both sums. The GPU keeps them side by side in its `sums` buffer, so `groupCorners` still writes to seven buffers (finding 16).
+    - **The shapes of the tests:** a square face cut into two triangles still gives the same weight at each of its corners, so the cube and the prisms keep their normals. The four turning triangles of finding 11 now end 60.8° from the first instead of 42.5°, and the guard still takes it out.
+20. **Dissolving small groups was measured and left out.** Any triangle that fits no group starts one, and in Manifold's contour of the editor's scene 156 groups held under 5% of the angle around their vertex. The idea was to merge such a group into the nearest group that stays, which would also remove a vertex.
+    - **Over the 36 configurations it made shading worse.** Merging groups under 10% of the angle made the root mean square error worse in 15 of them: on average 3.19° against 1.88°, and at worst 9.18° against 2.58°, on the turned shapes simplified with Manifold at 32³. The merged corners can be 40° to 90° and more from the normal they take.
+    - **Narrower versions** did not help. Also requiring under 10% of the area around the vertex was worse in 5 configurations, under 2% in 7, and under 0.5% in 3, where it saved 0.8% of the vertices.
+    - **What it would have bought:** up to 17% fewer vertices, 4% over the 36 configurations, and about a tenth fewer badly shaded corners on triangles that straddle an edge.
+
+The other two deficiencies were not taken up: split vertices take a normal from one side of a curved rim, which only the shapes' own normals fixed in the probe; and the crease angle is a hard line, so an edge of about 41° splits at some vertices and not at others.
+
+### What changed
+
+- **`BurstCreases`:** `FacesJob` gives each triangle's area too. `GroupJob` keeps a second sum per group, weighed by angle times area, which is the group's normal and what the guard checks, and `contourNormalFits` adds the test of finding 18. `contourSlack` is 0.1°.
+- **`CreaseNormals.compute` and `GPUCreases`:** the same, in floats. `triangleFaces` writes an `areas` buffer, which `groupCorners` reads through `areasRead`. The `sums` buffer has two entries for each slot of a run.
+- **Unchanged:** at 180° under Contour the crease gives the mesh back bit for bit. No setting was added.
+- **Tests,** in `BurstCreasesTest`, with the same shapes run through the GPU in `GPUCreasesTest`:
+  - `contourNormalGivesWayWhereItDoesNotFit`: on the flat patch the normal 10° off now gives way, and a new one a twentieth of a degree off stays, within the slack;
+  - `contourNormalOutsideItsTrianglesGivesWayOnACurvedSurface`: on the sphere a normal half a degree off stays and one 10° off gives way;
+  - `normalWeighsTrianglesByTheirAreas`: two triangles with corners of 90°, 30° apart, the second four times the area, give a normal 24.1° from the first, atan( 4 sin 30° / ( 1 + 4 cos 30° ) );
+  - `guardHoldsCornersToTheNormalTheVertexGets`: three triangles whose mean by angles is within 29° of each, but whose normal is 48° from the first, which the guard takes out;
+  - `groupsAreJoinedByTheirTrianglesAnglesAlone`: a large triangle between two small ones, where a mean weighed by areas too would take in the third.
+
+### Measurements
+
+The editor's scene at 128³, before and after. "Flat area off" is the share of the area of flat faces with a corner shaded more than 2° off; "error" is the root mean square angle between corner normals and the shapes' over the triangles that lie along one surface, by area.
+
+| Voxelizer | Vertices | Flat area off | Error |
+|---|---|---|---|
+| Manifold | 2,753 → 2,755 | 2.5% → 0.0% | 2.26° → 1.36° |
+| Uniform, simplified | 2,167 → 2,172 | 0.0% → 0.0% | 1.14° → 1.15° |
+| Adaptive, simplified | 2,395 → 2,397 | 0.2% → 0.0% | 1.26° → 1.05° |
+| Occupancy, simplified | 2,557 → 2,557 | 2.5% → 0.1% | 1.23° → 1.13° |
+
+Over the 36 configurations (the new shapes, the turned shapes and the cubes and sphere; Uniform, Manifold and Occupancy; 32³ and 64³; plain and simplified):
+- **Error:** lower in 32 and higher in none, 2.43° → 1.88° on average.
+- **Flat area off:** 18.1% → 6.2% on average.
+- **Area of triangles with a corner more than 10° off:** 2.9% → 1.3% on average.
+- **Vertices:** 0.1% more.
+- **Corners further than the crease angle from their triangle:** none, before and after.
+
+The production pass gives the probe's prototype of these rules exactly, the same vertices and normals, on the four voxelizers of the scene under both options and on two simplified models.
+
+**Cost** (`CreaseTiming.cs`, Uniform Burst, medians of 7, Unity in front). The test of finding 18 works out an angle for every corner of a vertex of one group, so Contour now costs more than Faces:
+
+| Mesh | Before | Faces | Contour |
+|---|---|---|---|
+| Three balls 128³ | 6.9 ms | 7.7 ms | 8.8 ms |
+| Three balls 256³ | 28 ms | 30.5 ms | 34.7 ms |
+| New shapes 128³ | 6.1 ms | 6.5 ms | 7.4 ms |
+| Three balls 128³ simplified | 0.5 ms | 0.6 ms | 0.7 ms |
+
+That is 2% of a Burst contour of 178 ms at 256³. The GPU's kernels cost what they did: Occupancy creased adds 1.1 ms at 128³ and 2.6 to 2.9 ms at 256³.
+
+### Verification
+
+- **Suites:** edit mode 4,308 of 4,308 with the first new tests; with the last ones, `BurstCreasesTest` 343 of 343 and `GPUCreasesTest` 217 of 217. Play mode 26 of 26. The open scene stayed unmodified.
+- **The tests catch a mistake** (`mutations_creases_shading.py`, Burst only, against `BurstCreasesTest` alone). All 8 were caught:
+  - the normal without the areas;
+  - the guard against the mean;
+  - the normal from the mean;
+  - groups joined by the sum weighed by area;
+  - no test against the triangles' normals;
+  - no slack;
+  - no spread;
+  - the contour held to the mean, which survived until `contourNormalIsHeldToTheNormalTheVertexGets` was added.
+
+  The shader's mistakes were not run: a shader mistake once stalled the test runner and the watchdog restarted the user's editor, so those runs wait for the user's go-ahead.
+- **`Start` hashes** at 40° (`run_hashes.sh`), against those taken earlier the same day: all 352 Split configurations unchanged; 325 of the 352 Creased ones changed, 44 of them in vertex count, where the guard now checks the normal weighed by area. The new baseline is `crease-anomalies-2026-11-19/hashes_40.txt` in the probes folder.
 
 ## Out of scope
 

@@ -273,8 +273,8 @@ public class BurstCreasesTest : ContourVariantsTest {
     }
 
     // four triangles at a vertex whose normals turn 0, 39, 58.5 and 71 degrees about one axis, with corners of 1,
-    // 0.99, 0.98 and 0.97 radians. Taken largest first each is within 40 degrees of the group's normal when it joins,
-    // and the group's normal ends up 42.4 degrees from the first. The guard gives the first a group of its own
+    // 0.99, 0.98 and 0.97 radians. Taken largest first each is within 40 degrees of the group's mean when it joins,
+    // and the group's normal ends up 60.8 degrees from the first. The guard gives the first a group of its own
     [Test]
     public void groupThatMovesAwayFromACornerLetsItGo( [Values] SmoothNormals smoothNormals ) {
         var builder = CreaseShapes.turningTriangles( );
@@ -284,6 +284,36 @@ public class BurstCreasesTest : ContourVariantsTest {
         Assert.AreEqual( 2 + 8, creased.positions.Length, "creased vertices: two at the shared corner and one at each other" );
 
         assertCornersWithin( creased, angle, "turning triangles" );
+    }
+
+    // the guard holds each corner to the normal its vertex gets, which weighs the triangles by their areas too, and not
+    // to the mean that decides which group a triangle joins: the first of three triangles at a vertex is within 22
+    // degrees of their mean, but 48 degrees from their normal, and gets a group of its own
+    [Test]
+    public void guardHoldsCornersToTheNormalTheVertexGets( [Values] SmoothNormals smoothNormals ) {
+        var builder = CreaseShapes.smallTrianglesBesideALargeOne( );
+        var creased = crease( builder, angle, smoothNormals );
+
+        Assert.AreEqual( 1, creased.statistics.guardedCornerCount, "guarded corners" );
+        Assert.AreEqual( 2 + 6, creased.positions.Length, "creased vertices: two at the shared corner and one at each other" );
+
+        assertCornersWithin( creased, angle, "small triangles beside a large one" );
+    }
+
+    // a triangle joins a group by the group's mean, which weighs the triangles by their angles at the vertex alone. A
+    // large triangle between two small ones makes a group with the first, whose mean is 55 degrees from the third, which
+    // stays apart. Weighing the mean by the areas too would pull it to within 37 degrees of the third, which would join
+    // (finding 19)
+    [Test]
+    public void groupsAreJoinedByTheirTrianglesAnglesAlone( [Values] SmoothNormals smoothNormals ) {
+        var builder = CreaseShapes.largeTriangleBetweenSmallOnes( );
+        var creased = crease( builder, angle, smoothNormals );
+
+        Assert.AreEqual( 0, creased.statistics.guardedCornerCount, "guarded corners" );
+        Assert.AreEqual( 2 + 6, creased.positions.Length, "creased vertices: two at the shared corner and one at each other" );
+        Assert.AreEqual( creased.triangles[0].a, creased.triangles[1].a, "the first two triangles share their corner" );
+
+        assertCornersWithin( creased, angle, "a large triangle between small ones" );
     }
 
     // corners of the same size go by their triangles' normals, x first, whatever the order of the triangles, which the
@@ -308,8 +338,10 @@ public class BurstCreasesTest : ContourVariantsTest {
     // ---- what a crease keeps ----
 
     // under Contour, a vertex of one group keeps the normal it came with where that is within the angle of every one
-    // of its triangles, and takes its triangles' otherwise. A zero normal never stays, but at 180 degrees every
-    // normal does
+    // of its triangles and no further from their normal than the furthest of them, but for the slack, and takes its
+    // triangles' otherwise. On a flat patch only a normal within the slack of the patch's stays: a zero, a flipped,
+    // and one 60 and one 10 degrees off give way, the last although it is within the angle (finding 18). At 180
+    // degrees every normal stays
     [Test]
     public void contourNormalGivesWayWhereItDoesNotFit( [Values( angle, 180.0 )] double degrees ) {
         var builder = CreaseShapes.patchWithOddNormals( out var normals );
@@ -319,14 +351,85 @@ public class BurstCreasesTest : ContourVariantsTest {
         var all     = degrees >= 180.0;
 
         Assert.AreEqual( builder.positions.Count, creased.positions.Length, "creased vertices" );
-        Assert.AreEqual( all ? 16 : 13, creased.statistics.keptNormalCount, "contour normals kept" );
-        Assert.AreEqual( all ? 0 : 3, creased.statistics.replacedNormalCount, "contour normals replaced" );
+        Assert.AreEqual( all ? 16 : 12, creased.statistics.keptNormalCount, "contour normals kept" );
+        Assert.AreEqual( all ? 0 : 4, creased.statistics.replacedNormalCount, "contour normals replaced" );
 
         for( var vertex = 0; vertex < creased.normals.Length; ++vertex ) {
-            var kept     = all || !normals.TryGetValue( vertex, out var given ) || given.Equals( CreaseShapes.tilted( 10.0 ) );
+            var kept     = all || !normals.TryGetValue( vertex, out var given ) || given.Equals( CreaseShapes.tilted( 0.05 ) );
             var expected = kept ? builder.normals[vertex] : up;
 
             Assert.AreEqual( expected, creased.normals[vertex], $"normal of vertex {vertex}" );
+        }
+    }
+
+    // on the sphere the normals of the triangles around a vertex spread a few degrees about it. A normal half a degree
+    // off the sphere's is among them and stays under Contour; one 10 degrees off, within the angle of every triangle,
+    // is outside them and gives way to theirs, which is within 2 degrees of the sphere's
+    [Test]
+    public void contourNormalOutsideItsTrianglesGivesWayOnACurvedSurface( ) {
+        var builder  = CreaseShapes.sphere( );
+        var vertices = Enumerable.Range( 0, builder.positions.Count ).Where( ( vertex ) => math.abs( builder.positions[vertex].y ) < 0.3f ).Take( 2 ).ToArray( );
+        var tilts    = new[] { 0.5, 10.0 };
+
+        for( var index = 0; index < vertices.Length; ++index ) {
+            var radial = ( double3 )builder.normals[vertices[index]];
+            var across = math.normalize( math.cross( radial, new double3( 0.0, 1.0, 0.0 ) ) );
+            var turn   = math.radians( tilts[index] );
+
+            builder.normals[vertices[index]] = ( float3 )( ( radial * math.cos( turn ) ) + ( across * math.sin( turn ) ) );
+        }
+
+        var creased = crease( builder, angle, SmoothNormals.Contour );
+
+        Assert.AreEqual( builder.positions.Count, creased.positions.Length, "creased vertices" );
+        Assert.AreEqual( 1, creased.statistics.replacedNormalCount, "contour normals replaced" );
+        Assert.AreEqual( builder.normals[vertices[0]], creased.normals[vertices[0]], "the normal half a degree off" );
+        Assert.LessOrEqual( degreesBetween( math.normalize( creased.positions[vertices[1]] ), creased.normals[vertices[1]] ), 2.0, "degrees between the sphere's normal and the one that replaced the normal 10 degrees off" );
+    }
+
+    // the contour's normal is held to the normal the vertex gets, the one weighed by area, and to the cone about it as
+    // wide as its furthest triangle. Two triangles 30 degrees apart, the second four times the area of the first, have
+    // their normal 24.1 degrees from the first, so the cone reaches from -0.1 to 48.3 degrees, and their mean by angles
+    // alone is at 15. A contour normal at 35 degrees, within the angle of both, stays; one at -5 gives way
+    [Test]
+    public void contourNormalIsHeldToTheNormalTheVertexGets( [Values( -5.0, 35.0 )] double degrees ) {
+        var builder = CreaseShapes.trianglesOfTwoSizes( degrees );
+        var creased = crease( builder, angle, SmoothNormals.Contour );
+        var turn    = math.radians( 30.0 );
+        var normal  = math.normalize( new double3( 0.0, 0.0, 1.0 ) + ( 4.0 * new double3( 0.0, -math.sin( turn ), math.cos( turn ) ) ) );
+        var origin  = creased.triangles[0].a;
+
+        Assert.AreEqual( 5, creased.positions.Length, "creased vertices" );
+
+        if( degrees > 0.0 ) {
+            Assert.AreEqual( builder.normals[0], creased.normals[origin], "the contour's normal at the origin" );
+        }
+        else {
+            assertNormal( ( float3 )normal, creased.normals[origin], "the normal at the origin" );
+        }
+    }
+
+    // a group's normal weighs its triangles by their angles at the vertex times their areas. Two triangles with
+    // corners of 90 degrees, 30 degrees apart, the second four times the area of the first: within the angle they make
+    // one group, whose normal is atan( 4 sin 30 / ( 1 + 4 cos 30 ) ) = 24.1 degrees from the first, not halfway. Past
+    // it each has its own normal. The vertices start without normals, so under Contour too the normal is the group's
+    [Test]
+    public void normalWeighsTrianglesByTheirAreas( [Values( 25.0, angle )] double degrees, [Values] SmoothNormals smoothNormals ) {
+        var builder = CreaseShapes.trianglesOfTwoSizes( );
+        var creased = crease( builder, degrees, smoothNormals );
+        var turn    = math.radians( 30.0 );
+        var first   = new double3( 0.0, 0.0, 1.0 );
+        var second  = new double3( 0.0, -math.sin( turn ), math.cos( turn ) );
+
+        assertSameTriangles( builder.positions.ToArray( ), builder.triangles.ToArray( ), creased, "triangles of two sizes" );
+
+        if( degrees < 30.0 ) {
+            Assert.AreEqual( 6, creased.positions.Length, "creased vertices" );
+            assertCornersWithin( creased, 0.0, "triangles of two sizes" );
+        }
+        else {
+            Assert.AreEqual( 5, creased.positions.Length, "creased vertices" );
+            assertNormal( ( float3 )math.normalize( first + ( 4.0 * second ) ), creased.normals[creased.triangles[0].a], "normal at the shared corner" );
         }
     }
 

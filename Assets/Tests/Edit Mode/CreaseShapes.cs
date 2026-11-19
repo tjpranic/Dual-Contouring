@@ -209,17 +209,23 @@ public static class CreaseShapes {
     }
 
     // four triangles at the origin whose normals turn 0, 39, 58.5 and 71 degrees about the y axis, with corners there of
-    // 1, 0.99, 0.98 and 0.97 radians: the group of all four moves 42.4 degrees from the first (finding 11)
+    // 1, 0.99, 0.98 and 0.97 radians, each larger than the one before. Taken largest corner first each is within 40
+    // degrees of the group's mean when it joins, but the normal of the group of all four, which weighs them by their
+    // areas too, is 60.8 degrees from the first (finding 11)
     public static Builder turningTriangles( ) {
+        return fanAboutY( new[] { 0.0, 39.0, 58.5, 71.0 }, new[] { 1.0, 0.99, 0.98, 0.97 }, new[] { 1.0, 2.0, 3.0, 4.0 } );
+    }
+
+    // triangles at the origin whose normals turn about the y axis by angles in degrees from (0, 0, 1), with corners
+    // there in radians, and two sides there as long as their scales
+    private static Builder fanAboutY( double[] turns, double[] corners, double[] scales ) {
         var builder = new Builder( );
-        var turns   = new[] { 0.0, 39.0, 58.5, 71.0 };
-        var corners = new[] { 1.0, 0.99, 0.98, 0.97 };
         var axis    = new double3( 0.0, 1.0, 0.0 );
 
         for( var index = 0; index < turns.Length; ++index ) {
             var normal = new double3( math.sin( math.radians( turns[index] ) ), 0.0, math.cos( math.radians( turns[index] ) ) );
             var across = math.cross( normal, axis );
-            var scale  = 1.0 + index;
+            var scale  = scales[index];
 
             var b = axis * scale;
             var c = ( ( axis * math.cos( corners[index] ) ) + ( across * math.sin( corners[index] ) ) ) * scale;
@@ -227,6 +233,21 @@ public static class CreaseShapes {
             builder.triangle( float3.zero, ( float3 )b, ( float3 )c );
         }
         return builder;
+    }
+
+    // three triangles at the origin whose normals turn -20, 10 and 30 degrees about the y axis, with corners there of
+    // 1, 0.9 and 0.5 radians and sides there 1, 1.2 and 10 long. Weighed by their angles alone the three make one group
+    // whose mean is within 29 degrees of each, but the group's normal, weighed by their areas too, is 48 degrees from
+    // the first
+    public static Builder smallTrianglesBesideALargeOne( ) {
+        return fanAboutY( new[] { -20.0, 10.0, 30.0 }, new[] { 1.0, 0.9, 0.5 }, new[] { 1.0, 1.2, 10.0 } );
+    }
+
+    // three triangles at the origin whose normals turn 0, 35 and 72 degrees about the y axis, with corners there of 1,
+    // 0.9 and 0.5 radians and sides there 1, 10 and 1.2 long. The first two make a group whose mean, weighed by their
+    // angles, is 55 degrees from the third. Weighed by their areas too it would be 37 degrees from it
+    public static Builder largeTriangleBetweenSmallOnes( ) {
+        return fanAboutY( new[] { 0.0, 35.0, 72.0 }, new[] { 1.0, 0.9, 0.5 }, new[] { 1.0, 10.0, 1.2 } );
     }
 
     // three triangles at the origin with corners there of exactly 90 degrees and normals 45 degrees apart, (0, -1, 0),
@@ -245,13 +266,30 @@ public static class CreaseShapes {
         return builder;
     }
 
+    // two triangles at the origin with corners there of exactly 90 degrees, whose normals are (0, 0, 1) and 30 degrees
+    // from it towards -y, the second with sides twice as long and four times the area. The vertices start without
+    // normals, but for the origin when it is given a normal turned that way by an angle in degrees
+    public static Builder trianglesOfTwoSizes( double? origin = null ) {
+        var builder = new Builder( );
+        var turn    = math.radians( 30.0 );
+
+        builder.triangle( float3.zero, new float3( 1.0f, 0.0f, 0.0f ), new float3( 0.0f, 1.0f, 0.0f ) );
+        builder.triangle( float3.zero, new float3( 0.0f, ( float )math.cos( turn ), ( float )math.sin( turn ) ) * 2.0f, new float3( -2.0f, 0.0f, 0.0f ) );
+
+        if( origin.HasValue ) {
+            builder.normals[0] = new float3( 0.0f, -( float )math.sin( math.radians( origin.Value ) ), ( float )math.cos( math.radians( origin.Value ) ) );
+        }
+        return builder;
+    }
+
     // a normal tilted from y towards x by an angle in degrees
     public static float3 tilted( double degrees ) {
         return new float3( ( float )math.sin( math.radians( degrees ) ), ( float )math.cos( math.radians( degrees ) ), 0.0f );
     }
 
-    // a flat patch of 3 by 3 squares whose vertices start with its normal, but for four in the middle: one without a
-    // normal, one flipped, one 60 degrees off and one 10. Gives those four with the normals they start with
+    // a flat patch of 3 by 3 squares whose vertices start with its normal, but for four in the middle, one without a
+    // normal, one flipped, one 60 degrees off and one 10, and one on its edge a twentieth of a degree off. Gives those
+    // five with the normals they start with
     public static Builder patchWithOddNormals( out Dictionary<int, float3> odd ) {
         var builder = new Builder( );
         var up      = new float3( 0.0f, 1.0f, 0.0f );
@@ -270,7 +308,8 @@ public static class CreaseShapes {
             [builder.vertex( new float3( 1.0f, 0.0f, 1.0f ) )] = float3.zero,
             [builder.vertex( new float3( 1.0f, 0.0f, 2.0f ) )] = -up,
             [builder.vertex( new float3( 2.0f, 0.0f, 1.0f ) )] = tilted( 60.0 ),
-            [builder.vertex( new float3( 2.0f, 0.0f, 2.0f ) )] = tilted( 10.0 )
+            [builder.vertex( new float3( 2.0f, 0.0f, 2.0f ) )] = tilted( 10.0 ),
+            [builder.vertex( new float3( 3.0f, 0.0f, 2.0f ) )] = tilted( 0.05 )
         };
 
         foreach( var ( vertex, normal ) in odd ) {
